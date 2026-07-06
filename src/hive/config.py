@@ -11,10 +11,20 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="HIVE_", env_file=".env", extra="ignore")
 
-    # LLM
+    # LLM (Ollama Cloud, OpenAI-compatible endpoint)
     llm_api_key: str = ""
-    llm_base_url: str = "https://api.openai.com/v1"
-    llm_model: str = "gpt-4o"
+    llm_base_url: str = "https://ollama.com/v1"
+    # Cost-tiered agent models (see llm/router.py):
+    #   cheap  -> default persona chatter (bulk of turns)
+    #   strong -> injection defence, HVI elicitation, consistency risk
+    #   light  -> soft-signal verdict classification (runs every turn)
+    llm_model_cheap: str = "glm-5.1:cloud"
+    llm_model_strong: str = "glm-5.2:cloud"
+    llm_model_light: str = "glm-5.1:cloud"
+    # Vision model for L3 media fallback (separate track)
+    vision_model: str = "qwen3.5:cloud"
+    # Logging
+    log_level: str = "INFO"
 
     # Telegram data plane (Telethon userbot)
     tg_api_id: int = 0

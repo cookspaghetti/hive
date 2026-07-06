@@ -1,0 +1,10 @@
+# HIVE supporting services.
+# The forensic sandbox (Layer 4) launches its own disposable, network-locked
+# containers per URL at runtime; it is NOT defined here.
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage

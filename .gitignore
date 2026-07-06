@@ -1,0 +1,41 @@
+# --- Secrets & credentials (SECURITY-CRITICAL: never commit) ---
+# Telethon session file = full credential to the user's Telegram account.
+*.session
+*.session-journal
+# RSA / signing keys
+*.pem
+*.key
+keys/
+# Environment
+.env
+.env.*
+!.env.example
+
+# --- Evidence output (may contain third-party PII; keep local) ---
+evidence/
+*.evidence.pdf
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# --- Tooling ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Local data stores ---
+qdrant_storage/
+*.sqlite3
+
+# --- IDE / OS ---
+.idea/
+.vscode/
+.DS_Store

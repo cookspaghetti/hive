@@ -29,13 +29,17 @@ class UserbotTransport:
         api_hash: str,
         session_str: str,
         engine: HiveEngine,
+        on_handback=None,
     ) -> None:
         self.api_id = api_id
         self.api_hash = api_hash
         self._session_str = session_str
         self.engine = engine
+        # Optional async callback(peer_id, session) fired when a benign
+        # conversation is handed back, so the control plane can notify the user.
+        self.on_handback = on_handback
         self._client = None
-        # peer_id -> (SessionState, HashChain, persona)
+        # peer_id -> (SessionState, HashChain)
         self._sessions: dict[int, tuple[SessionState, HashChain]] = {}
 
     async def start(self) -> None:
@@ -66,7 +70,13 @@ class UserbotTransport:
         session, chain = entry
         out = self.engine.process_turn(session, chain, Message("stranger", text, ts, msg_id))
         if out.handed_back:
-            log.info("userbot: benign, handing back peer=%s", peer_id)
+            # Safeguard: conversation deemed benign. Stop intercepting this peer
+            # so subsequent messages flow to the user normally, and drop the
+            # session so we don't keep taking over.
+            self.end_takeover(peer_id)
+            log.info("userbot: benign, ended takeover and handed back peer=%s", peer_id)
+            if self.on_handback is not None:
+                await self.on_handback(peer_id, session)
             return
         if out.text is not None:
             await wait(out.delay_s)  # tarpit delay (masks strong-model latency)

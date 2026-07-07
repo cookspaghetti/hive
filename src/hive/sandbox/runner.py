@@ -139,10 +139,11 @@ class PlaywrightDockerRunner:
 
     def run(self, url: str) -> RawFindings:
         try:
+            self.ensure_network(self.network)
             proc = subprocess.run(
                 self._docker_cmd(url), capture_output=True, text=True, timeout=60
             )
-        except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError) as exc:
             log.error("L4 sandbox: container run failed: %s", exc)
             return RawFindings(error=str(exc))
         try:

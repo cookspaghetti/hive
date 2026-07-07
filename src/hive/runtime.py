@@ -156,3 +156,20 @@ class HiveEngine:
             f"HVIs: {len(session.hvis)} {kinds}\n"
             f"Sandbox runs: {len(session.sandbox_results)}"
         )
+
+
+def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
+    """Construct a fully-wired HiveEngine from Settings.
+
+    Loads the LLM client (Ollama Cloud), the disposable-container sandbox
+    runner, and — optionally — the GLiNER NER backend (heavy first load).
+    """
+    from hive.extraction.ner import get_default_backend
+    from hive.llm.client import build_client
+    from hive.sandbox.runner import PlaywrightDockerRunner
+
+    client = build_client(settings)
+    runner = PlaywrightDockerRunner()
+    ner = get_default_backend() if load_ner else None
+    log.info("build_engine: llm=%s ner=%s", settings.llm_model_cheap, bool(ner))
+    return HiveEngine(agent_client=client, sandbox_runner=runner, ner_backend=ner)

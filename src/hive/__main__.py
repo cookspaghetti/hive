@@ -1,19 +1,50 @@
-"""HIVE entry point.
+"""HIVE runtime entry point.
 
-Boots both Telegram transports and the orchestrator. Wiring is stubbed until
-the transports are implemented.
+Boots the dual-channel Telegram system:
+  - decrypts the Telethon session (S7),
+  - builds a fully-wired HiveEngine (LLM + sandbox + NER),
+  - starts the Telethon userbot (data plane) and Bot API control bot
+    (control plane) on one asyncio loop.
+
+Run:  python -m hive   (after `cp .env.example .env` and filling in secrets)
 """
 
 from __future__ import annotations
 
+import asyncio
+
 from hive.config import load_settings
+from hive.logging_setup import configure_logging, get_logger
+from hive.runtime import build_engine
+from hive.security.session_store import load_session
+from hive.transports.control_bot import ControlBot
+from hive.transports.userbot import UserbotTransport
+
+log = get_logger(__name__)
+
+
+async def _run() -> None:
+    settings = load_settings()
+    configure_logging(settings.log_level)
+    log.info("HIVE v0.1.0 starting; default persona=%s", settings.default_persona)
+
+    session_str = load_session(settings.tg_session_path, settings.session_passphrase)
+    engine = build_engine(settings)
+
+    userbot = UserbotTransport(settings.tg_api_id, settings.tg_api_hash, session_str, engine)
+    control = ControlBot(settings, engine, userbot)
+
+    await userbot.start()
+    await control.start()
+    log.info("HIVE running: userbot + control bot up. Ctrl-C to stop.")
+    await userbot.run_forever()
 
 
 def main() -> None:
-    settings = load_settings()
-    print(f"HIVE v0.1.0 — default persona: {settings.default_persona}")
-    # TODO: decrypt session, start UserbotTransport + ControlBot, run event loop.
-    raise SystemExit("HIVE runtime not yet implemented — see fyp.txt build phase.")
+    try:
+        asyncio.run(_run())
+    except KeyboardInterrupt:
+        log.info("HIVE stopped.")
 
 
 if __name__ == "__main__":

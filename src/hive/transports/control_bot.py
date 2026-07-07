@@ -1,18 +1,20 @@
 """Bot API control plane (fyp.txt Platform).
 
-A separate @Bot the operator chats with to drive the system. Only
-HIVE_OPERATOR_ID is authorised. Commands:
-    /takeover <peer> [persona]  begin a takeover on the userbot
-    /persona <name>             set default persona
-    /stop <peer>                kill switch: reclaim the conversation now
-    /status <peer>              current verdict + summary
-On session end, delivers the summary and the signed evidence bundle.
+A separate @Bot the operator chats with to drive the system. Every command is
+gated to HIVE_OPERATOR_ID. Commands:
+    /takeover <peer_id> [persona]  begin a takeover on the userbot
+    /persona <name>                set the default persona for new takeovers
+    /stop <peer_id>                kill switch: reclaim, seal evidence, report
+    /status <peer_id>              current verdict + summary
 
-Runtime (Telegram) behaviour is not unit-tested here.
+Requires a live Bot API connection, so not unit-tested.
 """
 
 from __future__ import annotations
 
+import os
+
+from hive.config import Settings
 from hive.logging_setup import get_logger
 from hive.runtime import HiveEngine
 from hive.transports.userbot import UserbotTransport
@@ -21,42 +23,82 @@ log = get_logger(__name__)
 
 
 class ControlBot:
-    def __init__(self, token: str, operator_id: int, engine: HiveEngine, userbot: UserbotTransport) -> None:
-        self.token = token
-        self.operator_id = operator_id
+    def __init__(
+        self,
+        settings: Settings,
+        engine: HiveEngine,
+        userbot: UserbotTransport,
+    ) -> None:
+        self.settings = settings
+        self.operator_id = settings.operator_id
         self.engine = engine
         self.userbot = userbot
-        self._app = None  # python-telegram-bot Application, built in start()
+        self.default_persona = settings.default_persona
+        self._app = None
 
-    def _authorised(self, sender_id: int) -> bool:
-        return sender_id == self.operator_id
+    def _authorised(self, user_id: int | None) -> bool:
+        return user_id == self.operator_id
 
-    async def start(self) -> None:
-        """Build the Application and register command handlers.
+    async def start(self) -> None:  # pragma: no cover - needs live telegram
+        from telegram.ext import Application, CommandHandler
 
-        TODO(build): register /takeover /persona /stop /status; guard every
-        handler with _authorised(update.effective_user.id).
-        """
-        raise NotImplementedError
+        self._app = Application.builder().token(self.settings.control_bot_token).build()
+        self._app.add_handler(CommandHandler("takeover", self._cmd_takeover))
+        self._app.add_handler(CommandHandler("persona", self._cmd_persona))
+        self._app.add_handler(CommandHandler("stop", self._cmd_stop))
+        self._app.add_handler(CommandHandler("status", self._cmd_status))
+        await self._app.initialize()
+        await self._app.start()
+        await self._app.updater.start_polling()
+        log.info("control bot: polling started")
 
-    async def cmd_takeover(self, peer_id: int, persona: str) -> str:
-        self.userbot.begin_takeover(peer_id, persona)
-        return f"Takeover started on {peer_id} as {persona}."
+    # --- command handlers (thin wrappers around testable logic) ---
 
-    async def cmd_stop(self, peer_id: int, bundle_path: str, key_path: str, operator_name: str) -> str:
-        """Kill switch: end takeover, seal evidence, return summary."""
-        entry = self.userbot.end_takeover(peer_id)
+    async def _guard(self, update) -> bool:  # pragma: no cover
+        uid = update.effective_user.id if update.effective_user else None
+        if not self._authorised(uid):
+            await update.message.reply_text("Unauthorised.")
+            log.warning("control bot: rejected unauthorised user=%s", uid)
+            return False
+        return True
+
+    async def _cmd_takeover(self, update, context):  # pragma: no cover
+        if not await self._guard(update):
+            return
+        peer = int(context.args[0])
+        persona = context.args[1] if len(context.args) > 1 else self.default_persona
+        self.userbot.begin_takeover(peer, persona)
+        await update.message.reply_text(f"Takeover started on {peer} as {persona}.")
+
+    async def _cmd_persona(self, update, context):  # pragma: no cover
+        if not await self._guard(update):
+            return
+        self.default_persona = context.args[0]
+        await update.message.reply_text(f"Default persona set to {self.default_persona}.")
+
+    async def _cmd_status(self, update, context):  # pragma: no cover
+        if not await self._guard(update):
+            return
+        peer = int(context.args[0])
+        entry = self.userbot._sessions.get(peer)
         if entry is None:
-            return f"No active takeover on {peer_id}."
+            await update.message.reply_text(f"No active takeover on {peer}.")
+            return
+        await update.message.reply_text(self.engine.summary(entry[0]))
+
+    async def _cmd_stop(self, update, context):  # pragma: no cover
+        if not await self._guard(update):
+            return
+        peer = int(context.args[0])
+        entry = self.userbot.end_takeover(peer)
+        if entry is None:
+            await update.message.reply_text(f"No active takeover on {peer}.")
+            return
         session, chain = entry
-        self.engine.close_session(session, chain, bundle_path, key_path, operator_name)
-        summary = self.engine.summary(session)
-        log.info("control: stopped + sealed peer=%d", peer_id)
-        return summary
-
-    async def send_summary(self, text: str, bundle_path: str | None = None) -> None:
-        """Deliver the summary (and attach the evidence PDF) to the operator.
-
-        TODO(build): self._app.bot.send_message / send_document.
-        """
-        raise NotImplementedError
+        os.makedirs("evidence", exist_ok=True)
+        out_path = f"evidence/bundle_{peer}.pdf"
+        self.engine.close_session(session, chain, out_path, self.settings.signing_key_path)
+        await update.message.reply_text(self.engine.summary(session))
+        with open(out_path, "rb") as fh:
+            await update.message.reply_document(fh, filename=f"evidence_{peer}.pdf")
+        log.info("control bot: stopped + sealed peer=%s", peer)

@@ -23,11 +23,17 @@ log = get_logger(__name__)
 _HISTORY_WINDOW = 12
 
 
-def _build_messages(session: SessionState, recall: list[str]) -> list[ChatMessage]:
+def _build_messages(
+    session: SessionState, recall: list[str], defense_note: str = ""
+) -> list[ChatMessage]:
     persona = get_persona(session.persona)
     system = persona.system_prompt
     if recall:
         system += "\n\nThings the other person has told you so far:\n- " + "\n- ".join(recall)
+    if defense_note:
+        # S7: appended when an injection / bot-probe was detected, to keep the
+        # agent in character instead of complying.
+        system += defense_note
 
     messages = [ChatMessage(role="system", content=system)]
     for m in session.messages[-_HISTORY_WINDOW:]:
@@ -42,16 +48,18 @@ def reason_and_reply(
     *,
     recall: list[str] | None = None,
     route_inputs: RouteInputs | None = None,
+    defense_note: str = "",
 ) -> tuple[str, Tier]:
     """Return (raw_reply_text, tier_used) for the current turn.
 
     `recall` is memory recall (mem0/Qdrant) injected by the caller so this
     function stays pure and testable. `route_inputs` carries the S6/S7 signals
-    that drive model escalation.
+    that drive model escalation. `defense_note` is the S7 persona-defense
+    addendum, appended to the system prompt when an injection was detected.
     """
     recall = recall or []
     tier = route(route_inputs or RouteInputs())
-    messages = _build_messages(session, recall)
+    messages = _build_messages(session, recall, defense_note)
 
     log.info(
         "reason: persona=%s tier=%s history=%d recall=%d",

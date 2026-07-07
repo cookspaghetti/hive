@@ -21,7 +21,8 @@ signed evidence bundle.
   - L3 regex + optional GLiNER extraction.
   - L4 Playwright-in-Docker URL analysis.
   - S6 hybrid verdict scoring.
-  - L2 persona reply generation through the cost-tiered LLM router.
+  - L2 persona reply generation through the cost-tiered LLM router, with
+    in-session memory recall of earlier disclosures.
   - L1 linguistic middleware and tarpit delays.
 - Evidence vault:
   - SHA-256 hash chain.
@@ -33,8 +34,8 @@ signed evidence bundle.
   - Early hand-back for likely benign conversations.
   - Prompt defense note injected into the system prompt when S7 flags a probe.
 - Offline regression tests for the core pipeline, guardrails, sandbox analysis,
-  session encryption, evidence bundle, userbot hand-back, and control bot
-  validation.
+  session encryption, evidence bundle, in-session memory recall, userbot
+  hand-back, and control bot validation.
 
 ## Architecture
 
@@ -96,7 +97,7 @@ docker-compose.yml         Qdrant support service
 Prerequisites:
 
 - Python 3.11 or newer.
-- Docker, for Qdrant and the sandbox image.
+- Docker, for the sandbox image and optional Qdrant service.
 - `uv`, or another Python environment manager.
 - Telegram API credentials from `https://my.telegram.org`.
 - Telegram Bot API token from BotFather.
@@ -116,7 +117,9 @@ Copy-Item .env.example .env
 
 Then fill in the `HIVE_...` values in `.env`.
 
-Start Qdrant:
+L2 memory works out of the box with an offline keyword recall backend, so no
+external store is required. Qdrant is only needed for the optional semantic
+memory upgrade (`HIVE_USE_SEMANTIC_MEMORY=true`, backed by mem0):
 
 ```powershell
 docker compose up -d qdrant
@@ -141,8 +144,7 @@ Keep session files, `.env`, private keys, and evidence output out of git.
 
 ## Running
 
-After `.env`, the encrypted session, signing key, Qdrant, and sandbox image are
-ready:
+After `.env`, the encrypted session, signing key, and sandbox image are ready:
 
 ```powershell
 python -m hive
@@ -201,7 +203,7 @@ In this workspace, using the explicit venv interpreter avoids the WindowsApps
 Python shim. Expected current result:
 
 ```text
-93 passed, 1 warning
+99 passed, 1 warning
 ```
 
 Focused review-fix coverage:
@@ -216,9 +218,9 @@ D:\hive\.venv\Scripts\python.exe -m pytest tests/test_sandbox_runner.py tests/te
   offline test suite.
 - GLiNER model loading can be slow and may download model weights on first use.
 - `describe_image()` is still a placeholder for future vision fallback work.
-- Memory/Qdrant integration exists as a dependency target, but the active turn
-  pipeline currently focuses on the injected engine path and offline-testable
-  components.
+- In-session memory uses an offline keyword-recall backend by default; the
+  semantic mem0 + Qdrant backend (`HIVE_USE_SEMANTIC_MEMORY`) is opt-in and not
+  exercised by the offline test suite.
 - The Section 90A certificate text and signature tooling support evidence
   packaging; legal admissibility still depends on operator process, custody,
   and local legal requirements.

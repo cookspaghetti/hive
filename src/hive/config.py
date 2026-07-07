@@ -39,6 +39,8 @@ class Settings(BaseSettings):
 
     # Stores
     qdrant_url: str = "http://localhost:6333"
+    # L2 memory: False = offline KeywordMemory; True = semantic mem0+Qdrant
+    use_semantic_memory: bool = False
 
     # Signing
     signing_key_path: str = "./secrets/signing_key.pem"

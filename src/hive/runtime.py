@@ -112,9 +112,12 @@ class HiveEngine:
             )
             from hive.agent.graph_nodes import reason_and_reply
 
-            reply, tier = reason_and_reply(session, self.agent_client, route_inputs=route_inputs)
-            # Keep the agent in character if an injection/bot-probe was seen.
-            defense = persona_defense_note(screen_res)  # noqa: F841 (fed into prompt in build phase)
+            # S7: if an injection/bot-probe was seen, append the persona-defense
+            # note to the system prompt so the agent stays in character.
+            defense = persona_defense_note(screen_res)
+            reply, tier = reason_and_reply(
+                session, self.agent_client, route_inputs=route_inputs, defense_note=defense
+            )
 
             # 7. L1 middleware
             mw = apply_middleware(reply, session.persona, incoming_len=len(inbound.text))

@@ -52,6 +52,22 @@ class GlinerBackend:
         return [(e["label"], e["text"], float(e.get("score", 1.0))) for e in ents]
 
 
+_DEFAULT_BACKEND: NerBackend | None = None
+
+
+def get_default_backend(model_name: str = "urchade/gliner_multi-v2.1") -> NerBackend:
+    """Lazily load and cache a single GLiNER backend for the process.
+
+    Loading the model is expensive, so this is a process-wide singleton. Call
+    once at startup (build_engine) to avoid a first-turn latency spike.
+    """
+    global _DEFAULT_BACKEND
+    if _DEFAULT_BACKEND is None:
+        log.info("L3 NER: loading GLiNER model %s (first load is slow)", model_name)
+        _DEFAULT_BACKEND = GlinerBackend(model_name)
+    return _DEFAULT_BACKEND
+
+
 def extract_entities(
     text: str,
     source_msg_id: int,

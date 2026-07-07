@@ -1,9 +1,13 @@
 """Disposable browser runners for the Forensic Sandbox (fyp.txt L4).
 
 A runner navigates a suspect URL and returns raw findings. The real runner
-launches a fresh, network-locked, non-root Docker container running headless
+launches a fresh, isolated, non-privileged Docker container running headless
 Playwright, then destroys it. The runner is injected into `analyze_url` so the
 analysis logic is testable offline with a fake.
+
+Egress containment is best-effort at the docker level (dedicated bridge, no host
+mounts, dropped caps); full LAN/host denial additionally requires host firewall
+rules — see EGRESS_FIREWALL_HINT.
 
 Reference: OpenClaw Playwright/CDP sandbox; Hermes egress-isolation
 (reference-mapping.md L4).
@@ -17,6 +21,16 @@ from dataclasses import dataclass, field
 from typing import Protocol
 
 from hive.logging_setup import get_logger
+
+# Operator setup: to actually deny the sandbox network access to the host and
+# LAN (RFC1918), add firewall rules on the dedicated bridge subnet, e.g.:
+#   iptables -I DOCKER-USER -s <hive-sandbox-net subnet> \
+#            -d 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 -j DROP
+# This is required for the "deny host/LAN" guarantee; docker flags alone cannot.
+EGRESS_FIREWALL_HINT = (
+    "Add a DOCKER-USER iptables DROP rule for RFC1918 destinations from the "
+    "hive-sandbox-net subnet to enforce LAN/host isolation."
+)
 
 log = get_logger(__name__)
 
@@ -67,29 +81,58 @@ const { chromium } = require('playwright');
 
 
 class PlaywrightDockerRunner:
-    """Runs the Playwright script in a disposable, egress-locked container.
+    """Runs the Playwright script in a disposable, isolated container.
 
-    Hardening (fyp.txt L4 threat model):
-      --network per-URL locked (allow only the target; deny host/LAN)
-      --rm            container destroyed on exit
-      --user nobody   non-root
-      --read-only     no persistent writes except the mounted /out
-      --memory/--pids limits to contain runaway pages
+    Hardening actually applied by the docker flags below (fyp.txt L4):
+      --rm                         container destroyed on exit
+      --network <net>              attached to a dedicated bridge, not the host
+      --cap-drop ALL + no-new-priv non-privileged
+      --read-only + tmpfs          root FS read-only; only /tmp + /out writable
+      --memory/--pids              contain runaway pages
+      no host bind mounts except the /out screenshot dir
+
+    IMPORTANT — egress scope: docker flags alone give the container a private
+    bridge but do NOT by themselves block reaching the host's LAN/RFC1918
+    ranges (the default bridge masquerades outbound traffic). True LAN/host
+    denial requires host firewall rules on the dedicated network's subnet.
+    `ensure_network()` creates the network; `EGRESS_FIREWALL_HINT` documents the
+    iptables rules the operator must add. We therefore claim *containment*, not
+    full network lockdown, and say so honestly in the report.
     """
 
-    def __init__(self, image: str = "hive-sandbox:latest", out_dir: str = "/tmp/hive-sandbox") -> None:
+    def __init__(
+        self,
+        image: str = "hive-sandbox:latest",
+        out_dir: str = "/tmp/hive-sandbox",
+        network: str = "hive-sandbox-net",
+        dns: str = "1.1.1.1",
+    ) -> None:
         self.image = image
         self.out_dir = out_dir
+        self.network = network
+        self.dns = dns
+
+    @staticmethod
+    def ensure_network(name: str = "hive-sandbox-net") -> None:
+        """Create the dedicated sandbox bridge network if it does not exist."""
+        exists = subprocess.run(
+            ["docker", "network", "inspect", name], capture_output=True, text=True
+        ).returncode == 0
+        if not exists:
+            subprocess.run(["docker", "network", "create", "--driver", "bridge", name], check=True)
+            log.info("L4 sandbox: created network %s", name)
 
     def _docker_cmd(self, url: str) -> list[str]:
         return [
             "docker", "run", "--rm",
-            "--user", "nobody",
+            "--network", self.network,
             "--read-only",
+            "--tmpfs", "/tmp:rw,size=256m",
+            "-e", "HOME=/tmp",
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
             "--memory", "512m", "--pids-limit", "128",
-            "--dns", "1.1.1.1",
+            "--dns", self.dns,
             "-v", f"{self.out_dir}:/out",
             self.image, "node", "-e", _PLAYWRIGHT_SCRIPT, url,
         ]

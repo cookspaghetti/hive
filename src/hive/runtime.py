@@ -21,7 +21,7 @@ are injected so the engine is testable offline.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from hive.extraction.engine import extract_hvis
 from hive.extraction.ner import NerBackend
@@ -55,10 +55,27 @@ class HiveEngine:
     ner_backend: NerBackend | None = None
     enable_early_exit: bool = True
     early_exit_min_turns: int = 3   # don't bail before we've seen enough
+    # Factory(peer_id) -> MemoryBackend. Defaults to the offline KeywordMemory.
+    memory_factory: object = None
+    _memories: dict = field(default_factory=dict)
+
+    def _memory_for(self, peer_id: int):
+        mem = self._memories.get(peer_id)
+        if mem is None:
+            from hive.agent.memory import KeywordMemory
+            factory = self.memory_factory or (lambda pid: KeywordMemory(pid))
+            mem = factory(peer_id)
+            self._memories[peer_id] = mem
+        return mem
+
+    def forget(self, peer_id: int) -> None:
+        """Drop a conversation's memory (call when a takeover ends)."""
+        self._memories.pop(peer_id, None)
 
     def new_session(self, peer_id: int, persona: str) -> tuple[SessionState, HashChain]:
         s = SessionState(peer_id=peer_id, persona=persona, phase=Phase.ARMED)
         s.started_ts = time.time()
+        self._memory_for(peer_id)  # initialise memory for this conversation
         return s, HashChain()
 
     def process_turn(
@@ -73,6 +90,9 @@ class HiveEngine:
             session.messages.append(inbound)
             session.turn_count += 1
             chain.append({"event": "msg_in", "msg_id": inbound.msg_id, "text": inbound.text}, ts=inbound.ts)
+
+            memory = self._memory_for(session.peer_id)
+            memory.add("stranger", inbound.text)
 
             # 1. S7 guardrails
             screen_res = screen(inbound.text)
@@ -112,17 +132,25 @@ class HiveEngine:
             )
             from hive.agent.graph_nodes import reason_and_reply
 
+            # L2 memory: surface earlier disclosures relevant to this message.
+            recall = memory.recall(inbound.text)
+
             # S7: if an injection/bot-probe was seen, append the persona-defense
             # note to the system prompt so the agent stays in character.
             defense = persona_defense_note(screen_res)
             reply, tier = reason_and_reply(
-                session, self.agent_client, route_inputs=route_inputs, defense_note=defense
+                session,
+                self.agent_client,
+                recall=recall,
+                route_inputs=route_inputs,
+                defense_note=defense,
             )
 
             # 7. L1 middleware
             mw = apply_middleware(reply, session.persona, incoming_len=len(inbound.text))
             out_msg = Message(role="agent", text=mw.text, ts=time.time(), msg_id=inbound.msg_id + 1)
             session.messages.append(out_msg)
+            memory.add("agent", reply)
             chain.append({"event": "msg_out", "text": mw.text}, ts=out_msg.ts)
 
             log.info(
@@ -147,6 +175,7 @@ class HiveEngine:
         session.phase = Phase.CLOSING
         path = build_bundle(session, chain, out_path, key_path, operator_name=operator_name)
         session.phase = Phase.SEALED
+        self.forget(session.peer_id)  # release this conversation's memory
         log.info("session sealed: peer=%d verdict=%s bundle=%s", session.peer_id, session.verdict, path)
         return path
 
@@ -167,6 +196,7 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
     Loads the LLM client (Ollama Cloud), the disposable-container sandbox
     runner, and — optionally — the GLiNER NER backend (heavy first load).
     """
+    from hive.agent.memory import build_memory
     from hive.extraction.ner import get_default_backend
     from hive.llm.client import build_client
     from hive.sandbox.runner import PlaywrightDockerRunner
@@ -174,5 +204,11 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
     client = build_client(settings)
     runner = PlaywrightDockerRunner()
     ner = get_default_backend() if load_ner else None
-    log.info("build_engine: llm=%s ner=%s", settings.llm_model_cheap, bool(ner))
-    return HiveEngine(agent_client=client, sandbox_runner=runner, ner_backend=ner)
+    memory_factory = lambda pid: build_memory(pid, settings)  # noqa: E731
+    log.info(
+        "build_engine: llm=%s ner=%s semantic_memory=%s",
+        settings.llm_model_cheap, bool(ner), getattr(settings, "use_semantic_memory", False),
+    )
+    return HiveEngine(
+        agent_client=client, sandbox_runner=runner, ner_backend=ner, memory_factory=memory_factory
+    )

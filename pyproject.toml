@@ -21,6 +21,8 @@ dependencies = [
     "pyzbar>=0.1.9",
     "opencv-python>=4.9",
     "httpx>=0.27",
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
 ]
 
 [project.optional-dependencies]

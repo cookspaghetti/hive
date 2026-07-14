@@ -36,6 +36,20 @@ async def _run() -> None:
 
     await userbot.start()
     await control.start()
+
+    # Optional localhost web control panel (enabled when a token is set).
+    if settings.panel_token:
+        import uvicorn
+
+        from hive.webpanel import create_app
+
+        app = create_app(engine, userbot, settings)
+        server = uvicorn.Server(
+            uvicorn.Config(app, host=settings.panel_host, port=settings.panel_port, log_level="warning")
+        )
+        asyncio.create_task(server.serve())
+        log.info("HIVE web panel on http://%s:%d", settings.panel_host, settings.panel_port)
+
     log.info("HIVE running: userbot + control bot up. Ctrl-C to stop.")
     await userbot.run_forever()
 

@@ -23,18 +23,13 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from hive.extraction.engine import extract_hvis
+# Per-layer implementations are invoked by the LangGraph nodes in
+# hive.orchestrator; the engine only holds dependencies and drives the graph.
 from hive.extraction.ner import NerBackend
-from hive.guardrails.injection import persona_defense_note, screen
 from hive.llm.client import LLMClient
-from hive.llm.router import RouteInputs
 from hive.logging_setup import bind_session, get_logger, reset_session
-from hive.middleware.pipeline import apply as apply_middleware
-from hive.sandbox.analyzer import analyze_url
 from hive.sandbox.runner import BrowserRunner
-from hive.state import Message, Phase, SessionState
-from hive.verdict.classifier import classify_soft
-from hive.verdict.engine import update_verdict
+from hive.state import Phase, SessionState
 from hive.vault.hashchain import HashChain
 
 log = get_logger(__name__)
@@ -45,6 +40,8 @@ class TurnOutput:
     text: str | None          # reply to send (None if handing back / no reply)
     delay_s: float = 0.0      # tarpit delay before sending
     handed_back: bool = False  # early-exit: conversation deemed benign
+    terminated: bool = False   # budget exhausted (max_turns / max_duration)
+    reason: str = ""           # "" | "benign" | "max_turns" | "max_duration"
     verdict: str = "inconclusive"
 
 
@@ -55,9 +52,18 @@ class HiveEngine:
     ner_backend: NerBackend | None = None
     enable_early_exit: bool = True
     early_exit_min_turns: int = 3   # don't bail before we've seen enough
+    max_turns: int = 60             # 0 disables; else terminate past this
+    max_session_minutes: int = 120  # 0 disables; else terminate past this
     # Factory(peer_id) -> MemoryBackend. Defaults to the offline KeywordMemory.
     memory_factory: object = None
     _memories: dict = field(default_factory=dict)
+    _compiled: object = None        # cached compiled LangGraph turn graph
+
+    def _graph(self):
+        if self._compiled is None:
+            from hive.orchestrator import build_turn_graph
+            self._compiled = build_turn_graph(self)
+        return self._compiled
 
     def _memory_for(self, peer_id: int):
         mem = self._memories.get(peer_id)
@@ -84,80 +90,19 @@ class HiveEngine:
         chain: HashChain,
         inbound: Message,
     ) -> TurnOutput:
+        """Run one inbound message through the LangGraph turn pipeline."""
         token = bind_session(session.peer_id)
         try:
-            session.phase = Phase.ACTIVE
-            session.messages.append(inbound)
-            session.turn_count += 1
-            chain.append({"event": "msg_in", "msg_id": inbound.msg_id, "text": inbound.text}, ts=inbound.ts)
-
-            memory = self._memory_for(session.peer_id)
-            memory.add("stranger", inbound.text)
-
-            # 1. S7 guardrails
-            screen_res = screen(inbound.text)
-
-            # 2. L3 extraction
-            hvis = extract_hvis(inbound.text, inbound.msg_id, ner_backend=self.ner_backend)
-            for h in hvis:
-                session.hvis.append(h)
-                chain.append({"event": "hvi", "kind": h.kind, "value": h.value}, ts=time.time())
-
-            # 3. L4 sandbox for any URL HVIs
-            for h in [x for x in hvis if x.kind == "url"]:
-                session.phase = Phase.PROBING
-                result = analyze_url(h.value, self.sandbox_runner)
-                session.sandbox_results.append(result)
-                chain.append({"event": "sandbox", "url": h.value, "signal": result.get("verdict_signal")}, ts=time.time())
-            session.phase = Phase.ACTIVE
-
-            # 4. S6 verdict (soft signals via light-tier classifier)
-            soft = classify_soft(session, self.agent_client)
-            verdict = update_verdict(session, soft=soft)
-
-            # 5. Safeguard: early-exit hand-back if benign
-            if (
-                self.enable_early_exit
-                and verdict == "likely_benign"
-                and session.turn_count >= self.early_exit_min_turns
-            ):
-                session.phase = Phase.CLOSING
-                log.info("Safeguard: early-exit, handing conversation back (benign)")
-                return TurnOutput(text=None, handed_back=True, verdict=verdict)
-
-            # 6. L2 reason with model-tier routing (S7 escalates on injection)
-            route_inputs = RouteInputs(
-                injection_flagged=screen_res.flagged,
-                eliciting_hvi=False,
+            final = self._graph().invoke({"session": session, "chain": chain, "inbound": inbound})
+            reason = final.get("reason", "")
+            return TurnOutput(
+                text=final.get("outbound"),
+                delay_s=final.get("delay_s", 0.0),
+                handed_back=(reason == "benign"),
+                terminated=bool(final.get("terminate")) and reason in ("max_turns", "max_duration"),
+                reason=reason,
+                verdict=final.get("verdict", session.verdict),
             )
-            from hive.agent.graph_nodes import reason_and_reply
-
-            # L2 memory: surface earlier disclosures relevant to this message.
-            recall = memory.recall(inbound.text)
-
-            # S7: if an injection/bot-probe was seen, append the persona-defense
-            # note to the system prompt so the agent stays in character.
-            defense = persona_defense_note(screen_res)
-            reply, tier = reason_and_reply(
-                session,
-                self.agent_client,
-                recall=recall,
-                route_inputs=route_inputs,
-                defense_note=defense,
-            )
-
-            # 7. L1 middleware
-            mw = apply_middleware(reply, session.persona, incoming_len=len(inbound.text))
-            out_msg = Message(role="agent", text=mw.text, ts=time.time(), msg_id=inbound.msg_id + 1)
-            session.messages.append(out_msg)
-            memory.add("agent", reply)
-            chain.append({"event": "msg_out", "text": mw.text}, ts=out_msg.ts)
-
-            log.info(
-                "turn done: tier=%s verdict=%s delay=%.1fs hvis+=%d",
-                tier.value, verdict, mw.delay_s, len(hvis),
-            )
-            return TurnOutput(text=mw.text, delay_s=mw.delay_s, verdict=verdict)
         finally:
             reset_session(token)
 
@@ -210,5 +155,10 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
         settings.llm_model_cheap, bool(ner), getattr(settings, "use_semantic_memory", False),
     )
     return HiveEngine(
-        agent_client=client, sandbox_runner=runner, ner_backend=ner, memory_factory=memory_factory
+        agent_client=client,
+        sandbox_runner=runner,
+        ner_backend=ner,
+        memory_factory=memory_factory,
+        max_turns=getattr(settings, "max_turns", 60),
+        max_session_minutes=getattr(settings, "max_session_minutes", 120),
     )

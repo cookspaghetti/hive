@@ -69,12 +69,14 @@ class UserbotTransport:
             return
         session, chain = entry
         out = self.engine.process_turn(session, chain, Message("stranger", text, ts, msg_id))
-        if out.handed_back:
-            # Safeguard: conversation deemed benign. Stop intercepting this peer
-            # so subsequent messages flow to the user normally, and drop the
-            # session so we don't keep taking over.
+        if out.handed_back or out.terminated:
+            # Stop intercepting this peer. handed_back = benign safeguard;
+            # terminated = turn/duration budget exhausted (fyp.txt S8). Either
+            # way, drop the session and let the operator seal via /stop.
             self.end_takeover(peer_id)
-            log.info("userbot: benign, ended takeover and handed back peer=%s", peer_id)
+            log.info(
+                "userbot: ending takeover peer=%s (reason=%s)", peer_id, out.reason or "benign"
+            )
             if self.on_handback is not None:
                 await self.on_handback(peer_id, session)
             return

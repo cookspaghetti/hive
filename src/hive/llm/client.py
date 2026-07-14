@@ -110,6 +110,38 @@ class LLMClient:
         )
 
 
+class VisionClient:
+    """Multimodal client for the L3 vision fallback (Qwen via Ollama).
+
+    Sends an image (as a base64 data URL) plus a prompt using the OpenAI-
+    compatible multimodal message shape, and returns the model's text. Shares
+    the injectable backend so tests can run offline.
+    """
+
+    def __init__(self, backend: ChatBackend, model: str) -> None:
+        self._backend = backend
+        self._model = model
+
+    def describe(self, data_url: str, prompt: str) -> str:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                ],
+            }
+        ]
+        try:
+            raw = self._backend.chat(self._model, messages, temperature=0.0)
+        except Exception as exc:  # noqa: BLE001
+            log.error("vision call failed: model=%s err=%s", self._model, exc)
+            raise
+        text = raw["choices"][0]["message"]["content"]
+        log.info("vision call ok: model=%s chars=%d", self._model, len(text))
+        return text
+
+
 def build_client(settings) -> LLMClient:
     """Construct a real Ollama-backed client from Settings."""
     backend = OllamaBackend(settings.llm_base_url, settings.llm_api_key)
@@ -119,3 +151,9 @@ def build_client(settings) -> LLMClient:
         Tier.LIGHT: settings.llm_model_light,
     }
     return LLMClient(backend, models)
+
+
+def build_vision_client(settings) -> VisionClient:
+    """Construct the Ollama-backed vision client from Settings."""
+    backend = OllamaBackend(settings.llm_base_url, settings.llm_api_key)
+    return VisionClient(backend, settings.vision_model)

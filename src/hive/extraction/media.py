@@ -54,10 +54,51 @@ def decode_qr(image_path: str, source_msg_id: int) -> list[HVI]:
     return hvis
 
 
-def describe_image(image_path: str, vision_client: object) -> str:
-    """Fallback vision-model description for unstructured images.
+_VISION_PROMPT = (
+    "You are assisting an anti-scam analyst. Describe this image factually and "
+    "concisely. Transcribe any visible text verbatim, and call out bank names, "
+    "account numbers, phone numbers, URLs, or payment/transfer details if "
+    "present. Do not speculate."
+)
 
-    TODO(L3): call the external vision model (Qwen via Ollama Cloud). MINIMISE /
-    redact the user's own data before sending (PDPA, fyp.txt S10).
+
+def _encode_data_url(image_path: str) -> str:
+    """Read an image and return a base64 data URL (lazy imports)."""
+    import base64
+    import mimetypes
+
+    mime = mimetypes.guess_type(image_path)[0] or "image/png"
+    with open(image_path, "rb") as fh:
+        b64 = base64.b64encode(fh.read()).decode("ascii")
+    return f"data:{mime};base64,{b64}"
+
+
+def describe_image(image_path: str, vision_client) -> str:
+    """Fallback vision-model description for unstructured images (fyp.txt L3).
+
+    Used only when local structured extraction (QR/regex) finds nothing. Sends
+    the image to the external vision model (Qwen via Ollama Cloud) — a
+    third-party disclosure, so apply it only to scammer-supplied media, never
+    the user's own data (PDPA, fyp.txt S10). The returned text is fed back
+    through the regex HVI pipeline by the caller.
+
+    `vision_client` must expose `describe(data_url: str, prompt: str) -> str`.
     """
-    raise NotImplementedError
+    data_url = _encode_data_url(image_path)
+    text = vision_client.describe(data_url, _VISION_PROMPT)
+    log.info("L3 media: vision model described image (%d chars)", len(text))
+    return text
+
+
+def extract_from_image(image_path: str, source_msg_id: int, vision_client=None) -> list[HVI]:
+    """Tiered image extraction (fyp.txt L3): local QR first, vision fallback.
+
+    Tries local QR decoding; if nothing structured is found and a vision client
+    is supplied, describes the image and runs the description through the regex
+    HVI pipeline. Keeps processing local/free by default.
+    """
+    hvis = decode_qr(image_path, source_msg_id)
+    if hvis or vision_client is None:
+        return hvis
+    description = describe_image(image_path, vision_client)
+    return classify_payload(description, source_msg_id)

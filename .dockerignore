@@ -1,0 +1,34 @@
+# Keep secrets and cruft out of the build context.
+.git
+.github
+.venv
+venv
+__pycache__
+**/__pycache__
+*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Secrets / credentials (never bake into an image)
+.env
+.env.*
+!.env.example
+*.session
+*.session-journal
+*.pem
+*.key
+secrets/
+keys/
+
+# Runtime output
+evidence/
+*.evidence.pdf
+qdrant_storage/
+*.sqlite3
+
+# Docs / local
+docs/
+*.md
+!README.md
+uv.lock

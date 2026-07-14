@@ -1,10 +1,31 @@
-# HIVE supporting services.
-# The forensic sandbox (Layer 4) launches its own disposable, network-locked
-# containers per URL at runtime; it is NOT defined here.
+# HIVE stack.
+# `hive` is the containerized agent (Docker-in-Docker: it runs its own inner
+# daemon and spawns the disposable Layer 4 sandbox containers itself).
+# `qdrant` is optional, only needed for semantic memory.
 services:
+  hive:
+    build: .
+    image: hive:latest
+    privileged: true          # required for the inner Docker daemon (DinD)
+    env_file: .env
+    environment:
+      # Inside the container the panel must bind all interfaces so the published
+      # port can reach it; host exposure stays loopback-only via the mapping.
+      - HIVE_PANEL_HOST=0.0.0.0
+    ports:
+      - "127.0.0.1:9130:9130"  # web panel, reachable only from the host loopback
+    volumes:
+      - hive_dind:/var/lib/docker   # persist the inner daemon's images/layers
+      - ./secrets:/app/secrets:ro    # encrypted session + signing key (read-only)
+      - ./evidence:/app/evidence     # sealed evidence bundles land here
+    restart: unless-stopped
+
   qdrant:
     image: qdrant/qdrant:latest
     ports:
       - "6333:6333"
     volumes:
       - ./qdrant_storage:/qdrant/storage
+
+volumes:
+  hive_dind:

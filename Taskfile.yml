@@ -1,0 +1,120 @@
+# HIVE task runner (https://taskfile.dev).
+# Install go-task, then run e.g. `task test` or `task docker:build`.
+# List everything with `task` or `task --list`.
+version: "3"
+
+vars:
+  SANDBOX_IMAGE: hive-sandbox:latest
+  SANDBOX_NET: hive-sandbox-net
+  APP_IMAGE: hive:latest
+  PANEL_PORT: "9130"
+
+tasks:
+  default:
+    desc: List available tasks
+    cmds:
+      - task --list
+    silent: true
+
+  install:
+    desc: Install dependencies (incl. dev extras) with uv
+    cmds:
+      - uv sync --extra dev
+
+  test:
+    desc: Run the full test suite
+    cmds:
+      - uv run pytest -q
+
+  test:review:
+    desc: Run the focused review-fix + web-panel suites
+    cmds:
+      - uv run pytest tests/test_sandbox_runner.py tests/test_userbot.py tests/test_prompt_defense.py tests/test_control_bot.py tests/test_webpanel.py -q
+
+  lint:
+    desc: Lint with ruff
+    cmds:
+      - uv run ruff check src tests
+
+  format:
+    desc: Auto-fix lint + formatting with ruff
+    cmds:
+      - uv run ruff check --fix src tests
+      - uv run ruff format src tests
+
+  typecheck:
+    desc: Static type check with mypy
+    cmds:
+      - uv run mypy src
+
+  check:
+    desc: Lint, typecheck, and test (pre-commit gate)
+    cmds:
+      - task: lint
+      - task: typecheck
+      - task: test
+
+  docker:build:
+    desc: Build the disposable forensic sandbox image
+    cmds:
+      - docker build -t {{.SANDBOX_IMAGE}} docker/sandbox
+
+  docker:build:app:
+    desc: Build the full HIVE agent image (Docker-in-Docker)
+    cmds:
+      - docker build -t {{.APP_IMAGE}} .
+
+  bootstrap:
+    desc: One-time interactive Telegram login -> encrypted session + signing key
+    cmds:
+      - uv run python scripts/bootstrap_session.py
+
+  docker:run:
+    desc: Run the containerized HIVE agent via compose (privileged DinD; needs .env + secrets)
+    cmds:
+      - docker compose up --build hive
+
+  docker:verify:
+    desc: Boot the container's DinD + build sandbox and exit (no creds needed)
+    deps: [docker:build:app]
+    cmds:
+      - docker run --rm --privileged -e HIVE_VERIFY_ONLY=1 {{.APP_IMAGE}}
+
+  docker:smoke:
+    desc: Verify Playwright resolves inside the sandbox image
+    deps: [docker:build]
+    cmds:
+      - >-
+        docker run --rm {{.SANDBOX_IMAGE}}
+        node -e "console.log(require('playwright').chromium ? 'playwright ok' : 'missing')"
+
+  sandbox:net:
+    desc: Create the dedicated sandbox bridge network (no-op if it exists)
+    cmds:
+      - >-
+        docker network inspect {{.SANDBOX_NET}} > /dev/null 2>&1 ||
+        docker network create --driver bridge {{.SANDBOX_NET}}
+
+  qdrant:up:
+    desc: Start the optional Qdrant service (only needed for semantic memory)
+    cmds:
+      - docker compose up -d qdrant
+
+  qdrant:down:
+    desc: Stop supporting services
+    cmds:
+      - docker compose down
+
+  run:
+    desc: Run HIVE (requires a filled-in .env, encrypted session, and signing key)
+    cmds:
+      - uv run python -m hive
+
+  clean:
+    desc: Remove Python caches and tool artefacts
+    cmds:
+      - >-
+        uv run python -c "import shutil, glob;
+        [shutil.rmtree(p, ignore_errors=True) for p in
+        glob.glob('**/__pycache__', recursive=True) +
+        ['.pytest_cache', '.ruff_cache', '.mypy_cache']]"

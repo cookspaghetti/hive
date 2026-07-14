@@ -5,7 +5,9 @@
 # RSA / signing keys
 *.pem
 *.key
+*.pub
 keys/
+secrets/
 # Environment
 .env
 .env.*
@@ -38,4 +40,5 @@ qdrant_storage/
 # --- IDE / OS ---
 .idea/
 .vscode/
+.claude/
 .DS_Store

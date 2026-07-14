@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.svg" alt="HIVE logo" width="140"></p>
+
 # HIVE - Honeypot for Intelligence, Verdict & Evidence
 
 HIVE is a research prototype for Telegram anti-scam operations. When an operator
@@ -172,6 +174,35 @@ small_business_owner
 the summary, and attaches the generated PDF. If the engine decides the chat is
 likely benign after enough turns, the userbot ends the takeover automatically
 and notifies the operator.
+
+## Docker Deployment
+
+The whole agent can run containerized. Because HIVE spawns the Layer 4 sandbox
+containers itself, the image runs **Docker-in-Docker**: it starts its own inner
+Docker daemon and builds/launches the sandbox inside it, isolated from the host
+daemon.
+
+```powershell
+task docker:build:app     # build hive:latest
+task docker:run           # run privileged, load .env, publish panel on 9130
+```
+
+or with compose (brings up the agent + optional Qdrant):
+
+```powershell
+docker compose up --build
+```
+
+The container needs `--privileged` (compose sets `privileged: true`) so the
+inner daemon can run. On first start the entrypoint launches `dockerd`, builds
+the `hive-sandbox` image inside it, then runs `python -m hive`. Sealed evidence
+is written to the mounted `./evidence` directory.
+
+> Security trade-off: a privileged Docker-in-Docker container has broad kernel
+> capabilities on the host. This is an accepted cost for a self-contained
+> research prototype and is documented here deliberately; a hardened deployment
+> would instead use a rootless/sysbox runtime or a dedicated VM. The GLiNER
+> dependency also pulls in PyTorch, so the image is large.
 
 ## Sandbox Notes
 

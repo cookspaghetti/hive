@@ -42,6 +42,11 @@ class Settings(BaseSettings):
     # L2 memory: False = offline KeywordMemory; True = semantic mem0+Qdrant
     use_semantic_memory: bool = False
 
+    # Web control panel (localhost only). Empty token disables the panel.
+    panel_token: str = ""
+    panel_host: str = "127.0.0.1"
+    panel_port: int = 9130
+
     # Signing
     signing_key_path: str = "./secrets/signing_key.pem"
 

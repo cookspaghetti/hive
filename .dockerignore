@@ -31,4 +31,3 @@ qdrant_storage/
 docs/
 *.md
 !README.md
-uv.lock

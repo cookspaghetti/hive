@@ -9,9 +9,9 @@
 # Build:  docker build -t hive:latest .
 # Run:    docker run --rm --privileged --env-file .env -p 9130:9130 hive:latest
 #
-# Caching: `docker/` is copied AFTER the dependency install and a BuildKit uv
-# cache mount is used, so editing the entrypoint or source does NOT re-download
-# the (large, torch-heavy) dependency set.
+# Caching: locked dependencies are installed before application source is
+# copied. Source-only edits therefore create a small final layer instead of
+# repacking the large Torch/CUDA environment.
 #
 # NOTE: GLiNER pulls in torch, so the image is large. Set HIVE load_ner off
 # (build_engine(..., load_ner=False)) or trim deps for a slim variant.
@@ -19,7 +19,11 @@
 FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1 \
-    DOCKER_TLS_CERTDIR=""
+    DOCKER_TLS_CERTDIR="" \
+    HF_HUB_DISABLE_PROGRESS_BARS=1 \
+    HF_HUB_DISABLE_SYMLINKS_WARNING=1 \
+    PATH="/app/.venv/bin:$PATH" \
+    PYTHONPATH="/app/src"
 
 # libs for pyzbar + opencv (slim, no recommends).
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -40,12 +44,13 @@ RUN apt-get update && apt-get install -y docker.io \
 RUN --mount=type=cache,target=/root/.cache/pip pip install uv
 
 WORKDIR /app
-# Dependency install layer: depends ONLY on the package metadata + source, and
-# uses a persistent uv download cache. Editing docker/ or configs below will not
-# invalidate this layer, so torch etc. are not re-downloaded on every build.
-COPY pyproject.toml README.md ./
+# Heavy dependency layer: invalidated only by dependency metadata or uv.lock.
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-dev --no-install-project --link-mode=copy
+
+# Application code remains a thin layer and runs directly from /app/src.
 COPY src ./src
-RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system .
 
 # Runtime-only files, copied AFTER the heavy install so edits here are cheap.
 COPY docker ./docker
@@ -54,5 +59,8 @@ RUN chmod +x /usr/local/bin/hive-entrypoint.sh
 
 # Web control panel (localhost inside the container; publish with -p at run).
 EXPOSE 9130
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:9130/health', timeout=3)" || exit 1
 
 ENTRYPOINT ["/usr/local/bin/hive-entrypoint.sh"]

@@ -5,9 +5,7 @@ version: "3"
 
 vars:
   SANDBOX_IMAGE: hive-sandbox:latest
-  SANDBOX_NET: hive-sandbox-net
   APP_IMAGE: hive:latest
-  PANEL_PORT: "9130"
 
 tasks:
   default:
@@ -69,11 +67,6 @@ tasks:
     cmds:
       - uv run python scripts/bootstrap_session.py
 
-  docker:run:
-    desc: Run the containerized HIVE agent via compose (privileged DinD; needs .env + secrets)
-    cmds:
-      - docker compose up --build hive
-
   docker:verify:
     desc: Boot the container's DinD + build sandbox and exit (no creds needed)
     deps: [docker:build:app]
@@ -88,13 +81,6 @@ tasks:
         docker run --rm {{.SANDBOX_IMAGE}}
         node -e "console.log(require('playwright').chromium ? 'playwright ok' : 'missing')"
 
-  sandbox:net:
-    desc: Create the dedicated sandbox bridge network (no-op if it exists)
-    cmds:
-      - >-
-        docker network inspect {{.SANDBOX_NET}} > /dev/null 2>&1 ||
-        docker network create --driver bridge {{.SANDBOX_NET}}
-
   qdrant:up:
     desc: Start the optional Qdrant service (only needed for semantic memory)
     cmds:
@@ -106,9 +92,9 @@ tasks:
       - docker compose down
 
   run:
-    desc: Run HIVE (requires a filled-in .env, encrypted session, and signing key)
+    desc: Build and run HIVE via Docker Compose (panel on 127.0.0.1:9130)
     cmds:
-      - uv run python -m hive
+      - docker compose up --build hive
 
   clean:
     desc: Remove Python caches and tool artefacts

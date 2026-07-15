@@ -11,6 +11,8 @@ download.
 
 from __future__ import annotations
 
+import time
+import warnings
 from typing import Protocol
 
 from hive.logging_setup import get_logger
@@ -41,7 +43,11 @@ class GlinerBackend:
     """Real GLiNER2 backend. Lazily imports `gliner` so the package is only
     required in production, not in tests."""
 
-    def __init__(self, model_name: str = "urchade/gliner_multi-v2.1", threshold: float = 0.5) -> None:
+    def __init__(
+        self,
+        model_name: str = "urchade/gliner_multi-v2.1",
+        threshold: float = 0.5,
+    ) -> None:
         from gliner import GLiNER  # lazy import
 
         self._model = GLiNER.from_pretrained(model_name)
@@ -63,8 +69,23 @@ def get_default_backend(model_name: str = "urchade/gliner_multi-v2.1") -> NerBac
     """
     global _DEFAULT_BACKEND
     if _DEFAULT_BACKEND is None:
-        log.info("L3 NER: loading GLiNER model %s (first load is slow)", model_name)
-        _DEFAULT_BACKEND = GlinerBackend(model_name)
+        started = time.perf_counter()
+        log.info(
+            "[startup][ner] INITIALIZING GLiNER model=%s first_load_may_download",
+            model_name,
+        )
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=r"The `resume_download` argument is deprecated.*",
+                category=UserWarning,
+            )
+            _DEFAULT_BACKEND = GlinerBackend(model_name)
+        log.info(
+            "[startup][ner] READY model=%s duration=%.2fs",
+            model_name,
+            time.perf_counter() - started,
+        )
     return _DEFAULT_BACKEND
 
 
@@ -79,6 +100,13 @@ def extract_entities(
     hvis: list[HVI] = []
     for label, value, score in backend.predict(text, labels):
         kind = LABEL_TO_KIND.get(label.lower(), label.lower().replace(" ", "_"))
-        hvis.append(HVI(kind=kind, value=value.strip(), source_msg_id=source_msg_id, confidence=score))
+        hvis.append(
+            HVI(
+                kind=kind,
+                value=value.strip(),
+                source_msg_id=source_msg_id,
+                confidence=score,
+            )
+        )
     log.info("L3 NER: msg=%d entities=%d", source_msg_id, len(hvis))
     return hvis

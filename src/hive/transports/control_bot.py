@@ -2,6 +2,8 @@
 
 A separate @Bot the operator chats with to drive the system. Every command is
 gated to HIVE_OPERATOR_ID. Commands:
+    /start, /help                 show the command reference
+    /chats                        list recent private incoming chats
     /takeover <peer_id> [persona]  begin a takeover on the userbot
     /persona <name>                set the default persona for new takeovers
     /stop <peer_id>                kill switch: reclaim, seal evidence, report
@@ -23,6 +25,15 @@ from hive.transports.userbot import UserbotTransport
 log = get_logger(__name__)
 
 VALID_PERSONAS = set(PERSONAS)
+HELP_TEXT = (
+    "HIVE control bot\n\n"
+    "/chats - list recent incoming private chats\n"
+    "/takeover <peer_id> [persona] - start a takeover\n"
+    "/persona <name> - set the default persona\n"
+    "/status <peer_id> - show an active takeover summary\n"
+    "/stop <peer_id> - stop, seal, and export evidence\n"
+    "/help - show this command reference"
+)
 
 
 class ControlBot:
@@ -60,17 +71,44 @@ class ControlBot:
         log.info("control bot: notified operator of hand-back peer=%s", peer_id)
 
     async def start(self) -> None:  # pragma: no cover - needs live telegram
-        from telegram.ext import Application, CommandHandler
+        from telegram import BotCommand
+        from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
         self._app = Application.builder().token(self.settings.control_bot_token).build()
+        self._app.add_handler(CommandHandler("start", self._cmd_help))
+        self._app.add_handler(CommandHandler("help", self._cmd_help))
+        self._app.add_handler(CommandHandler("chats", self._cmd_chats))
         self._app.add_handler(CommandHandler("takeover", self._cmd_takeover))
         self._app.add_handler(CommandHandler("persona", self._cmd_persona))
         self._app.add_handler(CommandHandler("stop", self._cmd_stop))
         self._app.add_handler(CommandHandler("status", self._cmd_status))
+        self._app.add_handler(MessageHandler(filters.TEXT, self._cmd_fallback))
         await self._app.initialize()
+        await self._app.bot.set_my_commands(
+            [
+                BotCommand("chats", "List recent incoming chats"),
+                BotCommand("takeover", "Start a takeover by peer ID"),
+                BotCommand("persona", "Set the default persona"),
+                BotCommand("status", "Show an active takeover"),
+                BotCommand("stop", "Stop and seal a takeover"),
+                BotCommand("help", "Show available commands"),
+            ]
+        )
         await self._app.start()
         await self._app.updater.start_polling()
         log.info("control bot: polling started")
+
+    async def stop(self) -> None:  # pragma: no cover - needs live telegram
+        """Stop polling and release the Bot API application."""
+        if self._app is None:
+            return
+        if self._app.updater.running:
+            await self._app.updater.stop()
+        if self._app.running:
+            await self._app.stop()
+        await self._app.shutdown()
+        self._app = None
+        log.info("control bot: stopped")
 
     # --- command handlers (thin wrappers around testable logic) ---
 
@@ -92,6 +130,32 @@ class ControlBot:
         except (ValueError, TypeError):
             await update.message.reply_text(usage)
             return None
+
+    async def _cmd_help(self, update, context):  # pragma: no cover
+        if not await self._guard(update):
+            return
+        await update.message.reply_text(HELP_TEXT)
+
+    async def _cmd_fallback(self, update, context):  # pragma: no cover
+        if not await self._guard(update):
+            return
+        await update.message.reply_text("Use one of the commands below.\n\n" + HELP_TEXT)
+
+    async def _cmd_chats(self, update, context):  # pragma: no cover
+        if not await self._guard(update):
+            return
+        chats = self.userbot.list_observed_chats()
+        if not chats:
+            await update.message.reply_text("No recent incoming private chats.")
+            return
+        lines = ["Recent incoming private chats:"]
+        for chat in chats[:10]:
+            account = str(chat["name"] or f"Peer {chat['peer_id']}")
+            if chat["username"]:
+                account += f" (@{chat['username']})"
+            state = "active" if chat["active"] else "available"
+            lines.append(f"{chat['peer_id']}: {account} [{state}]")
+        await update.message.reply_text("\n".join(lines))
 
     async def _cmd_takeover(self, update, context):  # pragma: no cover
         if not await self._guard(update):

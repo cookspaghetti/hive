@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.svg" alt="HIVE logo" width="140"></p>
+<p align="center"><img src="src/hive/webpanel/resources/logo.png" alt="HIVE logo" width="140"></p>
 
 # HIVE - Honeypot for Intelligence, Verdict & Evidence
 
@@ -84,6 +84,7 @@ src/hive/
   guardrails/              Prompt-injection and bot-probe screening
   llm/                     OpenAI-compatible client and tier router
   middleware/              Human-emulation text and delay middleware
+  provisioning/            Safe env storage and Telegram login state
   sandbox/                 Docker Playwright URL analysis
   security/                Encrypted Telethon session store
   transports/              Telethon userbot and Bot API control bot
@@ -111,13 +112,22 @@ Install dependencies:
 uv sync --extra dev
 ```
 
-Create local config:
+Start HIVE's localhost control panel:
 
 ```powershell
-Copy-Item .env.example .env
+task run
 ```
 
-Then fill in the `HIVE_...` values in `.env`.
+Open `http://127.0.0.1:9130`. The same durable panel configures the LLM,
+verifies the Bot API token, authorizes the Telethon user account (including
+2FA), encrypts its session, and creates the evidence signing key. Telegram
+starts automatically once the setup checklist is complete. Credential changes
+can be applied by restarting only the managed agent runtime; the panel remains
+available throughout.
+
+For headless or terminal-only setup, copy `.env.example` to `.env`, fill in
+the required values, then run `task bootstrap` for the interactive Telethon
+login and signing key generation.
 
 L2 memory works out of the box with an offline keyword recall backend, so no
 external store is required. Qdrant is only needed for the optional semantic
@@ -137,8 +147,8 @@ docker build -t hive-sandbox:latest docker/sandbox
 
 HIVE expects an encrypted Telethon `StringSession` at
 `HIVE_TG_SESSION_PATH` and decrypts it with `HIVE_SESSION_PASSPHRASE`.
-The repository provides the storage functions in
-`hive.security.session_store`, but not a login/bootstrap CLI.
+The control panel provisions it in the browser; `task bootstrap` provides the
+equivalent terminal flow. The session string is never written in plaintext.
 
 The evidence signer expects an RSA private key at `HIVE_SIGNING_KEY_PATH`.
 For development, `hive.vault.signer.generate_keypair()` can generate one.
@@ -146,10 +156,10 @@ Keep session files, `.env`, private keys, and evidence output out of git.
 
 ## Running
 
-After `.env`, the encrypted session, signing key, and sandbox image are ready:
+The panel remains available before, during, and after setup:
 
 ```powershell
-python -m hive
+task run
 ```
 
 Control bot commands:
@@ -177,26 +187,31 @@ and notifies the operator.
 
 ## Docker Deployment
 
-The whole agent can run containerized. Because HIVE spawns the Layer 4 sandbox
+The agent runs containerized. Because HIVE spawns the Layer 4 sandbox
 containers itself, the image runs **Docker-in-Docker**: it starts its own inner
 Docker daemon and builds/launches the sandbox inside it, isolated from the host
 daemon.
 
 ```powershell
-task docker:build:app     # build hive:latest
-task docker:run           # run privileged, load .env, publish panel on 9130
+task run                  # build, run, and publish the panel on 127.0.0.1:9130
 ```
 
-or with compose (brings up the agent + optional Qdrant):
+The equivalent Compose command is:
 
 ```powershell
-docker compose up --build
+docker compose up --build hive
 ```
 
 The container needs `--privileged` (compose sets `privileged: true`) so the
 inner daemon can run. On first start the entrypoint launches `dockerd`, builds
 the `hive-sandbox` image inside it, then runs `python -m hive`. Sealed evidence
 is written to the mounted `./evidence` directory.
+
+GLiNER/Hugging Face model files are stored in the persistent
+`hive_model_cache` Docker volume. The first `task run` still downloads the
+weights, but later container rebuilds and recreations reuse them. A normal
+`docker compose down` preserves this cache; `docker compose down --volumes`
+removes it.
 
 > Security trade-off: a privileged Docker-in-Docker container has broad kernel
 > capabilities on the host. This is an accepted cost for a self-contained
@@ -247,7 +262,8 @@ D:\hive\.venv\Scripts\python.exe -m pytest tests/test_sandbox_runner.py tests/te
 
 - Live Telegram behavior requires real credentials and is not exercised by the
   offline test suite.
-- GLiNER model loading can be slow and may download model weights on first use.
+- GLiNER model loading can be slow on first use while its weights populate the
+  persistent `hive_model_cache` volume.
 - `describe_image()` is still a placeholder for future vision fallback work.
 - In-session memory uses an offline keyword-recall backend by default; the
   semantic mem0 + Qdrant backend (`HIVE_USE_SEMANTIC_MEMORY`) is opt-in and not

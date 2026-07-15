@@ -5,7 +5,7 @@ description = "HIVE — Honeypot for Intelligence, Verdict & Evidence. A decepti
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Tho Kai Syuen", email = "alex.tho@tesserac.ai" }]
+authors = [{ name = "Tho Kai Syuen", email = "TP070466@mail.apu.edu.my" }]
 
 dependencies = [
     "langgraph>=0.2",
@@ -18,6 +18,7 @@ dependencies = [
     "telethon>=1.36",
     "python-telegram-bot>=21.0",
     "pydantic-settings>=2.3",
+    "python-dotenv>=1.0",
     "pyzbar>=0.1.9",
     "opencv-python>=4.9",
     "httpx>=0.27",

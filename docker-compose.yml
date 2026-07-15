@@ -12,11 +12,14 @@ services:
       # Inside the container the panel must bind all interfaces so the published
       # port can reach it; host exposure stays loopback-only via the mapping.
       - HIVE_PANEL_HOST=0.0.0.0
+      - HIVE_PANEL_ALLOW_NON_LOOPBACK=true
     ports:
       - "127.0.0.1:9130:9130"  # web panel, reachable only from the host loopback
     volumes:
       - hive_dind:/var/lib/docker   # persist the inner daemon's images/layers
-      - ./secrets:/app/secrets:ro    # encrypted session + signing key (read-only)
+      - hive_models:/root/.cache/huggingface # persist GLiNER/Hugging Face weights
+      - ./.env:/app/.env              # panel-managed config persists on the host
+      - ./secrets:/app/secrets        # encrypted session + signing key
       - ./evidence:/app/evidence     # sealed evidence bundles land here
     restart: unless-stopped
 
@@ -29,3 +32,5 @@ services:
 
 volumes:
   hive_dind:
+  hive_models:
+    name: hive_model_cache

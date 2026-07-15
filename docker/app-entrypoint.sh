@@ -12,7 +12,9 @@ unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH 2>/dev/null || true
 # Force the vfs storage driver: overlay2/fuse-overlayfs are unavailable when
 # running DinD on top of Docker Desktop's overlay filesystem. vfs is slower but
 # works everywhere.
-echo "[hive] starting inner dockerd (vfs)..."
+container_started=$(date +%s)
+echo "[startup][container] INITIALIZING HIVE container bootstrap"
+echo "[startup][docker] INITIALIZING inner dockerd storage_driver=vfs"
 dockerd \
     --host=unix:///var/run/docker.sock \
     --storage-driver=vfs \
@@ -24,18 +26,18 @@ ready=0
 for i in $(seq 1 60); do
     if [ -S /var/run/docker.sock ] && docker version > /dev/null 2>&1; then
         ready=1
-        echo "[hive] inner dockerd ready after ${i}s."
+        echo "[startup][docker] READY inner dockerd duration=${i}s"
         break
     fi
     if ! kill -0 "$DOCKERD_PID" 2>/dev/null; then
-        echo "[hive] ERROR: dockerd process exited during startup" >&2
+        echo "[startup][docker] ERROR dockerd process exited during startup" >&2
         break
     fi
     sleep 1
 done
 
 if [ "$ready" -ne 1 ]; then
-    echo "[hive] ERROR: inner dockerd did not become ready" >&2
+    echo "[startup][docker] ERROR inner dockerd did not become ready" >&2
     echo "----- docker version (client error) -----" >&2
     docker version >&2 2>&1 || true
     echo "----- socket -----" >&2
@@ -48,15 +50,20 @@ fi
 
 # Build the disposable sandbox image inside the inner daemon if absent.
 if ! docker image inspect hive-sandbox:latest > /dev/null 2>&1; then
-    echo "[hive] building sandbox image (vfs, first run is slow)..."
+    sandbox_started=$(date +%s)
+    echo "[startup][sandbox] INITIALIZING image=hive-sandbox:latest source=build"
     docker build -t hive-sandbox:latest /app/docker/sandbox
+    echo "[startup][sandbox] READY image=hive-sandbox:latest duration=$(($(date +%s) - sandbox_started))s"
+else
+    echo "[startup][sandbox] READY image=hive-sandbox:latest source=cache"
 fi
 
 # Verify mode: prove the DinD plumbing works without needing real credentials.
 if [ "${HIVE_VERIFY_ONLY:-}" = "1" ]; then
-    echo "[hive] verify OK: inner dockerd up and sandbox image built."
+    echo "[startup][container] READY verification completed duration=$(($(date +%s) - container_started))s"
     exit 0
 fi
 
-echo "[hive] launching agent (python -m hive)..."
+echo "[startup][container] READY bootstrap completed duration=$(($(date +%s) - container_started))s"
+echo "[startup][application] STARTING command='python -m hive'"
 exec python -m hive

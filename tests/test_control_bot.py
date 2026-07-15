@@ -8,7 +8,7 @@ objects; no live Telegram.
 import asyncio
 from dataclasses import dataclass
 
-from hive.transports.control_bot import ControlBot
+from hive.transports.control_bot import HELP_TEXT, ControlBot
 from hive.transports.userbot import UserbotTransport
 
 
@@ -104,3 +104,41 @@ def test_persona_missing_arg_replies_usage():
     up = FakeUpdate()
     _run(bot._cmd_persona(up, FakeContext([])))
     assert "Usage" in up.message.replies[-1]
+
+
+def test_start_and_help_reply_with_command_reference():
+    bot = _bot()
+    up = FakeUpdate()
+
+    _run(bot._cmd_help(up, FakeContext([])))
+
+    assert up.message.replies[-1] == HELP_TEXT
+    assert "/chats" in up.message.replies[-1]
+
+
+def test_plain_text_fallback_replies_instead_of_silently_ignoring():
+    bot = _bot()
+    up = FakeUpdate()
+
+    _run(bot._cmd_fallback(up, FakeContext([])))
+
+    assert "Use one of the commands" in up.message.replies[-1]
+
+
+def test_chats_lists_observed_private_peers():
+    bot = _bot()
+    up = FakeUpdate()
+    bot.userbot.observe_incoming(555, "hello", 1, 1.0, "Sender", "sender")
+
+    _run(bot._cmd_chats(up, FakeContext([])))
+
+    assert "555: Sender (@sender) [available]" in up.message.replies[-1]
+
+
+def test_help_still_rejects_unauthorised_users():
+    bot = _bot()
+    up = FakeUpdate(uid=999)
+
+    _run(bot._cmd_help(up, FakeContext([])))
+
+    assert up.message.replies[-1] == "Unauthorised."

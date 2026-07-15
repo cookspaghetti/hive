@@ -1,64 +1,60 @@
-"""HIVE runtime entry point.
-
-Boots the dual-channel Telegram system:
-  - decrypts the Telethon session (S7),
-  - builds a fully-wired HiveEngine (LLM + sandbox + NER),
-  - starts the Telethon userbot (data plane) and Bot API control bot
-    (control plane) on one asyncio loop.
-
-Run:  python -m hive   (after `cp .env.example .env` and filling in secrets)
-"""
+"""HIVE entry point: durable web panel with a managed Telegram runtime."""
 
 from __future__ import annotations
 
-import asyncio
+import secrets
+
+import uvicorn
 
 from hive.config import load_settings
 from hive.logging_setup import configure_logging, get_logger
-from hive.runtime import build_engine
-from hive.security.session_store import load_session
-from hive.transports.control_bot import ControlBot
-from hive.transports.userbot import UserbotTransport
+from hive.runtime_manager import HiveRuntimeManager
+from hive.webpanel import create_app
 
 log = get_logger(__name__)
 
 
-async def _run() -> None:
+def main() -> None:
     settings = load_settings()
     configure_logging(settings.log_level)
-    log.info("HIVE v0.1.0 starting; default persona=%s", settings.default_persona)
-
-    session_str = load_session(settings.tg_session_path, settings.session_passphrase)
-    engine = build_engine(settings)
-
-    userbot = UserbotTransport(settings.tg_api_id, settings.tg_api_hash, session_str, engine)
-    control = ControlBot(settings, engine, userbot)
-
-    await userbot.start()
-    await control.start()
-
-    # Optional localhost web control panel (enabled when a token is set).
-    if settings.panel_token:
-        import uvicorn
-
-        from hive.webpanel import create_app
-
-        app = create_app(engine, userbot, settings)
-        server = uvicorn.Server(
-            uvicorn.Config(app, host=settings.panel_host, port=settings.panel_port, log_level="warning")
+    log.info("[startup][application] INITIALIZING HIVE control plane")
+    log.info(
+        "[startup][configuration] READY log_level=%s panel_bind=%s:%d",
+        settings.log_level,
+        settings.panel_host,
+        settings.panel_port,
+    )
+    if settings.panel_host not in {"127.0.0.1", "localhost", "::1"}:
+        if not settings.panel_allow_non_loopback:
+            raise SystemExit(
+                "Refusing non-loopback panel bind. Set "
+                "HIVE_PANEL_ALLOW_NON_LOOPBACK=true only behind a loopback-only port mapping."
+            )
+        log.warning(
+            "[startup][panel] WARNING non-loopback bind enabled; "
+            "enforce external network controls"
         )
-        asyncio.create_task(server.serve())
-        log.info("HIVE web panel on http://%s:%d", settings.panel_host, settings.panel_port)
-
-    log.info("HIVE running: userbot + control bot up. Ctrl-C to stop.")
-    await userbot.run_forever()
-
-
-def main() -> None:
-    try:
-        asyncio.run(_run())
-    except KeyboardInterrupt:
-        log.info("HIVE stopped.")
+    session_token = secrets.token_urlsafe(32)
+    log.info("[startup][security] READY ephemeral panel token generated")
+    runtime = HiveRuntimeManager()
+    app = create_app(
+        runtime_manager=runtime,
+        session_token=session_token,
+        bound_host=settings.panel_host,
+        auto_start=True,
+    )
+    display_host = "127.0.0.1" if settings.panel_host == "0.0.0.0" else settings.panel_host
+    log.info(
+        "[startup][panel] READY url=http://%s:%d health=http://%s:%d/health",
+        display_host,
+        settings.panel_port,
+        display_host,
+        settings.panel_port,
+    )
+    log.info(
+        "[startup][runtime] SCHEDULED Telegram starts when the setup checklist is complete"
+    )
+    uvicorn.run(app, host=settings.panel_host, port=settings.panel_port, log_level="warning")
 
 
 if __name__ == "__main__":

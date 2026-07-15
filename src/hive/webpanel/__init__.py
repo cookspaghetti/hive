@@ -8,5 +8,6 @@ plane, not a replacement.
 """
 
 from hive.webpanel.app import create_app
+from hive.webpanel.setup_app import create_setup_app
 
-__all__ = ["create_app"]
+__all__ = ["create_app", "create_setup_app"]

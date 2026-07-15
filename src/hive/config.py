@@ -5,6 +5,9 @@ See .env.example for the full list of variables.
 
 from __future__ import annotations
 
+import os
+
+from dotenv import dotenv_values
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -42,10 +45,11 @@ class Settings(BaseSettings):
     # L2 memory: False = offline KeywordMemory; True = semantic mem0+Qdrant
     use_semantic_memory: bool = False
 
-    # Web control panel (localhost only). Empty token disables the panel.
+    # Web control panel (always available; persistent token is optional).
     panel_token: str = ""
     panel_host: str = "127.0.0.1"
     panel_port: int = 9130
+    panel_allow_non_loopback: bool = False
 
     # Signing
     signing_key_path: str = "./secrets/signing_key.pem"
@@ -57,4 +61,11 @@ class Settings(BaseSettings):
 
 
 def load_settings() -> Settings:
+    # Pydantic reads HIVE_* values directly on every call, which lets the web
+    # panel reload edited credentials. Export only third-party variables that
+    # their libraries read from os.environ, preserving explicit process values.
+    if "HF_TOKEN" not in os.environ:
+        hf_token = dotenv_values(".env").get("HF_TOKEN")
+        if hf_token:
+            os.environ["HF_TOKEN"] = hf_token
     return Settings()

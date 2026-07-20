@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import os
 import secrets
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any
@@ -17,8 +19,9 @@ from hive.agent.personas import PERSONAS
 from hive.config import load_settings
 from hive.logging_setup import get_logger
 from hive.provisioning import EnvStore, TelethonLoginManager
-from hive.runtime_manager import ActiveSessionsError, RuntimeNotReadyError
-from hive.webpanel.assets import LOGO_PATH
+from hive.runtime_manager import ActiveSessionsError, RuntimeNotReadyError, probe_llm
+from hive.webpanel.assets import LOGO_PATH, PANEL_CSS_PATH, PANEL_JS_PATH
+from hive.webpanel.observability import get_observation_hub
 from hive.webpanel.setup_app import panel_page, register_setup_routes
 
 log = get_logger(__name__)
@@ -27,6 +30,7 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
 
 
 def _session_summary(peer_id, session) -> dict:
+    started = session.started_ts
     return {
         "peer_id": peer_id,
         "persona": session.persona,
@@ -36,12 +40,24 @@ def _session_summary(peer_id, session) -> dict:
         "turns": session.turn_count,
         "hvis": len(session.hvis),
         "sandbox": len(session.sandbox_results),
+        "started_ts": started,
+        "duration_s": max(0, round(time.time() - started)) if started else None,
+        "last_message_ts": session.messages[-1].ts if session.messages else None,
     }
 
 
 def _session_detail(peer_id, session) -> dict:
     detail = _session_summary(peer_id, session)
-    detail["messages"] = [{"role": m.role, "text": m.text, "ts": m.ts} for m in session.messages]
+    detail["messages"] = [
+        {
+            "role": m.role,
+            "text": m.text,
+            "ts": m.ts,
+            "msg_id": m.msg_id,
+            "media_kind": m.media_kind,
+        }
+        for m in session.messages
+    ]
     detail["hvi_items"] = [
         {"kind": h.kind, "value": h.value, "confidence": round(h.confidence, 2)}
         for h in session.hvis
@@ -108,6 +124,8 @@ def create_app(
     token = session_token or getattr(settings, "panel_token", "") or secrets.token_urlsafe(32)
     store = env_store or EnvStore(project_root / ".env")
     telethon_login = login_manager or TelethonLoginManager(store)
+    observations = get_observation_hub()
+    observations.event("runtime", "Control panel ready", "Local operator console initialized")
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -157,13 +175,32 @@ def create_app(
     )
 
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return panel_page(token)
+    def index() -> HTMLResponse:
+        return HTMLResponse(
+            panel_page(token),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/logo.png")
     @app.get("/favicon.png")
     def logo() -> FileResponse:
         return FileResponse(LOGO_PATH, media_type="image/png")
+
+    @app.get("/panel.css")
+    def panel_css() -> FileResponse:
+        return FileResponse(
+            PANEL_CSS_PATH,
+            media_type="text/css",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/panel.js")
+    def panel_js() -> FileResponse:
+        return FileResponse(
+            PANEL_JS_PATH,
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/health")
     def health() -> dict[str, object]:
@@ -183,10 +220,135 @@ def create_app(
     def runtime_status() -> dict[str, object]:
         return runtime.snapshot()
 
+    @app.get("/api/dashboard", dependencies=[Depends(auth)])
+    def dashboard() -> dict[str, object]:
+        status = runtime.snapshot()
+        sessions: list[dict[str, object]] = []
+        chats: list[dict[str, object]] = []
+        if runtime.is_running and runtime.userbot is not None:
+            sessions = [
+                _session_summary(peer_id, session)
+                for peer_id, (session, _chain) in runtime.userbot._sessions.items()
+            ]
+            chats = runtime.userbot.list_observed_chats()
+        return {
+            "runtime": status,
+            "metrics": {
+                "active_sessions": len(sessions),
+                "observed_chats": len(chats),
+                "likely_scams": sum(row["verdict"] == "likely_scam" for row in sessions),
+                "hvis": sum(int(row["hvis"]) for row in sessions),
+                "sandbox_runs": sum(int(row["sandbox"]) for row in sessions),
+                "turns": sum(int(row["turns"]) for row in sessions),
+            },
+            "sessions": sorted(
+                sessions,
+                key=lambda row: float(row.get("last_message_ts") or row.get("started_ts") or 0),
+                reverse=True,
+            )[:6],
+            "chats": chats[:6],
+            "activity": observations.events(limit=8),
+        }
+
+    @app.get("/api/activity", dependencies=[Depends(auth)])
+    def activity(after: int = 0, limit: int = 200) -> dict[str, object]:
+        return {"items": observations.events(after=after, limit=limit)}
+
+    @app.get("/api/logs", dependencies=[Depends(auth)])
+    def logs(after: int = 0, limit: int = 200) -> dict[str, object]:
+        return {"items": observations.logs(after=after, limit=limit)}
+
+    @app.get("/api/evidence", dependencies=[Depends(auth)])
+    def evidence_index() -> list[dict[str, object]]:
+        evidence_root = project_root / "evidence"
+        if not evidence_root.is_dir():
+            return []
+        rows = []
+        for path in evidence_root.glob("bundle_*.pdf"):
+            try:
+                peer_id = int(path.stem.removeprefix("bundle_"))
+            except ValueError:
+                continue
+            data = path.read_bytes()
+            signature = Path(str(path) + ".sig")
+            stat = path.stat()
+            rows.append(
+                {
+                    "peer_id": peer_id,
+                    "filename": path.name,
+                    "created_ts": stat.st_mtime,
+                    "size": stat.st_size,
+                    "sha256": hashlib.sha256(data).hexdigest(),
+                    "signature_present": signature.is_file(),
+                    "signature_size": signature.stat().st_size if signature.is_file() else 0,
+                    "download_url": f"/api/sessions/{peer_id}/evidence",
+                }
+            )
+        return sorted(rows, key=lambda row: float(row["created_ts"]), reverse=True)
+
+    @app.get("/api/models/status", dependencies=[Depends(auth)])
+    def model_status() -> dict[str, object]:
+        current = runtime.settings if runtime.settings is not None else load_settings()
+        component = runtime.snapshot().get("components", {}).get("llm", {})
+        return {
+            "endpoint": current.llm_base_url,
+            "configured": bool(current.llm_api_key),
+            "models": {
+                "cheap": current.llm_model_cheap,
+                "strong": current.llm_model_strong,
+                "light": current.llm_model_light,
+                "vision": current.vision_model,
+            },
+            "component": component,
+            "restart_required": getattr(runtime, "restart_required", False),
+        }
+
+    @app.post("/api/models/probe", dependencies=[Depends(auth)])
+    async def model_probe() -> dict[str, object]:
+        current = load_settings()
+        if not current.llm_api_key:
+            raise HTTPException(status_code=409, detail="LLM API key is not configured")
+        try:
+            detail = await asyncio.to_thread(probe_llm, current)
+        except Exception as exc:
+            observations.event("model", "Model endpoint check failed", str(exc), severity="error")
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        observations.event("model", "Model endpoint checked", detail, severity="success")
+        return {"ok": True, "detail": detail}
+
+    @app.get("/api/telegram/status", dependencies=[Depends(auth)])
+    def telegram_status() -> dict[str, object]:
+        current = runtime.settings if runtime.settings is not None else load_settings()
+        snapshot = runtime.snapshot()
+        phone = current.tg_phone
+        masked_phone = (
+            f"{phone[:3]}••••{phone[-3:]}" if len(phone) > 7 else ("configured" if phone else "")
+        )
+        return {
+            "running": runtime.is_running,
+            "account": {
+                "configured": bool(current.tg_api_id and current.tg_api_hash and current.tg_phone),
+                "phone": masked_phone,
+                "component": snapshot.get("components", {}).get("userbot", {}),
+            },
+            "control_bot": {
+                "configured": bool(current.control_bot_token and current.operator_id > 0),
+                "operator_id": current.operator_id or None,
+                "component": snapshot.get("components", {}).get("control_bot", {}),
+            },
+            "observed_chats": (
+                len(runtime.userbot.list_observed_chats())
+                if runtime.is_running and runtime.userbot is not None
+                else 0
+            ),
+        }
+
     @app.post("/api/runtime/start", dependencies=[Depends(auth)])
     async def runtime_start() -> dict[str, object]:
         try:
-            return await runtime.start()
+            result = await runtime.start()
+            observations.event("runtime", "Agent started", severity="success")
+            return result
         except RuntimeNotReadyError as exc:
             raise HTTPException(
                 status_code=409,
@@ -198,7 +360,15 @@ def create_app(
     @app.post("/api/runtime/restart", dependencies=[Depends(auth)])
     async def runtime_restart(payload: Annotated[dict, Body()]) -> dict[str, object]:
         try:
-            return await runtime.restart(force=bool(payload.get("force", False)))
+            forced = bool(payload.get("force", False))
+            result = await runtime.restart(force=forced)
+            observations.event(
+                "runtime",
+                "Agent restarted",
+                "Active sessions were discarded" if forced else "",
+                severity="warning" if forced else "success",
+            )
+            return result
         except ActiveSessionsError as exc:
             raise HTTPException(
                 status_code=409,
@@ -215,7 +385,15 @@ def create_app(
     @app.post("/api/runtime/stop", dependencies=[Depends(auth)])
     async def runtime_stop(payload: Annotated[dict, Body()]) -> dict[str, object]:
         try:
-            return await runtime.stop(force=bool(payload.get("force", False)))
+            forced = bool(payload.get("force", False))
+            result = await runtime.stop(force=forced)
+            observations.event(
+                "runtime",
+                "Agent stopped",
+                "Active sessions were discarded" if forced else "",
+                severity="warning" if forced else "info",
+            )
+            return result
         except ActiveSessionsError as exc:
             raise HTTPException(
                 status_code=409,
@@ -261,6 +439,13 @@ def create_app(
         if persona not in VALID_PERSONAS:
             raise HTTPException(status_code=400, detail=f"unknown persona: {persona}")
         current_userbot.begin_takeover(peer_id, persona)
+        observations.event(
+            "takeover",
+            "Takeover started",
+            f"Persona: {persona}",
+            peer_id=peer_id,
+            severity="success",
+        )
         return {"ok": True, "peer_id": peer_id, "persona": persona}
 
     @app.post("/api/sessions/{peer_id}/persona", dependencies=[Depends(auth)])
@@ -273,6 +458,7 @@ def create_app(
         if persona not in VALID_PERSONAS:
             raise HTTPException(status_code=400, detail=f"unknown persona: {persona}")
         entry[0].persona = persona
+        observations.event("takeover", "Persona changed", persona, peer_id=peer_id)
         return {"ok": True, "peer_id": peer_id, "persona": persona}
 
     @app.post("/api/sessions/{peer_id}/stop", dependencies=[Depends(auth)])
@@ -286,6 +472,13 @@ def create_app(
         out_path = project_root / "evidence" / f"bundle_{peer_id}.pdf"
         current_engine.close_session(
             session, chain, str(out_path), current_settings.signing_key_path
+        )
+        observations.event(
+            "evidence",
+            "Session sealed",
+            f"{len(session.hvis)} indicators; verdict {session.verdict}",
+            peer_id=peer_id,
+            severity="success",
         )
         log.info("panel: stopped + sealed peer=%s", peer_id)
         return {"ok": True, "summary": current_engine.summary(session), "bundle": str(out_path)}

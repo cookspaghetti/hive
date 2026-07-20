@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Local operations console for HIVE anti-scam research">
+  <title>HIVE Control Panel</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="stylesheet" href="/panel.css?v=__ASSET_VERSION__">
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to workspace</a>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar" aria-label="Primary navigation">
+      <div class="brand">
+        __LOGO__
+        <div class="brand-copy"><strong>HIVE</strong><span>Control panel</span></div>
+        <button class="icon-button mobile-only" id="closeNav" type="button" aria-label="Close navigation">×</button>
+      </div>
+
+      <nav class="navigation">
+        <p class="nav-group">Operate</p>
+        <button class="nav-item active" type="button" data-route="overview"><span class="nav-key">01</span>Overview</button>
+        <button class="nav-item" type="button" data-route="takeovers"><span class="nav-key">02</span>Takeovers <span class="nav-count" id="takeoverCount">0</span></button>
+        <button class="nav-item" type="button" data-route="intelligence"><span class="nav-key">03</span>Intelligence</button>
+        <button class="nav-item" type="button" data-route="evidence"><span class="nav-key">04</span>Evidence</button>
+
+        <p class="nav-group">Observe</p>
+        <button class="nav-item" type="button" data-route="activity"><span class="nav-key">05</span>Activity</button>
+        <button class="nav-item" type="button" data-route="logs"><span class="nav-key">06</span>Logs</button>
+
+        <p class="nav-group">Configure</p>
+        <button class="nav-item" type="button" data-route="models"><span class="nav-key">07</span>Models</button>
+        <button class="nav-item" type="button" data-route="telegram"><span class="nav-key">08</span>Telegram</button>
+        <button class="nav-item" type="button" data-route="security"><span class="nav-key">09</span>Security</button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="runtime-dot" id="sidebarRuntimeDot" aria-hidden="true"></div>
+        <div><strong id="sidebarRuntime">Checking runtime</strong><span id="sidebarRuntimeMeta">Panel connected</span></div>
+      </div>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="openNav" type="button" aria-label="Open navigation">☰</button>
+        <div class="breadcrumb"><span>HIVE</span><b>/</b><strong id="currentPageName">Overview</strong></div>
+        <div class="topbar-actions">
+          <button class="command-trigger" id="openCommand" type="button"><span>Go to</span><kbd>Ctrl K</kbd></button>
+          <button class="button secondary compact" id="refreshPage" type="button">Refresh</button>
+        </div>
+      </header>
+
+      <main id="workspace" tabindex="-1">
+        <section class="page active" data-page="overview" aria-labelledby="overviewTitle">
+          <div class="page-heading overview-heading">
+            <div><p class="context-line" id="overviewDate"></p><h1 id="overviewTitle">Operations overview</h1><p>Live posture across the agent, Telegram planes, active engagements, and evidence pipeline.</p></div>
+            <div class="runtime-actions" aria-label="Runtime controls">
+              <button class="button primary" id="startAgent" type="button">Start agent</button>
+              <button class="button secondary" id="restartAgent" type="button">Restart</button>
+              <button class="button danger-quiet" id="stopAgent" type="button">Stop</button>
+            </div>
+          </div>
+
+          <div class="metric-strip" id="metricStrip" aria-label="Current metrics">
+            <div><span>Active takeovers</span><strong id="metricActive">—</strong></div>
+            <div><span>Likely scams</span><strong id="metricScams">—</strong></div>
+            <div><span>Indicators</span><strong id="metricHvis">—</strong></div>
+            <div><span>Sandbox runs</span><strong id="metricSandbox">—</strong></div>
+            <div><span>Agent turns</span><strong id="metricTurns">—</strong></div>
+          </div>
+
+          <div class="overview-grid">
+            <article class="surface runtime-surface">
+              <div class="surface-heading"><div><h2>Runtime posture</h2><p id="runtimeSummary">Checking components</p></div><span class="status-chip" id="runtimeState">Loading</span></div>
+              <div class="component-list" id="componentList" aria-live="polite"></div>
+              <p class="inline-message" id="runtimeMessage" role="status"></p>
+            </article>
+
+            <article class="surface queue-surface">
+              <div class="surface-heading"><div><h2>Incoming queue</h2><p>Most recent private chats observed by the data plane.</p></div><button class="text-button" type="button" data-route-link="takeovers">View queue</button></div>
+              <div class="compact-list" id="overviewQueue"></div>
+            </article>
+
+            <article class="surface active-surface">
+              <div class="surface-heading"><div><h2>Active engagements</h2><p>Highest-risk sessions appear first.</p></div><button class="text-button" type="button" data-route-link="takeovers">Inspect</button></div>
+              <div class="compact-list" id="overviewSessions"></div>
+            </article>
+
+            <article class="surface activity-surface">
+              <div class="surface-heading"><div><h2>Recent activity</h2><p>Operator and control-plane actions.</p></div><button class="text-button" type="button" data-route-link="activity">Open stream</button></div>
+              <div class="timeline compact" id="overviewActivity"></div>
+            </article>
+          </div>
+        </section>
+
+        <section class="page" data-page="takeovers" aria-labelledby="takeoversTitle">
+          <div class="page-heading"><div><p class="context-line">Live operations</p><h1 id="takeoversTitle">Takeover queue</h1><p>Review incoming chats, begin controlled engagement, and inspect active sessions.</p></div></div>
+          <div class="toolbar">
+            <label class="search-field"><span class="sr-only">Search chats and sessions</span><input id="takeoverSearch" type="search" placeholder="Search peer, account, message, verdict"></label>
+            <select id="takeoverPersona" aria-label="Persona for new takeover">
+              <option value="confused_elderly">Confused elderly</option>
+              <option value="naive_young_adult">Naive young adult</option>
+              <option value="overseas_worker">Overseas worker</option>
+              <option value="small_business_owner">Small business owner</option>
+            </select>
+            <button class="button secondary compact" id="manualTakeover" type="button">Enter peer ID</button>
+          </div>
+
+          <div class="operations-layout">
+            <div class="operations-lists">
+              <article class="surface data-surface">
+                <div class="surface-heading"><div><h2>Observed chats</h2><p id="chatCountLabel">No chats loaded</p></div></div>
+                <div class="table-scroll"><table><thead><tr><th>Account</th><th>Latest message</th><th>Received</th><th><span class="sr-only">Action</span></th></tr></thead><tbody id="chatRows"></tbody></table></div>
+              </article>
+              <article class="surface data-surface">
+                <div class="surface-heading"><div><h2>Active takeovers</h2><p id="sessionCountLabel">No sessions loaded</p></div></div>
+                <div class="table-scroll"><table><thead><tr><th>Peer</th><th>Persona</th><th>Phase</th><th>Verdict</th><th>Score</th><th><span class="sr-only">Action</span></th></tr></thead><tbody id="sessionRows"></tbody></table></div>
+              </article>
+            </div>
+
+            <aside class="session-inspector" id="sessionInspector" aria-labelledby="inspectorTitle">
+              <div class="empty-state" id="inspectorEmpty"><strong>Select an active takeover</strong><p>The transcript, verdict trail, indicators, and sandbox findings will appear here.</p></div>
+              <div id="inspectorContent" hidden>
+                <div class="inspector-header"><div><span class="mono" id="inspectorPeer"></span><h2 id="inspectorTitle">Session</h2></div><button class="icon-button" id="closeInspector" type="button" aria-label="Close session inspector">×</button></div>
+                <div class="inspector-status"><span class="status-chip" id="inspectorVerdict"></span><strong id="inspectorScore"></strong><span id="inspectorTurns"></span></div>
+                <label class="field"><span>Active persona</span><select id="inspectorPersona"></select></label>
+                <div class="inspector-tabs" role="tablist" aria-label="Session detail">
+                  <button class="active" type="button" role="tab" data-inspector-tab="transcript">Transcript</button>
+                  <button type="button" role="tab" data-inspector-tab="signals">Signals</button>
+                  <button type="button" role="tab" data-inspector-tab="indicators">Indicators</button>
+                </div>
+                <div class="inspector-panel active" data-inspector-panel="transcript"><div class="transcript" id="inspectorTranscript"></div></div>
+                <div class="inspector-panel" data-inspector-panel="signals"><div class="signal-list" id="inspectorSignals"></div></div>
+                <div class="inspector-panel" data-inspector-panel="indicators"><div class="indicator-list" id="inspectorIndicators"></div></div>
+                <div class="inspector-actions"><button class="button danger" id="sealSession" type="button">Stop and seal evidence</button><button class="button secondary" type="button" data-route-link="intelligence">Open intelligence view</button></div>
+              </div>
+            </aside>
+          </div>
+          <p class="inline-message" id="takeoverMessage" role="status"></p>
+        </section>
+
+        <section class="page" data-page="intelligence" aria-labelledby="intelligenceTitle">
+          <div class="page-heading"><div><p class="context-line">Investigation</p><h1 id="intelligenceTitle">Intelligence workspace</h1><p>Extracted indicators and disposable-browser findings for the selected active session.</p></div><label class="inline-select"><span>Session</span><select id="intelligenceSession"></select></label></div>
+          <div class="intelligence-summary" id="intelligenceSummary"></div>
+          <div class="intelligence-grid">
+            <article class="surface data-surface"><div class="surface-heading"><div><h2>High-value indicators</h2><p>Copyable values linked to their source messages.</p></div></div><div class="table-scroll"><table><thead><tr><th>Type</th><th>Value</th><th>Confidence</th><th>Source</th></tr></thead><tbody id="hviRows"></tbody></table></div></article>
+            <article class="surface"><div class="surface-heading"><div><h2>Sandbox analysis</h2><p>Network and page signals produced in disposable containers.</p></div></div><div class="sandbox-list" id="sandboxList"></div></article>
+          </div>
+        </section>
+
+        <section class="page" data-page="evidence" aria-labelledby="evidenceTitle">
+          <div class="page-heading"><div><p class="context-line">Evidence vault</p><h1 id="evidenceTitle">Sealed cases</h1><p>Generated PDF bundles with detached signature and SHA-256 identification.</p></div></div>
+          <article class="surface data-surface"><div class="surface-heading"><div><h2>Evidence bundles</h2><p id="evidenceCount">Checking the vault</p></div></div><div class="table-scroll"><table><thead><tr><th>Peer</th><th>Created</th><th>Size</th><th>SHA-256</th><th>Signature</th><th><span class="sr-only">Download</span></th></tr></thead><tbody id="evidenceRows"></tbody></table></div></article>
+        </section>
+
+        <section class="page" data-page="activity" aria-labelledby="activityTitle">
+          <div class="page-heading"><div><p class="context-line">Observation</p><h1 id="activityTitle">Activity stream</h1><p>Redacted, process-local events from operator actions and the control plane.</p></div></div>
+          <div class="toolbar"><label class="search-field"><span class="sr-only">Filter activity</span><input id="activitySearch" type="search" placeholder="Filter by event, category, or peer"></label><select id="activitySeverity" aria-label="Filter by severity"><option value="all">All severities</option><option value="error">Errors</option><option value="warning">Warnings</option><option value="success">Success</option><option value="info">Information</option></select><button class="button secondary compact" id="clearActivityView" type="button">Clear view</button></div>
+          <div class="timeline full" id="activityTimeline"></div>
+        </section>
+
+        <section class="page" data-page="logs" aria-labelledby="logsTitle">
+          <div class="page-heading"><div><p class="context-line">Diagnostics</p><h1 id="logsTitle">Live logs</h1><p>Bounded operational logs. Secrets are redacted and forensic records remain in the evidence vault.</p></div><button class="button secondary compact" id="exportLogs" type="button">Export view</button></div>
+          <div class="toolbar"><label class="search-field"><span class="sr-only">Filter logs</span><input id="logSearch" type="search" placeholder="Filter message, logger, or peer"></label><select id="logLevel" aria-label="Filter log level"><option value="all">All levels</option><option value="error">Error</option><option value="warning">Warning</option><option value="info">Info</option></select><label class="toggle"><input id="logFollow" type="checkbox" checked><span>Auto-follow</span></label></div>
+          <div class="log-viewer" id="logViewer" role="log" aria-live="off"></div>
+        </section>
+
+        <section class="page" data-page="models" aria-labelledby="modelsTitle">
+          <div class="page-heading"><div><p class="context-line">Routing</p><h1 id="modelsTitle">Model control centre</h1><p>Assign models to HIVE’s cost-aware tiers and verify the OpenAI-compatible endpoint.</p></div><button class="button secondary" id="probeModels" type="button">Check endpoint</button></div>
+          <div class="model-layout">
+            <article class="surface model-status"><div class="surface-heading"><div><h2>Endpoint health</h2><p id="modelEndpoint">Not loaded</p></div><span class="status-chip" id="modelHealth">Unknown</span></div><div class="definition-list" id="modelDefinition"></div><p class="inline-message" id="modelProbeMessage" role="status"></p></article>
+            <form class="surface form-surface" id="modelForm"><div class="surface-heading"><div><h2>Tier assignments</h2><p>Changes take effect after a runtime restart.</p></div></div><div class="form-grid">
+              <label class="field full"><span>Base URL</span><input id="llmUrl" type="url" value="https://ollama.com/v1" required></label>
+              <label class="field full"><span>API key</span><input id="llmKey" type="password" autocomplete="off" placeholder="Leave blank to keep the existing key"></label>
+              <label class="field"><span>Cheap tier</span><input id="modelCheap" value="glm-5.1:cloud" required></label>
+              <label class="field"><span>Strong tier</span><input id="modelStrong" value="glm-5.2:cloud" required></label>
+              <label class="field"><span>Verdict tier</span><input id="modelLight" value="glm-5.1:cloud" required></label>
+              <label class="field"><span>Vision model</span><input id="visionModel" value="qwen3.5:cloud" required></label>
+              <label class="field full"><span>Hugging Face token <small>optional</small></span><input id="hfToken" type="password" autocomplete="off"></label>
+            </div><div class="form-actions"><button class="button primary" type="submit">Save assignments</button><span class="inline-message" id="modelSaveMessage" role="status"></span></div></form>
+          </div>
+        </section>
+
+        <section class="page" data-page="telegram" aria-labelledby="telegramTitle">
+          <div class="page-heading"><div><p class="context-line">Messaging planes</p><h1 id="telegramTitle">Telegram health centre</h1><p>Configure and inspect the Telethon data plane and Bot API control plane.</p></div></div>
+          <div class="telegram-status" id="telegramStatus"></div>
+          <div class="two-column-forms">
+            <form class="surface form-surface" id="botForm"><div class="surface-heading"><div><h2>Control bot</h2><p>Verify the BotFather token and restrict commands to one operator.</p></div></div><div class="form-grid"><label class="field full"><span>Bot API token</span><input id="botToken" type="password" autocomplete="off" required></label><label class="field full"><span>Operator Telegram ID</span><input id="operatorId" inputmode="numeric" required></label></div><div class="form-actions"><button class="button primary" type="submit">Verify and save</button><span class="inline-message" id="botMessage" role="status"></span></div></form>
+            <form class="surface form-surface" id="telegramForm"><div class="surface-heading"><div><h2>Telegram account</h2><p>Authorize the account used for consented research conversations.</p></div></div><div class="form-grid"><label class="field"><span>API ID</span><input id="apiId" inputmode="numeric" required></label><label class="field"><span>API hash</span><input id="apiHash" type="password" autocomplete="off" required></label><label class="field full"><span>Phone number</span><input id="phone" type="tel" placeholder="+60…" required></label><label class="field full"><span>Encryption passphrase</span><input id="passphrase" type="password" autocomplete="new-password" required></label><label class="field full"><span>Encrypted session path</span><input id="sessionPath" value="./secrets/user.session" required></label><label class="field full auth-step" id="codeField" hidden><span>Login code</span><input id="loginCode" inputmode="numeric" autocomplete="one-time-code"></label><label class="field full auth-step" id="passwordField" hidden><span>Telegram 2FA password</span><input id="tgPassword" type="password" autocomplete="current-password"></label></div><div class="form-actions"><button class="button primary" id="telegramPrimary" type="submit">Send code</button><button class="button secondary" id="cancelTelegramLogin" type="button" hidden>Cancel</button><span class="inline-message" id="telegramMessage" role="status"></span></div></form>
+          </div>
+        </section>
+
+        <section class="page" data-page="security" aria-labelledby="securityTitle">
+          <div class="page-heading"><div><p class="context-line">Local security</p><h1 id="securityTitle">Security and readiness</h1><p>Manage evidence signing and the persistent API token without exposing saved secrets.</p></div></div>
+          <div class="security-layout">
+            <article class="surface"><div class="surface-heading"><div><h2>Readiness checks</h2><p>Every required component must be ready before the agent starts.</p></div></div><div class="readiness-list" id="readinessList"></div><p class="inline-message" id="readinessMessage" role="status"></p></article>
+            <div class="security-forms">
+              <form class="surface form-surface" id="signingForm"><div class="surface-heading"><div><h2>Evidence signing</h2><p>Create an RSA keypair inside the project’s protected secrets directory.</p></div></div><label class="field"><span>Private key path</span><input id="signingPath" value="./secrets/signing_key.pem" required></label><div class="form-actions"><button class="button primary" type="submit">Create signing key</button><span class="inline-message" id="signingMessage" role="status"></span></div></form>
+              <form class="surface form-surface" id="panelTokenForm"><div class="surface-heading"><div><h2>Panel authentication</h2><p>Set a persistent token for future panel sessions.</p></div></div><label class="field"><span>New API token</span><input id="panelToken" type="password" autocomplete="new-password"></label><div class="form-actions"><button class="button secondary" type="submit">Save API token</button><span class="inline-message" id="panelTokenMessage" role="status"></span></div></form>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <dialog class="command-dialog" id="commandDialog">
+    <form method="dialog"><div class="command-search"><label><span class="sr-only">Find a page</span><input id="commandSearch" type="search" placeholder="Go to a page…" autocomplete="off"></label><button class="icon-button" value="cancel" aria-label="Close command menu">×</button></div><div class="command-results" id="commandResults"></div></form>
+  </dialog>
+
+  <dialog class="confirm-dialog" id="confirmDialog"><form method="dialog"><h2 id="confirmTitle">Confirm action</h2><p id="confirmText"></p><div class="dialog-actions"><button class="button secondary" value="cancel">Cancel</button><button class="button danger" id="confirmAccept" value="confirm">Confirm</button></div></form></dialog>
+  <div class="toast-region" id="toastRegion" aria-live="polite" aria-atomic="true"></div>
+
+  <script>window.__HIVE_PANEL_TOKEN__ = "__SESSION_TOKEN__";</script>
+  <script src="/panel.js?v=__ASSET_VERSION__" defer></script>
+</body>
+</html>

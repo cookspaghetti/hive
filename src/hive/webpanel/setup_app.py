@@ -14,7 +14,13 @@ from fastapi.responses import FileResponse, HTMLResponse
 from hive.provisioning import EnvStore, TelethonLoginManager
 from hive.provisioning.telegram_bot import verify_control_bot_token
 from hive.vault.signer import generate_keypair
-from hive.webpanel.assets import LOGO_HTML, LOGO_PATH
+from hive.webpanel.assets import (
+    LOGO_HTML,
+    LOGO_PATH,
+    PANEL_CSS_PATH,
+    PANEL_JS_PATH,
+    PANEL_TEMPLATE_PATH,
+)
 
 CONFIG_KEYS = {
     "HF_TOKEN",
@@ -65,13 +71,32 @@ def create_setup_app(
     )
 
     @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return panel_page(setup_token)
+    def index() -> HTMLResponse:
+        return HTMLResponse(
+            panel_page(setup_token),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/logo.png")
     @app.get("/favicon.png")
     def logo() -> FileResponse:
         return FileResponse(LOGO_PATH, media_type="image/png")
+
+    @app.get("/panel.css")
+    def panel_css() -> FileResponse:
+        return FileResponse(
+            PANEL_CSS_PATH,
+            media_type="text/css",
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get("/panel.js")
+    def panel_js() -> FileResponse:
+        return FileResponse(
+            PANEL_JS_PATH,
+            media_type="text/javascript",
+            headers={"Cache-Control": "no-store"},
+        )
 
     return app
 
@@ -252,7 +277,13 @@ def _positive_int(value: object) -> int:
 
 
 def panel_page(session_token: str) -> str:
-    return _SETUP_PAGE.replace("__SESSION_TOKEN__", session_token)
+    template = PANEL_TEMPLATE_PATH.read_text(encoding="utf-8")
+    asset_version = max(PANEL_CSS_PATH.stat().st_mtime_ns, PANEL_JS_PATH.stat().st_mtime_ns)
+    return (
+        template.replace("__SESSION_TOKEN__", session_token)
+        .replace("__LOGO__", LOGO_HTML)
+        .replace("__ASSET_VERSION__", str(asset_version))
+    )
 
 
 _SETUP_PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>

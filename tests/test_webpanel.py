@@ -19,6 +19,17 @@ class FakeSettings:
     panel_token: str = TOKEN
     default_persona: str = "confused_elderly"
     signing_key_path: str = "key.pem"
+    llm_base_url: str = "https://example.test/v1"
+    llm_api_key: str = "test-key"
+    llm_model_cheap: str = "cheap-model"
+    llm_model_strong: str = "strong-model"
+    llm_model_light: str = "light-model"
+    vision_model: str = "vision-model"
+    tg_phone: str = "+60123456789"
+    tg_api_id: int = 123
+    tg_api_hash: str = "hash"
+    control_bot_token: str = "bot-token"
+    operator_id: int = 456
 
 
 class FakeEngine:
@@ -78,8 +89,21 @@ def test_index_is_public(client):
     r = client.get("/")
     assert r.status_code == 200 and "HIVE Control Panel" in r.text
     assert '<img src="/logo.png"' in r.text
-    assert "background:transparent" in r.text
-    assert ".brandmark{width:40px;height:40px;overflow:hidden;display:block;background:#fff" not in r.text
+    assert '<link rel="stylesheet" href="/panel.css?v=' in r.text
+    assert '<script src="/panel.js?v=' in r.text
+    assert "__ASSET_VERSION__" not in r.text
+    assert "Operations overview" in r.text
+    assert r.headers["cache-control"] == "no-store"
+
+
+def test_panel_assets_are_served(client):
+    css = client.get("/panel.css")
+    script = client.get("/panel.js")
+
+    assert css.status_code == 200 and "--accent:" in css.text
+    assert script.status_code == 200 and 'api("/api/dashboard")' in script.text
+    assert css.headers["cache-control"] == "no-store"
+    assert script.headers["cache-control"] == "no-store"
 
 
 def test_favicon_is_png(client):
@@ -94,6 +118,26 @@ def test_list_sessions(client):
     assert r.status_code == 200
     rows = r.json()
     assert rows[0]["peer_id"] == 100 and rows[0]["verdict"] == "likely_scam"
+
+
+def test_dashboard_aggregates_live_operations(client):
+    response = client.get("/api/dashboard", headers=_h())
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["metrics"]["active_sessions"] == 1
+    assert data["metrics"]["likely_scams"] == 1
+    assert data["metrics"]["hvis"] == 1
+    assert data["sessions"][0]["peer_id"] == 100
+
+
+def test_model_status_does_not_expose_api_key(client):
+    response = client.get("/api/models/status", headers=_h())
+
+    assert response.status_code == 200
+    assert response.json()["configured"] is True
+    assert response.json()["endpoint"] == "https://example.test/v1"
+    assert "test-key" not in response.text
 
 
 def test_list_recent_incoming_chats(client):
@@ -209,7 +253,9 @@ def test_unified_panel_stays_available_when_agent_is_stopped(tmp_path):
     assert sessions.json()["detail"]["code"] == "agent_not_running"
     page = client.get("/").text
     assert TOKEN in page and "__SESSION_TOKEN__" not in page
-    assert "params.get('token')||INJECTED_TOKEN||sessionStorage.getItem" in page
+    assert 'window.__HIVE_PANEL_TOKEN__ = "s3cret"' in page
+    script = client.get("/panel.js").text
+    assert 'sessionStorage.getItem("hive-panel-token")' in script
 
 
 def test_health_is_public_and_reports_runtime_components(tmp_path):

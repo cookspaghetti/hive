@@ -19,6 +19,11 @@ tasks:
     cmds:
       - uv sync --extra dev
 
+  dev:
+    desc: Run only the localhost control panel with hot reload
+    cmds:
+      - uv run watchfiles hive.dev.run_panel src
+
   test:
     desc: Run the full test suite
     cmds:

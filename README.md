@@ -112,6 +112,15 @@ Install dependencies:
 uv sync --extra dev
 ```
 
+For panel development, run the localhost-only server with hot reload:
+
+```powershell
+task dev
+```
+
+This watches the Python and web-panel assets under `src/` and restarts the
+panel when they change. It does not auto-start Telegram or run Docker.
+
 Start HIVE's localhost control panel:
 
 ```powershell

@@ -162,7 +162,12 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .inspector-header .mono { color: var(--accent); font-size: .7rem; }
 .inspector-status { justify-content: flex-start; padding: 10px 0 16px; border-bottom: 1px solid var(--border); }
 .inspector-status strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
-.inspector-status > span:last-child { color: var(--subtle); font-size: .72rem; }
+.inspector-status > #inspectorTurns { color: var(--subtle); font-size: .72rem; }
+.live-update { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; color: var(--success); font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.live-update > span { width: 7px; height: 7px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent); }
+.live-update > #inspectorLiveLabel { width: auto; height: auto; border-radius: 0; background: transparent; box-shadow: none; }
+.live-update.archived { color: var(--subtle); }
+.live-update.archived > span:first-child { background: var(--subtle); box-shadow: none; }
 .field { display: grid; gap: 6px; margin-top: 14px; }
 .field > span, .inline-select > span { color: var(--muted); font-size: .73rem; font-weight: 700; }
 .inspector-tabs { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 17px; border-bottom: 1px solid var(--border); }
@@ -170,7 +175,7 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .inspector-tabs button.active { border-color: var(--accent); color: var(--text); }
 .inspector-panel { display: none; min-height: 200px; }
 .inspector-panel.active { display: block; }
-.transcript { display: grid; gap: 10px; padding: 14px 0; }
+.transcript { display: grid; gap: 10px; max-height: min(52vh, 560px); overflow-y: auto; padding: 14px 4px 14px 0; scrollbar-gutter: stable; }
 .message { max-width: 88%; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-small); background: var(--surface-raised); }
 .message.agent { justify-self: end; border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
 .message p { margin: 0; color: var(--text); font-size: .78rem; white-space: pre-wrap; }

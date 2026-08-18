@@ -61,7 +61,7 @@ class FakeUserbot:
 
 
 @pytest.fixture
-def client():
+def client(tmp_path):
     engine, userbot = FakeEngine(), FakeUserbot()
     # seed one active session with some state
     s = SessionState(peer_id=100, persona="confused_elderly", phase=Phase.ACTIVE)
@@ -71,7 +71,7 @@ def client():
     s.messages.append(Message("stranger", "transfer to Maybank 123", time.time(), 0))
     s.hvis.append(HVI(kind="bank_account", value="123", source_msg_id=0, confidence=0.9))
     userbot._sessions[100] = (s, HashChain())
-    app = create_app(engine, userbot, FakeSettings())
+    app = create_app(engine, userbot, FakeSettings(), root=tmp_path)
     c = TestClient(app)
     c._engine, c._userbot = engine, userbot
     return c
@@ -104,6 +104,25 @@ def test_panel_assets_are_served(client):
     assert script.status_code == 200 and 'api("/api/dashboard")' in script.text
     assert css.headers["cache-control"] == "no-store"
     assert script.headers["cache-control"] == "no-store"
+
+
+def test_frontend_can_bootstrap_an_ephemeral_backend_session(client):
+    response = client.get("/api/panel/session")
+    script = client.get("/panel.js").text
+
+    assert response.status_code == 200
+    assert response.json() == {"token": TOKEN}
+    assert response.headers["cache-control"] == "no-store"
+    assert 'fetch("/api/panel/session", { cache: "no-store" })' in script
+
+
+def test_frontend_refreshes_a_rotated_ephemeral_session_and_retries_once(client):
+    script = client.get("/panel.js").text
+
+    assert "let tokenRefresh = null" in script
+    assert "response.status === 401 && retryAuthentication" in script
+    assert "await ensurePanelToken({ force: true })" in script
+    assert "return api(path, options, false)" in script
 
 
 def test_favicon_is_png(client):
@@ -167,6 +186,26 @@ def test_session_detail(client):
     assert d["messages"][0]["role"] == "stranger"
 
 
+def test_session_detail_exposes_messages_added_after_initial_request(client):
+    initial = client.get("/api/sessions/100", headers=_h()).json()
+    client._userbot._sessions[100][0].messages.append(
+        Message("agent", "Which account should I use?", time.time(), 2)
+    )
+
+    updated = client.get("/api/sessions/100", headers=_h()).json()
+
+    assert len(updated["messages"]) == len(initial["messages"]) + 1
+    assert updated["messages"][-1]["text"] == "Which account should I use?"
+
+
+def test_panel_script_polls_the_selected_session_for_live_updates(client):
+    script = client.get("/panel.js").text
+
+    assert "const LIVE_SESSION_REFRESH_MS = 2000" in script
+    assert "async function refreshSelectedSession()" in script
+    assert "refreshSelectedSession().catch(() => {})" in script
+
+
 def test_takeover_and_persona(client):
     assert (
         client.post(
@@ -192,6 +231,18 @@ def test_stop_seals_and_removes(client):
     assert r.status_code == 200 and r.json()["summary"] == "SUMMARY"
     assert 100 not in client._userbot._sessions
     assert Path(client._engine.closed[0]).parts[-2:] == ("evidence", "bundle_100.pdf")
+
+    history = client.get("/api/history", headers=_h()).json()
+    assert history[0]["peer_id"] == 100
+    assert history[0]["message_count"] == 1
+
+    detail = client.get(f"/api/history/{history[0]['id']}", headers=_h()).json()
+    assert detail["messages"][0]["text"] == "transfer to Maybank 123"
+
+
+def test_takeover_history_rejects_unknown_or_invalid_ids(client):
+    assert client.get("/api/history/not-a-record", headers=_h()).status_code == 404
+    assert client.get("/api/history/..%2F.env", headers=_h()).status_code == 404
 
 
 def test_detail_404_when_missing(client):

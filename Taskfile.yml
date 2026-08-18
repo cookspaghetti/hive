@@ -92,14 +92,19 @@ tasks:
       - docker compose up -d qdrant
 
   qdrant:down:
-    desc: Stop supporting services
+    desc: Stop the optional Qdrant service
+    cmds:
+      - docker compose stop qdrant
+
+  stack:down:
+    desc: Stop the complete HIVE Compose stack
     cmds:
       - docker compose down
 
   run:
-    desc: Build and run HIVE via Docker Compose (panel on 127.0.0.1:9130)
+    desc: Build and run the four-service HIVE stack (panel on 127.0.0.1:9130)
     cmds:
-      - docker compose up --build hive
+      - docker compose up --build --remove-orphans
 
   clean:
     desc: Remove Python caches and tool artefacts

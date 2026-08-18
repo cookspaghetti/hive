@@ -17,6 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from hive.agent.personas import PERSONAS
 from hive.config import load_settings
+from hive.history import HistoryStore, build_history_store
 from hive.logging_setup import get_logger
 from hive.provisioning import EnvStore, TelethonLoginManager
 from hive.runtime_manager import ActiveSessionsError, RuntimeNotReadyError, probe_llm
@@ -113,6 +114,7 @@ def create_app(
     auto_start: bool = False,
     env_store: EnvStore | None = None,
     login_manager: TelethonLoginManager | None = None,
+    history_store: HistoryStore | None = None,
 ) -> FastAPI:
     """Create one panel that remains available across Telegram restarts."""
     if runtime_manager is None:
@@ -123,6 +125,11 @@ def create_app(
     project_root = Path(root).resolve()
     token = session_token or getattr(settings, "panel_token", "") or secrets.token_urlsafe(32)
     store = env_store or EnvStore(project_root / ".env")
+    configured = settings or load_settings()
+    history = history_store or build_history_store(
+        project_root / "evidence" / "history",
+        getattr(configured, "database_url", ""),
+    )
     telethon_login = login_manager or TelethonLoginManager(store)
     observations = get_observation_hub()
     observations.event("runtime", "Control panel ready", "Local operator console initialized")
@@ -285,6 +292,21 @@ def create_app(
                 }
             )
         return sorted(rows, key=lambda row: float(row["created_ts"]), reverse=True)
+
+    @app.get("/api/history", dependencies=[Depends(auth)])
+    def takeover_history() -> list[dict[str, Any]]:
+        return history.list()
+
+    @app.get("/api/history/{history_id}", dependencies=[Depends(auth)])
+    def takeover_history_detail(history_id: str) -> dict[str, Any]:
+        record = history.get(history_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="takeover history not found")
+        return record
+
+    @app.get("/api/panel/session")
+    def panel_session() -> JSONResponse:
+        return JSONResponse({"token": token}, headers={"Cache-Control": "no-store"})
 
     @app.get("/api/models/status", dependencies=[Depends(auth)])
     def model_status() -> dict[str, object]:
@@ -473,6 +495,7 @@ def create_app(
         current_engine.close_session(
             session, chain, str(out_path), current_settings.signing_key_path
         )
+        history.archive(session, evidence_path=out_path)
         observations.event(
             "evidence",
             "Session sealed",

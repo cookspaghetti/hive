@@ -18,6 +18,7 @@ import os
 
 from hive.agent.personas import PERSONAS
 from hive.config import Settings
+from hive.history import HistoryStore, build_history_store
 from hive.logging_setup import get_logger
 from hive.runtime import HiveEngine
 from hive.transports.userbot import UserbotTransport
@@ -42,12 +43,16 @@ class ControlBot:
         settings: Settings,
         engine: HiveEngine,
         userbot: UserbotTransport,
+        history_store: HistoryStore | None = None,
     ) -> None:
         self.settings = settings
         self.operator_id = settings.operator_id
         self.engine = engine
         self.userbot = userbot
         self.default_persona = settings.default_persona
+        self.history = history_store or build_history_store(
+            "evidence/history", getattr(settings, "database_url", "")
+        )
         self._app = None
         # Get notified when the userbot hands a benign conversation back.
         self.userbot.on_handback = self._on_handback
@@ -61,6 +66,7 @@ class ControlBot:
         No evidence bundle is sealed (the verdict is benign); we just inform the
         operator that control has returned to them for this chat.
         """
+        self.history.archive(session, status="handed_back")
         text = (
             f"↩️ Handed back chat {peer_id} — assessed as {session.verdict} "
             f"after {session.turn_count} turn(s). You are back in control.\n\n"
@@ -215,6 +221,7 @@ class ControlBot:
         os.makedirs("evidence", exist_ok=True)
         out_path = f"evidence/bundle_{peer}.pdf"
         self.engine.close_session(session, chain, out_path, self.settings.signing_key_path)
+        self.history.archive(session, evidence_path=out_path)
         await update.message.reply_text(self.engine.summary(session))
         with open(out_path, "rb") as fh:
             await update.message.reply_document(fh, filename=f"evidence_{peer}.pdf")

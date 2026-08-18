@@ -8,6 +8,8 @@ objects; no live Telegram.
 import asyncio
 from dataclasses import dataclass
 
+from hive.history import TakeoverHistoryStore
+from hive.state import Message, SessionState
 from hive.transports.control_bot import HELP_TEXT, ControlBot
 from hive.transports.userbot import UserbotTransport
 
@@ -54,9 +56,9 @@ class FakeContext:
         self.args = args
 
 
-def _bot():
+def _bot(history_store=None):
     ub = UserbotTransport(1, "h", "s", FakeEngine())
-    return ControlBot(FakeSettings(), FakeEngine(), ub)
+    return ControlBot(FakeSettings(), FakeEngine(), ub, history_store=history_store)
 
 
 def _run(coro):
@@ -142,3 +144,15 @@ def test_help_still_rejects_unauthorised_users():
     _run(bot._cmd_help(up, FakeContext([])))
 
     assert up.message.replies[-1] == "Unauthorised."
+
+
+def test_handback_archives_takeover_history(tmp_path):
+    store = TakeoverHistoryStore(tmp_path)
+    bot = _bot(store)
+    session = SessionState(peer_id=555, persona="confused_elderly")
+    session.messages.append(Message("stranger", "hello", 1.0, 1))
+
+    _run(bot._on_handback(555, session))
+
+    assert store.list()[0]["peer_id"] == 555
+    assert store.list()[0]["message_count"] == 1

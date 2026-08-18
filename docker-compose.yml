@@ -1,36 +1,66 @@
-# HIVE stack.
-# `hive` is the containerized agent (Docker-in-Docker: it runs its own inner
-# daemon and spawns the disposable Layer 4 sandbox containers itself).
-# `qdrant` is optional, only needed for semantic memory.
+# HIVE's four-service local stack. Only the frontend is published to the host;
+# backend, PostgreSQL, and Qdrant communicate on the private Compose network.
 services:
-  hive:
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: hive-frontend:latest
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:9130:80"
+    restart: unless-stopped
+
+  backend:
     build: .
-    image: hive:latest
-    privileged: true          # required for the inner Docker daemon (DinD)
+    image: hive-backend:latest
+    privileged: true
     env_file: .env
     environment:
-      # Inside the container the panel must bind all interfaces so the published
-      # port can reach it; host exposure stays loopback-only via the mapping.
-      - HIVE_PANEL_HOST=0.0.0.0
-      - HIVE_PANEL_ALLOW_NON_LOOPBACK=true
-    ports:
-      - "127.0.0.1:9130:9130"  # web panel, reachable only from the host loopback
+      HIVE_PANEL_HOST: 0.0.0.0
+      HIVE_PANEL_ALLOW_NON_LOOPBACK: "true"
+      HIVE_DATABASE_URL: postgresql://hive:${HIVE_POSTGRES_PASSWORD:-hive-local}@postgres:5432/hive
+      HIVE_QDRANT_URL: http://qdrant:6333
+    expose:
+      - "9130"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
     volumes:
-      - hive_dind:/var/lib/docker   # persist the inner daemon's images/layers
-      - hive_models:/root/.cache/huggingface # persist GLiNER/Hugging Face weights
-      - ./.env:/app/.env              # panel-managed config persists on the host
-      - ./secrets:/app/secrets        # encrypted session + signing key
-      - ./evidence:/app/evidence     # sealed evidence bundles land here
+      - hive_dind:/var/lib/docker
+      - hive_models:/root/.cache/huggingface
+      - ./.env:/app/.env
+      - ./secrets:/app/secrets
+      - ./evidence:/app/evidence
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: hive
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: ${HIVE_POSTGRES_PASSWORD:-hive-local}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hive -d hive"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - hive_postgres:/var/lib/postgresql/data
     restart: unless-stopped
 
   qdrant:
     image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
     volumes:
       - ./qdrant_storage:/qdrant/storage
+    restart: unless-stopped
 
 volumes:
   hive_dind:
   hive_models:
     name: hive_model_cache
+  hive_postgres:

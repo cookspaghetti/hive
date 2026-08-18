@@ -42,6 +42,7 @@ class Settings(BaseSettings):
 
     # Stores
     qdrant_url: str = "http://localhost:6333"
+    database_url: str = ""
     # L2 memory: False = offline KeywordMemory; True = semantic mem0+Qdrant
     use_semantic_memory: bool = False
 

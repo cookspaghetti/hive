@@ -92,7 +92,8 @@ src/hive/
   verdict/                 Hybrid scam scoring
 tests/                     Offline unit and integration tests
 docker/sandbox/Dockerfile  Disposable browser image
-docker-compose.yml         Qdrant support service
+frontend/                  Nginx image and backend reverse proxy
+docker-compose.yml         Frontend, backend, PostgreSQL, and Qdrant stack
 ```
 
 ## Setup
@@ -138,9 +139,9 @@ For headless or terminal-only setup, copy `.env.example` to `.env`, fill in
 the required values, then run `task bootstrap` for the interactive Telethon
 login and signing key generation.
 
-L2 memory works out of the box with an offline keyword recall backend, so no
-external store is required. Qdrant is only needed for the optional semantic
-memory upgrade (`HIVE_USE_SEMANTIC_MEMORY=true`, backed by mem0):
+L2 memory uses an offline keyword recall backend by default. The Compose stack
+still provisions Qdrant as its own service, but the backend only uses it when
+`HIVE_USE_SEMANTIC_MEMORY=true` enables the mem0 semantic-memory upgrade:
 
 ```powershell
 docker compose up -d qdrant
@@ -162,6 +163,9 @@ equivalent terminal flow. The session string is never written in plaintext.
 The evidence signer expects an RSA private key at `HIVE_SIGNING_KEY_PATH`.
 For development, `hive.vault.signer.generate_keypair()` can generate one.
 Keep session files, `.env`, private keys, and evidence output out of git.
+Compose stores completed takeover transcripts in PostgreSQL so the control
+panel can reopen past chats. `task dev` falls back to local JSON records under
+`evidence/history/` when `HIVE_DATABASE_URL` is unset.
 
 ## Running
 
@@ -196,9 +200,17 @@ and notifies the operator.
 
 ## Docker Deployment
 
-The agent runs containerized. Because HIVE spawns the Layer 4 sandbox
-containers itself, the image runs **Docker-in-Docker**: it starts its own inner
-Docker daemon and builds/launches the sandbox inside it, isolated from the host
+Compose runs four separate services:
+
+| Service | Responsibility | Host exposure |
+| --- | --- | --- |
+| `frontend` | Nginx static control panel and same-origin API proxy | `127.0.0.1:9130` |
+| `backend` | FastAPI, Telegram runtime, evidence, and sandbox orchestration | Internal only |
+| `postgres` | Durable takeover transcripts and history index | Internal only |
+| `qdrant` | Optional mem0 semantic-memory vectors | Internal only |
+
+The backend still runs **Docker-in-Docker** because HIVE spawns disposable
+Layer 4 sandbox containers. Its inner daemon remains isolated from the host
 daemon.
 
 ```powershell
@@ -208,19 +220,25 @@ task run                  # build, run, and publish the panel on 127.0.0.1:9130
 The equivalent Compose command is:
 
 ```powershell
-docker compose up --build hive
+docker compose up --build --remove-orphans
 ```
 
-The container needs `--privileged` (compose sets `privileged: true`) so the
-inner daemon can run. On first start the entrypoint launches `dockerd`, builds
-the `hive-sandbox` image inside it, then runs `python -m hive`. Sealed evidence
-is written to the mounted `./evidence` directory.
+`--remove-orphans` replaces the legacy single `hive` service container on the
+first launch. It does not remove the existing evidence, model cache, Qdrant
+data, or named database volumes.
+
+The `backend` container needs `privileged: true` so its inner daemon can run.
+On first start the entrypoint launches `dockerd`, builds the `hive-sandbox`
+image inside it, then runs `python -m hive`. Nginx proxies `/api/*` and
+`/health` to that internal backend. Sealed evidence remains in the mounted
+`./evidence` directory, while takeover history is stored in the
+`hive_postgres` volume.
 
 GLiNER/Hugging Face model files are stored in the persistent
 `hive_model_cache` Docker volume. The first `task run` still downloads the
 weights, but later container rebuilds and recreations reuse them. A normal
-`docker compose down` preserves this cache; `docker compose down --volumes`
-removes it.
+`task stack:down` preserves the model and PostgreSQL volumes;
+`docker compose down --volumes` removes them.
 
 > Security trade-off: a privileged Docker-in-Docker container has broad kernel
 > capabilities on the host. This is an accepted cost for a self-contained
@@ -251,20 +269,13 @@ network subnet, as described by `EGRESS_FIREWALL_HINT` in
 Run the full suite:
 
 ```powershell
-D:\hive\.venv\Scripts\python.exe -m pytest -q
-```
-
-In this workspace, using the explicit venv interpreter avoids the WindowsApps
-Python shim. Expected current result:
-
-```text
-99 passed, 1 warning
+uv run pytest -q
 ```
 
 Focused review-fix coverage:
 
 ```powershell
-D:\hive\.venv\Scripts\python.exe -m pytest tests/test_sandbox_runner.py tests/test_userbot.py tests/test_prompt_defense.py tests/test_control_bot.py -q
+uv run pytest tests/test_sandbox_runner.py tests/test_userbot.py tests/test_prompt_defense.py tests/test_control_bot.py -q
 ```
 
 ## Current Limits

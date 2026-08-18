@@ -117,13 +117,17 @@
                 <div class="surface-heading"><div><h2>Active takeovers</h2><p id="sessionCountLabel">No sessions loaded</p></div></div>
                 <div class="table-scroll"><table><thead><tr><th>Peer</th><th>Persona</th><th>Phase</th><th>Verdict</th><th>Score</th><th><span class="sr-only">Action</span></th></tr></thead><tbody id="sessionRows"></tbody></table></div>
               </article>
+              <article class="surface data-surface">
+                <div class="surface-heading"><div><h2>Takeover history</h2><p id="historyCountLabel">No archived takeovers</p></div></div>
+                <div class="table-scroll"><table><thead><tr><th>Peer</th><th>Ended</th><th>Verdict</th><th>Messages</th><th><span class="sr-only">Action</span></th></tr></thead><tbody id="historyRows"></tbody></table></div>
+              </article>
             </div>
 
             <aside class="session-inspector" id="sessionInspector" aria-labelledby="inspectorTitle">
-              <div class="empty-state" id="inspectorEmpty"><strong>Select an active takeover</strong><p>The transcript, verdict trail, indicators, and sandbox findings will appear here.</p></div>
+              <div class="empty-state" id="inspectorEmpty"><strong>Select a takeover</strong><p>Open an active or archived takeover to inspect its transcript, verdict trail, indicators, and sandbox findings.</p></div>
               <div id="inspectorContent" hidden>
                 <div class="inspector-header"><div><span class="mono" id="inspectorPeer"></span><h2 id="inspectorTitle">Session</h2></div><button class="icon-button" id="closeInspector" type="button" aria-label="Close session inspector">×</button></div>
-                <div class="inspector-status"><span class="status-chip" id="inspectorVerdict"></span><strong id="inspectorScore"></strong><span id="inspectorTurns"></span></div>
+                <div class="inspector-status"><span class="status-chip" id="inspectorVerdict"></span><strong id="inspectorScore"></strong><span id="inspectorTurns"></span><span class="live-update"><span aria-hidden="true"></span><span id="inspectorLiveLabel">Live</span></span></div>
                 <label class="field"><span>Active persona</span><select id="inspectorPersona"></select></label>
                 <div class="inspector-tabs" role="tablist" aria-label="Session detail">
                   <button class="active" type="button" role="tab" data-inspector-tab="transcript">Transcript</button>
@@ -133,7 +137,7 @@
                 <div class="inspector-panel active" data-inspector-panel="transcript"><div class="transcript" id="inspectorTranscript"></div></div>
                 <div class="inspector-panel" data-inspector-panel="signals"><div class="signal-list" id="inspectorSignals"></div></div>
                 <div class="inspector-panel" data-inspector-panel="indicators"><div class="indicator-list" id="inspectorIndicators"></div></div>
-                <div class="inspector-actions"><button class="button danger" id="sealSession" type="button">Stop and seal evidence</button><button class="button secondary" type="button" data-route-link="intelligence">Open intelligence view</button></div>
+                <div class="inspector-actions" id="inspectorActions"><button class="button danger" id="sealSession" type="button">Stop and seal evidence</button><button class="button secondary" type="button" data-route-link="intelligence">Open intelligence view</button></div>
               </div>
             </aside>
           </div>

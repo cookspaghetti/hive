@@ -1,6 +1,6 @@
 """L3 extraction tests (fyp.txt L3), fully offline."""
 
-from hive.extraction.engine import extract_hvis
+from hive.extraction.engine import extract_hvis, merge_hvis
 from hive.extraction.media import classify_payload
 from hive.extraction.regex_rules import extract_regex
 
@@ -23,6 +23,18 @@ def test_regex_finds_url_and_phone():
     hvis = extract_regex("click http://evil.co and call 012-345 6789", 1)
     assert "url" in _kinds(hvis)
     assert "phone_my" in _kinds(hvis)
+
+
+def test_regex_normalizes_bare_domain_for_sandboxing():
+    hvis = extract_regex("8Bit.co this is the website. Trust me", 2)
+
+    assert [(item.kind, item.value) for item in hvis] == [("url", "https://8Bit.co")]
+
+
+def test_bare_domain_extraction_ignores_email_addresses_and_decimal_versions():
+    hvis = extract_regex("email scammer@example.com about version 1.44.0", 3)
+
+    assert not any(item.kind == "url" for item in hvis)
 
 
 def test_bank_account_only_with_keyword():
@@ -54,6 +66,43 @@ def test_engine_dedup_keeps_higher_confidence():
     accounts = [h for h in hvis if h.kind == "bank_account"]
     assert len(accounts) == 1
     assert accounts[0].confidence == 0.95
+
+
+def test_engine_extracts_organization_and_location_labels():
+    ner = FakeNer(
+        [
+            ("company name", "ABC Garage", 0.91),
+            ("location", "Kajang", 0.88),
+        ]
+    )
+
+    hvis = extract_hvis("ABC Garage showroom is in Kajang", 5, ner_backend=ner)
+
+    assert {(item.kind, item.value) for item in hvis} == {
+        ("organization", "ABC Garage"),
+        ("location", "Kajang"),
+    }
+
+
+def test_cross_message_merge_normalizes_person_honorifics():
+    existing = extract_hvis(
+        "Good morning Mr Alex",
+        6,
+        ner_backend=FakeNer([("person name", "Mr Alex", 0.61)]),
+    )
+    incoming = extract_hvis(
+        "Hello Mr alex",
+        7,
+        ner_backend=FakeNer([("person name", "Mr alex", 0.73)]),
+    )
+
+    accepted = merge_hvis(existing, incoming)
+
+    assert accepted == [existing[0]]
+    assert len(existing) == 1
+    assert existing[0].value == "Mr alex"
+    assert existing[0].confidence == 0.73
+    assert existing[0].source_msg_id == 7
 
 
 def test_qr_payload_url_classified():

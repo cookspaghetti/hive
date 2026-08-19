@@ -27,6 +27,9 @@ LABEL_TO_KIND: dict[str, str] = {
     "phone number": "phone",
     "telegram id": "telegram_id",
     "person name": "person_name",
+    "company name": "organization",
+    "organization": "organization",
+    "location": "location",
     "url": "url",
 }
 

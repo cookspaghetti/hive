@@ -23,6 +23,9 @@ services:
       HIVE_PANEL_ALLOW_NON_LOOPBACK: "true"
       HIVE_DATABASE_URL: postgresql://hive:${HIVE_POSTGRES_PASSWORD:-hive-local}@postgres:5432/hive
       HIVE_QDRANT_URL: http://qdrant:6333
+      # Per-child memory cgroups fail under Docker Desktop's nested daemon.
+      # The outer backend limit below contains the sandbox and HIVE together.
+      HIVE_SANDBOX_MEMORY_LIMIT: ${HIVE_SANDBOX_MEMORY_LIMIT:-}
     expose:
       - "9130"
     depends_on:
@@ -36,6 +39,8 @@ services:
       - ./.env:/app/.env
       - ./secrets:/app/secrets
       - ./evidence:/app/evidence
+    mem_limit: 4g
+    pids_limit: 1024
     restart: unless-stopped
 
   postgres:

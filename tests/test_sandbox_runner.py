@@ -9,7 +9,7 @@ the command construction and mock subprocess for ensure_network.
 import subprocess
 from unittest import mock
 
-from hive.sandbox.runner import PlaywrightDockerRunner
+from hive.sandbox.runner import _PLAYWRIGHT_SCRIPT, PlaywrightDockerRunner
 
 
 def test_docker_cmd_uses_dedicated_network_not_default():
@@ -44,6 +44,20 @@ def test_docker_cmd_is_configurable():
     cmd = PlaywrightDockerRunner(network="custom-net", dns="9.9.9.9")._docker_cmd("http://x/")
     assert cmd[cmd.index("--network") + 1] == "custom-net"
     assert cmd[cmd.index("--dns") + 1] == "9.9.9.9"
+
+
+def test_docker_cmd_can_defer_memory_limit_to_outer_container():
+    cmd = PlaywrightDockerRunner(memory_limit=None)._docker_cmd("http://x/")
+
+    assert "--memory" not in cmd
+    assert "--pids-limit" in cmd
+
+
+def test_playwright_script_reads_node_eval_argument_and_avoids_networkidle():
+    assert "process.argv[1]" in _PLAYWRIGHT_SCRIPT
+    assert "process.argv[2]" not in _PLAYWRIGHT_SCRIPT
+    assert "domcontentloaded" in _PLAYWRIGHT_SCRIPT
+    assert "networkidle" not in _PLAYWRIGHT_SCRIPT
 
 
 def test_ensure_network_creates_when_missing():
@@ -86,3 +100,14 @@ def test_run_returns_error_when_network_setup_fails():
         result = runner.run("http://x/")
         assert "docker" in result.error
         run.assert_not_called()
+
+
+def test_run_reports_nonzero_container_exit_with_stderr():
+    runner = PlaywrightDockerRunner()
+    with mock.patch.object(runner, "ensure_network"), mock.patch("subprocess.run") as run:
+        run.return_value = mock.Mock(stdout="", stderr="cgroup failed", returncode=125)
+
+        result = runner.run("http://x/")
+
+    assert "container exited 125" in result.error
+    assert "cgroup failed" in result.error

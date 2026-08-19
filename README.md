@@ -61,6 +61,7 @@ Telethon client.
 | L3 Extraction | `src/hive/extraction/` | Regex HVIs, optional GLiNER NER, local QR decoding |
 | L4 Sandbox | `src/hive/sandbox/` | Disposable Playwright Docker runner and URL verdict signals |
 | L5 Evidence vault | `src/hive/vault/` | Hash chain, PDF bundle, RSA signature |
+| Audit ledger | `src/hive/audit.py` | Permanent hash-chained action and message journal |
 | S6 Verdict | `src/hive/verdict/` | Hard + soft signal scoring |
 | S7 Guardrails | `src/hive/guardrails/`, `src/hive/security/` | Prompt-injection defense and encrypted session storage |
 | S8 Runtime | `src/hive/runtime.py`, `src/hive/transports/` | Per-turn orchestration and Telegram IO |
@@ -122,6 +123,67 @@ task dev
 This watches the Python and web-panel assets under `src/` and restarts the
 panel when they change. It does not auto-start Telegram or run Docker.
 
+To test conversations without repeating the Telegram takeover flow, run the
+direct simulator:
+
+```powershell
+task simulate
+```
+
+Each line is one phone-check exchange. Put `|||` between rapid-fire messages
+to deliver them as a single burst, for example `hello ||| are you there?`.
+The simulator uses the configured LLM and the real guardrail, extraction,
+verdict, persona, memory, reply-chunking, and evidence pipeline, but skips
+Telegram and shows planned delivery delays without waiting. Its memory is
+isolated in-process by default so test data cannot pollute Qdrant; pass
+`--semantic-memory` when that integration itself is under test. Useful commands
+are `/status`, `/history`, `/seal`, and `/quit`.
+
+Non-interactive checks are also supported, which makes the same harness usable
+from automated test runs:
+
+```powershell
+task simulate -- --no-ner --send "hello ||| are you there?" --send "pay now"
+```
+
+Keep one final Telegram smoke test for takeover, permissions, debounce, and
+delivery behavior; those transport concerns are intentionally outside this
+simulator.
+
+### Permanent audit ledger
+
+Every HIVE entry point writes one append-only audit stream to
+`evidence/audit/events.jsonl`. It includes exact inbound messages, LLM prompts
+and responses, memory operations, pipeline decisions, reply plans, timing and
+typing actions, Telegram delivery attempts and results, operator actions,
+session lifecycle events, and HIVE runtime logs. Each record is flushed to disk
+and linked to the previous record with SHA-256; HIVE refuses to append when the
+existing chain fails verification. There is no rotation, expiry, or automatic
+deletion.
+
+When `HIVE_DATABASE_URL` is set, the same records are mirrored into PostgreSQL
+table `hive_audit_ledger`. A database outage does not lose events: the local
+ledger remains authoritative and is resynchronised when PostgreSQL returns.
+Compose bind-mounts `./evidence`, so the authoritative ledger survives backend
+container replacement, while the database mirror remains in the PostgreSQL
+volume.
+
+The panel's Activity page defaults to persistent operator milestones such as
+takeovers, verdict changes, newly extracted indicators, sealing, and failures.
+Switch it to **All audit events** to inspect the exhaustive ledger. The separate
+Logs page is a bounded, redacted, process-local diagnostic stream. Authenticated
+integrations can retrieve exact records from `GET /api/audit`, filter with
+`after`, `peer_id`, or `event_type`, and verify health at
+`GET /api/audit/status`.
+`HIVE_AUDIT_PATH` can relocate the journal; auditing is mandatory and has no
+runtime off switch.
+
+This ledger deliberately contains third-party messages and model context. Keep
+the evidence directory and PostgreSQL backups access-controlled. Diagnostic log
+messages redact recognizable credentials, while conversational records remain
+exact for auditability. A hash chain makes alteration detectable; independent,
+immutable backups are still required to recover from disk loss or deletion.
+
 Start HIVE's localhost control panel:
 
 ```powershell
@@ -135,6 +197,53 @@ starts automatically once the setup checklist is complete. Credential changes
 can be applied by restarting only the managed agent runtime; the panel remains
 available throughout.
 
+HIVE models a person checking their phone rather than reacting to every update.
+After the first inbound message it picks a random, persona-biased check time
+between 3.5 and 12 seconds, while continuing to collect rapid-fire messages.
+It then reasons over the complete burst once. One burst counts as one
+conversational exchange for benign hand-back decisions, even though every
+original message remains in the evidence record. Tune the check-time bounds
+with `HIVE_INBOX_DEBOUNCE_S` and `HIVE_INBOX_MAX_WAIT_S`.
+
+The model selects a hidden `fast`, `normal`, or `slow` pace from the context.
+That pace controls both the current read/typing delay and how soon the persona
+checks the next burst. Replies default to one compact bubble, use two for a
+natural reaction-plus-question, and use three only when needed; verbose model
+output is bounded instead of being crammed into the final bubble. Telegram's
+typing indicator is shown only for the typing portion of the delay, and model
+inference time is deducted from the remaining human delay rather than counted
+twice.
+
+If new messages arrive while HIVE is reasoning or waiting to send, a lightweight
+steering decision chooses whether a short drafted bubble should be sent first or
+whether HIVE should keep thinking with the new context. Unsent drafts never enter
+the transcript or evidence chain; each outgoing bubble is recorded only after
+Telegram delivery succeeds.
+
+When a new eligible private chat arrives outside an active takeover, HIVE creates
+one pending takeover request. It appears in the control panel within the normal
+live refresh interval and is pushed proactively to the operator's HIVE Telegram
+bot with the sender, peer ID, latest-message preview, and interactive Yes/No
+buttons. Yes starts the default persona immediately; No dismisses the request in
+both channels.
+Further messages update the same request instead of sending duplicate alerts;
+starting a takeover resolves it, and a later post-takeover message can create a
+new request.
+
+The control bot also exposes `/takeovers` and `/status <peer_id>` with an
+interactive **Stop & seal** action. A second confirmation is required before
+HIVE stops replying; the same coordinator used by the panel then archives the
+chat, generates the signed report, and sends the PDF back through Telegram.
+Concurrent panel and bot seal attempts are rejected instead of producing two
+case files.
+
+Active and archived takeover conversations open in a live modal. Telegram
+images are shown inline; videos, audio, and other documents retain their
+original filename and an authenticated download link. Captured attachments are
+kept under `HIVE_MEDIA_PATH`, bounded by `HIVE_MEDIA_MAX_BYTES` per file, and
+signal assessments are rendered as labelled scores and evidence instead of raw
+JSON.
+
 For headless or terminal-only setup, copy `.env.example` to `.env`, fill in
 the required values, then run `task bootstrap` for the interactive Telethon
 login and signing key generation.
@@ -146,6 +255,22 @@ still provisions Qdrant as its own service, but the backend only uses it when
 ```powershell
 docker compose up -d qdrant
 ```
+
+### Planned: cross-case semantic intelligence
+
+Qdrant should evolve from persona conversation recall into a sealed-case
+pattern index. On seal, HIVE will embed the external party's script, scam
+method, verified indicators, payment flow, and sandbox findings. During a new
+takeover, semantic retrieval can surface similar historical cases and suggest
+which missing identifiers to elicit next.
+
+Semantic similarity is candidate retrieval, not proof of common ownership.
+Network attribution must distinguish exact shared identifiers (accounts,
+wallets, domains, phone numbers, or Telegram handles), multiple corroborating
+features, and script-only similarity. PostgreSQL remains authoritative for
+cases and relationship edges; Qdrant finds candidates; the evidence bundle and
+audit ledger retain provenance. Only corrected, validated extraction results
+should enter this index, and the panel should explain why each case matched.
 
 Build the forensic sandbox image:
 
@@ -166,6 +291,15 @@ Keep session files, `.env`, private keys, and evidence output out of git.
 Compose stores completed takeover transcripts in PostgreSQL so the control
 panel can reopen past chats. `task dev` falls back to local JSON records under
 `evidence/history/` when `HIVE_DATABASE_URL` is unset.
+
+Signed intelligence reports use the HIVE logo and charcoal/gold visual system,
+embed a CJK-capable font for Mandarin transcripts, and separate the case
+summary, conversation, extracted intelligence, sandbox findings, and chain of
+custody. Set the optional operator name in the panel (or
+`HIVE_OPERATOR_NAME`) to identify the responsible person on the Section 90A
+certificate. Each sealed session gets a unique filename. Sealing writes and
+signs a temporary report first; if rendering or signing fails, the takeover
+stays active and no partial bundle is published.
 
 ## Running
 
@@ -195,8 +329,10 @@ small_business_owner
 
 `/stop` ends the takeover, seals the evidence bundle under `evidence/`, sends
 the summary, and attaches the generated PDF. If the engine decides the chat is
-likely benign after enough turns, the userbot ends the takeover automatically
-and notifies the operator.
+likely benign after enough conversational exchanges, the userbot ends the
+takeover automatically and notifies the operator. Verdict risk is cumulative
+within a takeover, so a quieter later message cannot erase an earlier
+high-confidence scam finding.
 
 ## Docker Deployment
 
@@ -255,10 +391,15 @@ weights, but later container rebuilds and recreations reuse them. A normal
 - writable `/tmp` tmpfs,
 - dropped Linux capabilities,
 - no-new-privileges,
-- memory and PID limits,
+- a PID limit and, outside nested Docker, a per-run memory limit,
 - a single bind mount for `/out` screenshots.
 
 The runner creates the dedicated Docker network automatically if it is missing.
+Compose cannot apply a child memory cgroup reliably inside Docker Desktop's
+nested daemon, so the four-service stack disables that child flag and applies a
+4 GB memory limit to the outer backend container instead. Set
+`HIVE_SANDBOX_MEMORY_LIMIT` only when the inner daemon supports nested memory
+cgroups.
 Docker bridge isolation is not a complete LAN/host egress firewall by itself.
 For stronger host/LAN denial, add `DOCKER-USER` firewall rules for the sandbox
 network subnet, as described by `EGRESS_FIREWALL_HINT` in

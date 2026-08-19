@@ -25,8 +25,9 @@ def _run(coro):
 class FakeUserbot:
     instances = []
 
-    def __init__(self, api_id, api_hash, session, engine):
+    def __init__(self, api_id, api_hash, session, engine, **kwargs):
         self.args = (api_id, api_hash, session, engine)
+        self.options = kwargs
         self._sessions = {}
         self.started = False
         self.stopped = False
@@ -42,8 +43,9 @@ class FakeUserbot:
 class FakeControl:
     instances = []
 
-    def __init__(self, settings, engine, userbot):
+    def __init__(self, settings, engine, userbot, **kwargs):
         self.args = (settings, engine, userbot)
+        self.options = kwargs
         self.started = False
         self.stopped = False
         self.__class__.instances.append(self)

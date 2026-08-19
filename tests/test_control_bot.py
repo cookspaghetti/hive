@@ -23,6 +23,9 @@ class FakeSettings:
 
 
 class FakeEngine:
+    def __init__(self):
+        self.fail_seal = False
+
     def new_session(self, peer_id, persona):
         from hive.state import SessionState
         from hive.vault.hashchain import HashChain
@@ -31,13 +34,29 @@ class FakeEngine:
     def summary(self, session):
         return "summary"
 
+    def close_session(self, session, chain, out_path, key_path, operator_name=""):
+        if self.fail_seal:
+            raise RuntimeError("renderer failed")
+        from pathlib import Path
+
+        path = Path(out_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"pdf")
+        return path
+
 
 class FakeMessage:
     def __init__(self):
         self.replies = []
+        self.reply_markups = []
+        self.documents = []
 
-    async def reply_text(self, text):
+    async def reply_text(self, text, reply_markup=None):
         self.replies.append(text)
+        self.reply_markups.append(reply_markup)
+
+    async def reply_document(self, document, filename):
+        self.documents.append((filename, document.read()))
 
 
 class FakeUser:
@@ -54,6 +73,28 @@ class FakeUpdate:
 class FakeContext:
     def __init__(self, args):
         self.args = args
+
+
+class FakeCallbackQuery:
+    def __init__(self, data):
+        self.data = data
+        self.answers = []
+        self.edits = []
+        self.edit_markups = []
+        self.message = FakeMessage()
+
+    async def answer(self, text=None, show_alert=False):
+        self.answers.append({"text": text, "show_alert": show_alert})
+
+    async def edit_message_text(self, text, reply_markup=None):
+        self.edits.append(text)
+        self.edit_markups.append(reply_markup)
+
+
+class FakeCallbackUpdate:
+    def __init__(self, data, uid=42):
+        self.effective_user = FakeUser(uid)
+        self.callback_query = FakeCallbackQuery(data)
 
 
 def _bot(history_store=None):
@@ -156,3 +197,149 @@ def test_handback_archives_takeover_history(tmp_path):
 
     assert store.list()[0]["peer_id"] == 555
     assert store.list()[0]["message_count"] == 1
+
+
+def test_takeover_request_is_pushed_to_operator_bot():
+    sent = []
+
+    class TelegramBot:
+        async def send_message(self, **kwargs):
+            sent.append(kwargs)
+
+    class App:
+        bot = TelegramBot()
+
+    bot = _bot()
+    bot._app = App()
+    delivered = _run(
+        bot._on_takeover_request(
+            {
+                "peer_id": 555,
+                "name": "Sender",
+                "username": "sender",
+                "last_message": "please reply",
+                "message_count": 2,
+            }
+        )
+    )
+
+    assert delivered is True
+    assert sent[0]["chat_id"] == 42
+    assert "HIVE takeover request" in sent[0]["text"]
+    assert "Sender (@sender)" in sent[0]["text"]
+    buttons = sent[0]["reply_markup"].inline_keyboard[0]
+    assert [button.text for button in buttons] == ["Yes — Take over", "No — Dismiss"]
+    assert buttons[0].callback_data == "hive_takeover:yes:555"
+    assert buttons[1].callback_data == "hive_takeover:no:555"
+
+
+def test_yes_button_starts_takeover_and_resolves_request():
+    bot = _bot()
+    bot.userbot.observe_incoming(555, "hello", 1, 1.0, "Sender", "sender")
+    update = FakeCallbackUpdate("hive_takeover:yes:555")
+
+    _run(bot._callback_takeover_request(update, FakeContext([])))
+
+    assert 555 in bot.userbot._sessions
+    assert bot.userbot.has_pending_takeover_request(555) is False
+    assert update.callback_query.answers == [{"text": None, "show_alert": False}]
+    assert "Takeover started on 555" in update.callback_query.edits[-1]
+
+
+def test_no_button_dismisses_request_in_both_channels():
+    bot = _bot()
+    bot.userbot.observe_incoming(556, "hello", 1, 1.0, "Sender", "sender")
+    update = FakeCallbackUpdate("hive_takeover:no:556")
+
+    _run(bot._callback_takeover_request(update, FakeContext([])))
+
+    assert 556 not in bot.userbot._sessions
+    assert bot.userbot.has_pending_takeover_request(556) is False
+    assert "dismissed" in update.callback_query.edits[-1]
+
+
+def test_takeover_buttons_reject_unauthorised_users():
+    bot = _bot()
+    bot.userbot.observe_incoming(557, "hello", 1, 1.0)
+    update = FakeCallbackUpdate("hive_takeover:yes:557", uid=999)
+
+    _run(bot._callback_takeover_request(update, FakeContext([])))
+
+    assert 557 not in bot.userbot._sessions
+    assert bot.userbot.has_pending_takeover_request(557) is True
+    assert update.callback_query.answers == [
+        {"text": "Unauthorised.", "show_alert": True}
+    ]
+    assert update.callback_query.edits == []
+
+
+def test_takeovers_lists_active_sessions_with_stop_buttons():
+    bot = _bot()
+    bot.userbot.begin_takeover(601, "confused_elderly")
+    update = FakeUpdate()
+
+    _run(bot._cmd_takeovers(update, FakeContext([])))
+
+    assert "Active takeovers" in update.message.replies[-1]
+    assert "601" in update.message.replies[-1]
+    button = update.message.reply_markups[-1].inline_keyboard[0][0]
+    assert button.text == "Stop & seal 601"
+    assert button.callback_data == "hive_seal:request:601"
+
+
+def test_stop_command_requires_confirmation_and_keeps_takeover_running():
+    bot = _bot()
+    bot.userbot.begin_takeover(602, "confused_elderly")
+    update = FakeUpdate()
+
+    _run(bot._cmd_stop(update, FakeContext(["602"])))
+
+    assert 602 in bot.userbot._sessions
+    assert "Stop and seal takeover 602?" in update.message.replies[-1]
+    buttons = update.message.reply_markups[-1].inline_keyboard[0]
+    assert [button.callback_data for button in buttons] == [
+        "hive_seal:confirm:602",
+        "hive_seal:cancel:602",
+    ]
+
+
+def test_confirm_button_seals_archives_and_returns_pdf(tmp_path):
+    store = TakeoverHistoryStore(tmp_path / "history")
+    bot = _bot(store)
+    bot.takeovers.evidence_root = tmp_path / "evidence"
+    bot.userbot.begin_takeover(603, "confused_elderly")
+    bot.userbot._sessions[603][0].messages.append(Message("stranger", "hello", 1.0, 1))
+    update = FakeCallbackUpdate("hive_seal:confirm:603")
+
+    _run(bot._callback_seal(update, FakeContext([])))
+
+    assert 603 not in bot.userbot._sessions
+    assert store.list()[0]["peer_id"] == 603
+    assert "stopped and sealed" in update.callback_query.edits[-1]
+    assert update.callback_query.message.documents == [("evidence_603.pdf", b"pdf")]
+
+
+def test_seal_failure_keeps_takeover_active(tmp_path):
+    bot = _bot(TakeoverHistoryStore(tmp_path / "history"))
+    bot.engine.fail_seal = True
+    bot.userbot.begin_takeover(604, "confused_elderly")
+    update = FakeCallbackUpdate("hive_seal:confirm:604")
+
+    _run(bot._callback_seal(update, FakeContext([])))
+
+    assert 604 in bot.userbot._sessions
+    assert "remains active" in update.callback_query.edits[-1]
+    assert update.callback_query.message.documents == []
+
+
+def test_seal_buttons_reject_unauthorised_users():
+    bot = _bot()
+    bot.userbot.begin_takeover(605, "confused_elderly")
+    update = FakeCallbackUpdate("hive_seal:confirm:605", uid=999)
+
+    _run(bot._callback_seal(update, FakeContext([])))
+
+    assert 605 in bot.userbot._sessions
+    assert update.callback_query.answers == [
+        {"text": "Unauthorised.", "show_alert": True}
+    ]

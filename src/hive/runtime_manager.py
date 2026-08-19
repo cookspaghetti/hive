@@ -12,9 +12,11 @@ from typing import Any
 import httpx
 
 from hive.config import Settings, load_settings
+from hive.history import build_history_store
 from hive.logging_setup import get_logger
 from hive.runtime import build_engine
 from hive.security.session_store import load_session
+from hive.takeover import TakeoverCoordinator
 from hive.transports.control_bot import ControlBot
 from hive.transports.userbot import UserbotTransport
 
@@ -113,6 +115,7 @@ class HiveRuntimeManager:
         self.engine: Any = None
         self.userbot: Any = None
         self.control: Any = None
+        self.takeovers: TakeoverCoordinator | None = None
         self.components = {
             name: {"state": "pending", "detail": "", "duration_s": None}
             for name in _COMPONENTS
@@ -230,9 +233,33 @@ class HiveRuntimeManager:
                     success_detail="engine dependencies initialized",
                 )
                 userbot = self._userbot_factory(
-                    settings.tg_api_id, settings.tg_api_hash, session_str, engine
+                    settings.tg_api_id,
+                    settings.tg_api_hash,
+                    session_str,
+                    engine,
+                    inbox_debounce_s=settings.inbox_debounce_s,
+                    inbox_max_wait_s=settings.inbox_max_wait_s,
+                    media_root=self._resolve(
+                        getattr(settings, "media_path", "./evidence/media")
+                    ),
+                    media_max_bytes=getattr(settings, "media_max_bytes", 25 * 1024 * 1024),
                 )
-                control = self._control_factory(settings, engine, userbot)
+                takeover_coordinator = TakeoverCoordinator(
+                    engine,
+                    userbot,
+                    settings,
+                    build_history_store(
+                        self.root / "evidence" / "history",
+                        getattr(settings, "database_url", ""),
+                    ),
+                    evidence_root=self.root / "evidence",
+                )
+                control = self._control_factory(
+                    settings,
+                    engine,
+                    userbot,
+                    takeover_coordinator=takeover_coordinator,
+                )
                 await self._async_stage(
                     "userbot",
                     "connecting Telethon data plane",
@@ -259,6 +286,7 @@ class HiveRuntimeManager:
             self.engine = engine
             self.userbot = userbot
             self.control = control
+            self.takeovers = takeover_coordinator
             self.state = "running"
             self.restart_required = False
             log.info(
@@ -295,6 +323,7 @@ class HiveRuntimeManager:
                     self.engine = None
                     self.userbot = None
                     self.control = None
+                    self.takeovers = None
                     self.state = "stopped"
                     self._set_component("control_bot", "stopped", "Bot API polling stopped")
                     self._set_component("userbot", "stopped", "Telethon disconnected")

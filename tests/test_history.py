@@ -15,6 +15,7 @@ def test_history_store_persists_and_lists_newest_first(tmp_path):
     store.archive(older, ended_ts=20)
 
     newer = SessionState(peer_id=20, persona="small_business_owner", started_ts=30)
+    newer.exchange_count = 1
     newer.messages.append(Message("agent", "second chat", 31, 2))
     newer.hvis.append(HVI("bank_account", "123", 2, 0.9))
     archived = store.archive(newer, evidence_path="bundle_20.pdf", ended_ts=40)
@@ -22,6 +23,8 @@ def test_history_store_persists_and_lists_newest_first(tmp_path):
     rows = store.list()
     assert [row["peer_id"] for row in rows] == [20, 10]
     assert rows[0]["message_count"] == 1
+    assert rows[0]["session_id"] == newer.session_id
+    assert store.get(archived["id"])["exchanges"] == 1
     assert store.get(archived["id"]) == archived
 
 

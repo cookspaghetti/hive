@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any, Protocol
 
+from hive.audit import audit_event
 from hive.logging_setup import get_logger
 from hive.state import SessionState
 
@@ -40,12 +41,14 @@ def _record(
     ended = time.time() if ended_ts is None else ended_ts
     return {
         "id": f"{time.time_ns()}_{session.peer_id}",
+        "session_id": session.session_id,
         "peer_id": session.peer_id,
         "persona": session.persona,
         "phase": status,
         "verdict": session.verdict,
         "score": round(session.verdict_score, 3),
         "turns": session.turn_count,
+        "exchanges": getattr(session, "exchange_count", session.turn_count),
         "started_ts": session.started_ts,
         "ended_ts": ended,
         "duration_s": max(0, round(ended - session.started_ts)) if session.started_ts else None,
@@ -56,6 +59,11 @@ def _record(
                 "ts": message.ts,
                 "msg_id": message.msg_id,
                 "media_kind": message.media_kind,
+                "media_name": message.media_name,
+                "media_mime": message.media_mime,
+                "media_size": message.media_size,
+                "media_available": bool(message.media_path),
+                "media_sha256": message.media_sha256,
             }
             for message in session.messages
         ],
@@ -78,12 +86,14 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         key: record.get(key)
         for key in (
             "id",
+            "session_id",
             "peer_id",
             "persona",
             "phase",
             "verdict",
             "score",
             "turns",
+            "exchanges",
             "started_ts",
             "ended_ts",
             "duration_s",
@@ -120,6 +130,14 @@ class TakeoverHistoryStore:
             encoding="utf-8",
         )
         temporary.replace(path)
+        audit_event(
+            "takeover_history",
+            "takeover_history_archived",
+            component="history.local",
+            payload={"record": record, "path": str(path)},
+            peer_id=session.peer_id,
+            session_id=session.session_id,
+        )
         return record
 
     def list(self) -> list[dict[str, Any]]:
@@ -199,6 +217,14 @@ class PostgresTakeoverHistoryStore:
                 """,
                 (record["id"], record["peer_id"], record["ended_ts"], Jsonb(record)),
             )
+        audit_event(
+            "takeover_history",
+            "takeover_history_archived",
+            component="history.postgres",
+            payload={"record": record},
+            peer_id=session.peer_id,
+            session_id=session.session_id,
+        )
         return record
 
     def list(self) -> list[dict[str, Any]]:

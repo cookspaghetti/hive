@@ -82,6 +82,22 @@ class ObservationHub(logging.Handler):
         }
         with self._lock:
             self._events.append(row)
+        try:
+            from hive.audit import audit_event
+
+            audit_event(
+                "operator_event",
+                title,
+                component=category,
+                payload={"detail": detail, "severity": severity},
+                peer_id=peer_id,
+                level="error" if severity == "error" else "info",
+                ts=float(row["ts"]),
+            )
+        except Exception:
+            # The observation buffer must never recurse through logging. Audit
+            # failures are surfaced by the ledger itself and startup checks.
+            pass
 
     def logs(self, *, after: int = 0, limit: int = 200) -> list[dict[str, Any]]:
         with self._lock:

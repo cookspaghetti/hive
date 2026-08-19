@@ -8,6 +8,7 @@ from pathlib import Path
 import uvicorn
 from fastapi import FastAPI
 
+from hive.audit import configure_audit
 from hive.config import load_settings
 from hive.logging_setup import configure_logging, get_logger
 from hive.runtime_manager import HiveRuntimeManager
@@ -34,6 +35,10 @@ def create_dev_app() -> FastAPI:
 def run_panel() -> None:
     """Run one panel process; ``watchfiles`` restarts it after source changes."""
     settings = load_settings()
+    audit_path = Path(getattr(settings, "audit_path", "./evidence/audit/events.jsonl"))
+    if not audit_path.is_absolute():
+        audit_path = PROJECT_ROOT / audit_path
+    configure_audit(audit_path, getattr(settings, "database_url", ""))
     configure_logging(settings.log_level)
     log.info(
         "[startup][panel] DEVELOPMENT url=http://%s:%d telegram_autostart=disabled",

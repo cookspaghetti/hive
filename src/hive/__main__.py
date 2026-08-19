@@ -6,6 +6,7 @@ import secrets
 
 import uvicorn
 
+from hive.audit import configure_audit
 from hive.config import load_settings
 from hive.logging_setup import configure_logging, get_logger
 from hive.runtime_manager import HiveRuntimeManager
@@ -16,6 +17,7 @@ log = get_logger(__name__)
 
 def main() -> None:
     settings = load_settings()
+    configure_audit(settings.audit_path, settings.database_url)
     configure_logging(settings.log_level)
     log.info("[startup][application] INITIALIZING HIVE control plane")
     log.info(

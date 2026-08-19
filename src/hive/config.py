@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     vision_model: str = "qwen3.5:cloud"
     # Logging
     log_level: str = "INFO"
+    audit_path: str = "./evidence/audit/events.jsonl"
 
     # Telegram data plane (Telethon userbot)
     tg_api_id: int = 0
@@ -35,10 +36,13 @@ class Settings(BaseSettings):
     tg_phone: str = ""
     tg_session_path: str = "./secrets/user.session"
     session_passphrase: str = ""
+    media_path: str = "./evidence/media"
+    media_max_bytes: int = 25 * 1024 * 1024
 
     # Telegram control plane (Bot API)
     control_bot_token: str = ""
     operator_id: int = 0
+    operator_name: str = ""
 
     # Stores
     qdrant_url: str = "http://localhost:6333"
@@ -57,6 +61,9 @@ class Settings(BaseSettings):
 
     # Behaviour
     default_persona: str = "confused_elderly"
+    # Bounds for the persona-biased, random next-phone-check window.
+    inbox_debounce_s: float = 3.5
+    inbox_max_wait_s: float = 12.0
     max_turns: int = 60
     max_session_minutes: int = 120
 

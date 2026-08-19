@@ -9,8 +9,8 @@ Design goals:
   changes, sandbox runs, lifecycle transitions) are logged by the modules that
   own them, using structured `extra` fields.
 
-Note: forensic-grade, tamper-evident records live in the Evidence Vault (L5),
-NOT here. These logs are for operation/debugging/evaluation.
+Diagnostic logs are also copied into the permanent audit ledger. The stream
+handler here remains a bounded operational/debugging view.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ _configured = False
 
 # Per-conversation correlation id, set by the orchestrator per session.
 _peer_ctx: ContextVar[int | None] = ContextVar("hive_peer_id", default=None)
+_session_ctx: ContextVar[str | None] = ContextVar("hive_session_id", default=None)
 
 
 class _PeerFilter(logging.Filter):
@@ -57,11 +58,23 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name if name.startswith("hive") else f"hive.{name}")
 
 
-def bind_session(peer_id: int | None):
+def current_peer_id() -> int | None:
+    """Return the peer bound to the current execution context, if any."""
+    return _peer_ctx.get()
+
+
+def current_session_id() -> str | None:
+    """Return the audit session bound to the current execution context."""
+    return _session_ctx.get()
+
+
+def bind_session(peer_id: int | None, session_id: str | None = None):
     """Bind the current peer id for log correlation. Returns the ctx token so
     the caller can reset it when the turn/session ends."""
-    return _peer_ctx.set(peer_id)
+    return _peer_ctx.set(peer_id), _session_ctx.set(session_id)
 
 
 def reset_session(token) -> None:
-    _peer_ctx.reset(token)
+    peer_token, session_token = token
+    _peer_ctx.reset(peer_token)
+    _session_ctx.reset(session_token)

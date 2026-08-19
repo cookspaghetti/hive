@@ -37,6 +37,7 @@ def test_run_panel_binds_only_to_localhost(monkeypatch):
     captured = {}
 
     monkeypatch.setattr(dev, "load_settings", lambda: settings)
+    monkeypatch.setattr(dev, "configure_audit", lambda *args, **kwargs: None)
     monkeypatch.setattr(dev, "configure_logging", lambda level: captured.setdefault("log", level))
     monkeypatch.setattr(dev, "create_dev_app", lambda: "panel-app")
     monkeypatch.setattr(

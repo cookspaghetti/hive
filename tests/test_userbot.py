@@ -7,7 +7,10 @@ hand-back path.
 """
 
 import asyncio
+import hashlib
+import time
 from datetime import UTC, datetime
+from pathlib import Path
 from types import SimpleNamespace
 
 from hive.runtime import TurnOutput
@@ -35,6 +38,18 @@ class FakeEngine:
         )
 
 
+def _transport(engine, **kwargs):
+    return UserbotTransport(
+        1,
+        "hash",
+        "sess",
+        engine,
+        inbox_debounce_s=0.0,
+        inbox_max_wait_s=0.0,
+        **kwargs,
+    )
+
+
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
 
@@ -45,7 +60,7 @@ def test_benign_handback_ends_takeover_and_notifies():
     async def on_handback(peer_id, session):
         fired["peer"] = peer_id
 
-    ub = UserbotTransport(1, "hash", "sess", FakeEngine(handed_back=True), on_handback=on_handback)
+    ub = _transport(FakeEngine(handed_back=True), on_handback=on_handback)
     ub.begin_takeover(555, "confused_elderly")
     assert 555 in ub._sessions
 
@@ -56,7 +71,7 @@ def test_benign_handback_ends_takeover_and_notifies():
 
 
 def test_active_conversation_keeps_session():
-    ub = UserbotTransport(1, "hash", "sess", FakeEngine(handed_back=False))
+    ub = _transport(FakeEngine(handed_back=False))
     ub.begin_takeover(777, "naive_young_adult")
     # send_as_user would need a live client; monkeypatch it to a no-op
     async def _noop(peer_id, text):
@@ -67,10 +82,81 @@ def test_active_conversation_keeps_session():
 
 
 def test_on_message_ignores_unknown_peer():
-    ub = UserbotTransport(1, "hash", "sess", FakeEngine(handed_back=True))
+    ub = _transport(FakeEngine(handed_back=True))
     # no takeover started for this peer -> no error, no state
     _run(ub.on_message(999, "hello", 1, 0.0))
     assert 999 not in ub._sessions
+
+
+def test_media_metadata_preserves_image_and_original_document_names():
+    image = SimpleNamespace(
+        id=12,
+        message=SimpleNamespace(
+            file=SimpleNamespace(name=None, mime_type="image/jpeg", ext=".jpg", size=123),
+            photo=object(),
+            video=False,
+            video_note=False,
+            voice=False,
+            audio=False,
+            sticker=None,
+        ),
+    )
+    document = SimpleNamespace(
+        id=13,
+        message=SimpleNamespace(
+            file=SimpleNamespace(
+                name="../../bank statement.pdf",
+                mime_type="application/pdf",
+                ext=".pdf",
+                size=456,
+            ),
+            photo=None,
+            video=False,
+            video_note=False,
+            voice=False,
+            audio=False,
+            sticker=None,
+        ),
+    )
+
+    assert UserbotTransport._describe_media(image) == {
+        "media_kind": "image",
+        "media_name": "telegram_12.jpg",
+        "media_mime": "image/jpeg",
+        "media_size": 123,
+    }
+    assert UserbotTransport._describe_media(document)["media_name"] == "bank statement.pdf"
+
+
+def test_media_capture_is_bounded_and_stored_under_the_session(tmp_path):
+    ub = _transport(FakeEngine(handed_back=True), media_root=tmp_path, media_max_bytes=100)
+    ub.begin_takeover(321, "confused_elderly")
+    payload = b"image bytes"
+
+    class FakeEvent:
+        id = 77
+
+        async def download_media(self, file):
+            path = Path(file)
+            path.write_bytes(payload)
+            return str(path)
+
+    media = {
+        "media_kind": "image",
+        "media_name": "receipt.jpg",
+        "media_mime": "image/jpeg",
+        "media_size": len(payload),
+    }
+    captured = _run(ub._capture_media(FakeEvent(), 321, media))
+
+    assert captured["media_size"] == len(payload)
+    assert captured["media_sha256"] == hashlib.sha256(payload).hexdigest()
+    captured_path = Path(captured["media_path"])
+    assert captured_path.parent.name == ub._sessions[321][0].session_id
+    assert captured_path.name == "77_receipt.jpg"
+
+    oversized = {**media, "media_size": 101}
+    assert _run(ub._capture_media(FakeEvent(), 321, oversized)) == {}
 
 
 def test_observed_incoming_chats_are_listed_without_starting_takeover():
@@ -90,11 +176,70 @@ def test_observed_incoming_chats_are_listed_without_starting_takeover():
             "last_message_at": 20.0,
             "message_count": 2,
             "active": False,
+            "display_name": "Alice",
+            "latest_text": "latest",
+            "latest_ts": 20.0,
+            "request_pending": True,
+            "request_created_at": 10.0,
         }
     ]
 
     ub.begin_takeover(999, "confused_elderly")
     assert ub.list_observed_chats()[0]["active"] is True
+    assert ub.list_observed_chats()[0]["request_pending"] is False
+
+
+def test_takeover_request_notifies_once_and_reopens_after_takeover():
+    delivered = []
+
+    async def notify(chat):
+        delivered.append(chat)
+        return True
+
+    ub = _transport(FakeEngine(handed_back=False), on_takeover_request=notify)
+    ub.observe_incoming(444, "first", 1, 10.0, "Sender", "sender")
+    ub.observe_incoming(444, "latest", 2, 11.0)
+
+    _run(ub.notify_pending_takeover_requests())
+    _run(ub.notify_pending_takeover_requests())
+
+    assert len(delivered) == 1
+    assert delivered[0]["latest_text"] == "latest"
+    assert delivered[0]["message_count"] == 2
+    ub.begin_takeover(444, "confused_elderly")
+    ub.end_takeover(444)
+    ub.observe_incoming(444, "new request", 3, 20.0)
+    _run(ub.notify_pending_takeover_requests())
+    assert len(delivered) == 2
+    assert delivered[-1]["request_created_at"] == 20.0
+
+
+def test_failed_takeover_request_delivery_is_retried():
+    attempts = 0
+
+    async def notify(chat):
+        nonlocal attempts
+        attempts += 1
+        return attempts > 1
+
+    ub = _transport(FakeEngine(handed_back=False), on_takeover_request=notify)
+    ub.observe_incoming(445, "hello", 1, 10.0)
+
+    _run(ub.notify_pending_takeover_requests())
+    _run(ub.notify_pending_takeover_requests())
+
+    assert attempts == 2
+
+
+def test_dismissed_request_leaves_queue_and_can_reopen_on_new_message():
+    ub = _transport(FakeEngine(handed_back=False))
+    ub.observe_incoming(446, "first", 1, 10.0)
+
+    assert ub.dismiss_takeover_request(446) is True
+    assert ub.dismiss_takeover_request(446) is False
+    assert ub.has_pending_takeover_request(446) is False
+    ub.observe_incoming(446, "new message", 2, 20.0)
+    assert ub.has_pending_takeover_request(446) is True
 
 
 def test_recent_inbound_dialogs_seed_observed_chats():
@@ -199,3 +344,142 @@ def test_live_discovery_accepts_private_humans_and_rejects_bots_and_groups():
     assert human == ("Sender", "sender", True)
     assert bot[2] is False
     assert group[2] is False
+
+
+def test_message_burst_is_processed_once_and_sent_as_separate_bubbles():
+    class BatchEngine(FakeEngine):
+        def __init__(self):
+            super().__init__(handed_back=False)
+            self.batches = []
+
+        def process_messages(self, session, chain, messages):
+            self.batches.append(messages)
+            return TurnOutput(
+                text="wait ah\n\nwhich account?",
+                delay_s=0.0,
+                messages=("wait ah", "which account?"),
+                message_delays_s=(0.0, 0.0),
+            )
+
+    engine = BatchEngine()
+    ub = UserbotTransport(
+        1,
+        "hash",
+        "sess",
+        engine,
+        inbox_debounce_s=0.02,
+        inbox_max_wait_s=0.08,
+    )
+    sent = []
+
+    async def send(peer_id, text):
+        sent.append((peer_id, text))
+
+    ub.send_as_user = send
+    ub.begin_takeover(808, "confused_elderly")
+
+    async def scenario():
+        first = asyncio.create_task(ub.on_message(808, "hello", 1, 1.0))
+        await asyncio.sleep(0.005)
+        second = asyncio.create_task(ub.on_message(808, "are you there?", 2, 2.0))
+        await asyncio.gather(first, second)
+
+    _run(scenario())
+
+    assert [[message.text for message in batch] for batch in engine.batches] == [
+        ["hello", "are you there?"]
+    ]
+    assert sent == [(808, "wait ah"), (808, "which account?")]
+
+
+def test_new_message_during_thinking_can_discard_stale_draft():
+    class SteeringEngine(FakeEngine):
+        def __init__(self):
+            super().__init__(handed_back=False)
+            self.batches = []
+            self.recorded = []
+
+        def process_messages(self, session, chain, messages, *, record_outbound=True):
+            assert record_outbound is False
+            self.batches.append([message.text for message in messages])
+            time.sleep(0.04)
+            latest = messages[-1].text
+            return TurnOutput(
+                text=f"reply to {latest}",
+                messages=(f"reply to {latest}",),
+                message_delays_s=(0.0,),
+            )
+
+        def steer_pending_reply(self, session, pending_text, new_inbounds):
+            return "continue"
+
+        def record_outbound(self, session, chain, text):
+            self.recorded.append(text)
+
+    engine = SteeringEngine()
+    ub = _transport(engine)
+    sent = []
+
+    async def send(peer_id, text):
+        sent.append(text)
+
+    ub.send_as_user = send
+    ub.begin_takeover(909, "confused_elderly")
+
+    async def scenario():
+        first = asyncio.create_task(ub.on_message(909, "first", 1, 1.0))
+        await asyncio.sleep(0.01)
+        second = asyncio.create_task(ub.on_message(909, "changed detail", 2, 2.0))
+        await asyncio.gather(first, second)
+
+    _run(scenario())
+
+    assert engine.batches == [["first"], ["changed detail"]]
+    assert sent == ["reply to changed detail"]
+    assert engine.recorded == sent
+
+
+def test_new_message_during_thinking_can_send_one_draft_before_reconsidering():
+    class SteeringEngine(FakeEngine):
+        def __init__(self):
+            super().__init__(handed_back=False)
+            self.steer_calls = 0
+
+        def process_messages(self, session, chain, messages, *, record_outbound=True):
+            time.sleep(0.04)
+            latest = messages[-1].text
+            return TurnOutput(
+                text=f"reply to {latest}",
+                messages=(f"reply to {latest}", "unused second bubble"),
+                message_delays_s=(0.0, 0.0),
+                message_typing_s=(0.0, 0.0),
+                pace="fast",
+            )
+
+        def steer_pending_reply(self, session, pending_text, new_inbounds):
+            self.steer_calls += 1
+            return "send_first"
+
+        def record_outbound(self, session, chain, text):
+            return None
+
+    engine = SteeringEngine()
+    ub = _transport(engine)
+    sent = []
+
+    async def send(peer_id, text):
+        sent.append(text)
+
+    ub.send_as_user = send
+    ub.begin_takeover(910, "naive_young_adult")
+
+    async def scenario():
+        first = asyncio.create_task(ub.on_message(910, "first", 1, 1.0))
+        await asyncio.sleep(0.01)
+        second = asyncio.create_task(ub.on_message(910, "one more thing", 2, 2.0))
+        await asyncio.gather(first, second)
+
+    _run(scenario())
+
+    assert sent == ["reply to first", "reply to one more thing", "unused second bubble"]
+    assert engine.steer_calls == 1

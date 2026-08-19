@@ -23,7 +23,8 @@ from typing import TYPE_CHECKING, Any, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
-from hive.extraction.engine import extract_hvis
+from hive.audit import audit_event
+from hive.extraction.engine import extract_hvis, merge_hvis
 from hive.guardrails.injection import persona_defense_note, screen
 from hive.llm.router import RouteInputs
 from hive.logging_setup import get_logger
@@ -44,6 +45,8 @@ class TurnState(TypedDict, total=False):
     session: Any
     chain: Any
     inbound: Message
+    inbounds: list[Message]
+    record_outbound: bool
     # working values passed between nodes
     screen_flagged: bool
     hvis: list
@@ -53,23 +56,54 @@ class TurnState(TypedDict, total=False):
     tier: str
     # outputs / control
     outbound: str | None
+    outbound_messages: list[str]
+    message_delays_s: list[float]
+    message_typing_s: list[float]
+    pace: str
     delay_s: float
     terminate: bool
     reason: str  # "" | "benign" | "max_turns" | "max_duration"
 
 
-def build_turn_graph(engine: "HiveEngine"):
+def build_turn_graph(engine: HiveEngine):
     """Compile the per-turn graph, binding nodes to `engine`'s dependencies."""
 
     def n_ingress(state: TurnState) -> TurnState:
         session = state["session"]
         chain = state["chain"]
-        inbound = state["inbound"]
+        inbounds = state.get("inbounds") or [state["inbound"]]
         session.phase = Phase.ACTIVE
-        session.messages.append(inbound)
-        session.turn_count += 1
-        engine._memory_for(session.peer_id).add("stranger", inbound.text)
-        chain.append({"event": "msg_in", "msg_id": inbound.msg_id, "text": inbound.text}, ts=inbound.ts)
+        for inbound in inbounds:
+            session.messages.append(inbound)
+            engine._memory_for(session.peer_id).add("stranger", inbound.text)
+            audit_event(
+                "memory",
+                "memory_entry_added",
+                component="orchestrator.memory",
+                payload={"role": "stranger", "text": inbound.text},
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+            )
+            chain.append(
+                {"event": "msg_in", "msg_id": inbound.msg_id, "text": inbound.text},
+                ts=inbound.ts,
+            )
+            audit_event(
+                "message",
+                "inbound_recorded",
+                component="orchestrator.ingress",
+                payload={
+                    "msg_id": inbound.msg_id,
+                    "text": inbound.text,
+                    "ts": inbound.ts,
+                    "media_kind": inbound.media_kind,
+                },
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+                ts=inbound.ts,
+            )
+        session.turn_count += len(inbounds)
+        session.exchange_count += 1
 
         # Budget enforcement (Hermes IterationBudget-style, with a duration cap).
         reason = ""
@@ -82,20 +116,69 @@ def build_turn_graph(engine: "HiveEngine"):
         if reason:
             session.phase = Phase.CLOSING
             log.info("budget exhausted: reason=%s turn=%d", reason, session.turn_count)
+            audit_event(
+                "budget",
+                "session_budget_exhausted",
+                component="orchestrator.ingress",
+                payload={"reason": reason, "turn_count": session.turn_count},
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+            )
             return {"terminate": True, "reason": reason, "outbound": None}
         return {"terminate": False, "reason": ""}
 
     def n_guardrails(state: TurnState) -> TurnState:
-        return {"screen_flagged": screen(state["inbound"].text).flagged}
+        result = screen(state["inbound"].text)
+        session = state["session"]
+        audit_event(
+            "guardrail",
+            "message_screened",
+            component="orchestrator.guardrails",
+            payload={
+                "flagged": result.flagged,
+                "category": result.category,
+                "matched": result.matched,
+            },
+            peer_id=session.peer_id,
+            session_id=session.session_id,
+        )
+        return {"screen_flagged": result.flagged}
 
     def n_extract(state: TurnState) -> TurnState:
         session = state["session"]
         chain = state["chain"]
-        inbound = state["inbound"]
-        hvis = extract_hvis(inbound.text, inbound.msg_id, ner_backend=engine.ner_backend)
-        for h in hvis:
-            session.hvis.append(h)
+        inbounds = state.get("inbounds") or [state["inbound"]]
+        hvis = [
+            hvi
+            for inbound in inbounds
+            for hvi in extract_hvis(
+                inbound.text,
+                inbound.msg_id,
+                ner_backend=engine.ner_backend,
+            )
+        ]
+        accepted = merge_hvis(session.hvis, hvis)
+        for h in accepted:
             chain.append({"event": "hvi", "kind": h.kind, "value": h.value}, ts=time.time())
+        audit_event(
+            "extraction",
+            "indicators_extracted",
+            component="orchestrator.extraction",
+            payload={
+                "discovered": [
+                    {
+                        "kind": item.kind,
+                        "value": item.value,
+                        "source_msg_id": item.source_msg_id,
+                        "confidence": item.confidence,
+                    }
+                    for item in hvis
+                ],
+                "accepted_count": len(accepted),
+            },
+            peer_id=session.peer_id,
+            session_id=session.session_id,
+        )
         return {"hvis": hvis}
 
     def n_sandbox(state: TurnState) -> TurnState:
@@ -105,7 +188,23 @@ def build_turn_graph(engine: "HiveEngine"):
             session.phase = Phase.PROBING
             result = analyze_url(h.value, engine.sandbox_runner)
             session.sandbox_results.append(result)
-            chain.append({"event": "sandbox", "url": h.value, "signal": result.get("verdict_signal")}, ts=time.time())
+            chain.append(
+                {
+                    "event": "sandbox",
+                    "url": h.value,
+                    "signal": result.get("verdict_signal"),
+                },
+                ts=time.time(),
+            )
+            audit_event(
+                "sandbox",
+                "url_analysis_failed" if result.get("error") else "url_analysis_completed",
+                component="orchestrator.sandbox",
+                payload=result,
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+                level="error" if result.get("error") else "info",
+            )
         session.phase = Phase.ACTIVE
         return {}
 
@@ -113,14 +212,35 @@ def build_turn_graph(engine: "HiveEngine"):
         session = state["session"]
         soft = classify_soft(session, engine.agent_client)
         verdict = update_verdict(session, soft=soft)
+        audit_event(
+            "verdict",
+            "verdict_updated",
+            component="orchestrator.verdict",
+            payload={
+                "verdict": verdict,
+                "score": session.verdict_score,
+                "soft_signals": soft,
+                "signal_trail": session.signal_trail[-1:] or [],
+            },
+            peer_id=session.peer_id,
+            session_id=session.session_id,
+        )
         # Safeguard: benign early-exit hand-back.
         if (
             engine.enable_early_exit
             and verdict == "likely_benign"
-            and session.turn_count >= engine.early_exit_min_turns
+            and session.exchange_count >= engine.early_exit_min_turns
         ):
             session.phase = Phase.CLOSING
             log.info("Safeguard: early-exit, handing conversation back (benign)")
+            audit_event(
+                "session_lifecycle",
+                "benign_handback_requested",
+                component="orchestrator.verdict",
+                payload={"verdict": verdict, "exchanges": session.exchange_count},
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+            )
             return {"verdict": verdict, "terminate": True, "reason": "benign", "outbound": None}
         return {"verdict": verdict, "terminate": False}
 
@@ -131,10 +251,22 @@ def build_turn_graph(engine: "HiveEngine"):
         inbound = state["inbound"]
         memory = engine._memory_for(session.peer_id)
         recall = memory.recall(inbound.text)
+        audit_event(
+            "memory",
+            "memory_recalled",
+            component="orchestrator.memory",
+            payload={"query": inbound.text, "results": recall},
+            peer_id=session.peer_id,
+            session_id=session.session_id,
+        )
         route_inputs = RouteInputs(injection_flagged=state.get("screen_flagged", False))
         defense = persona_defense_note(screen(inbound.text)) if state.get("screen_flagged") else ""
         reply, tier = reason_and_reply(
-            session, engine.agent_client, recall=recall, route_inputs=route_inputs, defense_note=defense
+            session,
+            engine.agent_client,
+            recall=recall,
+            route_inputs=route_inputs,
+            defense_note=defense,
         )
         return {"reply": reply, "tier": tier.value, "recall": recall}
 
@@ -142,13 +274,54 @@ def build_turn_graph(engine: "HiveEngine"):
         session = state["session"]
         chain = state["chain"]
         inbound = state["inbound"]
-        mw = apply_middleware(state["reply"], session.persona, incoming_len=len(inbound.text))
-        out_msg = Message(role="agent", text=mw.text, ts=time.time(), msg_id=inbound.msg_id + 1)
-        session.messages.append(out_msg)
-        engine._memory_for(session.peer_id).add("agent", state["reply"])
-        chain.append({"event": "msg_out", "text": mw.text}, ts=out_msg.ts)
-        log.info("turn done: tier=%s verdict=%s delay=%.1fs", state.get("tier"), state.get("verdict"), mw.delay_s)
-        return {"outbound": mw.text, "delay_s": mw.delay_s}
+        mw = apply_middleware(
+            state["reply"],
+            session.persona,
+            incoming_len=len(inbound.text),
+            incoming_text=inbound.text,
+        )
+        messages = mw.messages or ((mw.text,) if mw.text else ())
+        session.reply_pace = mw.pace
+        audit_event(
+            "reply_plan",
+            "reply_plan_created",
+            component="orchestrator.middleware",
+            payload={
+                "raw_reply": state["reply"],
+                "messages": list(messages),
+                "delays_s": list(mw.message_delays_s),
+                "typing_s": list(mw.message_typing_s),
+                "pace": mw.pace,
+            },
+            peer_id=session.peer_id,
+            session_id=session.session_id,
+        )
+        if state.get("record_outbound", True):
+            for text in messages:
+                engine.record_outbound(session, chain, text, remember=False)
+            engine._memory_for(session.peer_id).add("agent", state["reply"])
+            audit_event(
+                "memory",
+                "memory_entry_added",
+                component="orchestrator.memory",
+                payload={"role": "agent", "text": state["reply"]},
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+            )
+        log.info(
+            "turn done: tier=%s verdict=%s delay=%.1fs",
+            state.get("tier"),
+            state.get("verdict"),
+            mw.delay_s,
+        )
+        return {
+            "outbound": mw.text,
+            "outbound_messages": list(messages),
+            "message_delays_s": list(mw.message_delays_s),
+            "message_typing_s": list(mw.message_typing_s),
+            "pace": mw.pace,
+            "delay_s": mw.delay_s,
+        }
 
     def _after_ingress(state: TurnState) -> str:
         return "end" if state.get("terminate") else "continue"
@@ -159,7 +332,10 @@ def build_turn_graph(engine: "HiveEngine"):
     g: StateGraph = StateGraph(TurnState)
     for name, fn in [
         ("ingress", n_ingress), ("guardrails", n_guardrails), ("extract", n_extract),
-        ("sandbox", n_sandbox), ("verdict", n_verdict), ("reason", n_reason), ("middleware", n_middleware),
+        ("sandbox", n_sandbox),
+        ("verdict", n_verdict),
+        ("reason", n_reason),
+        ("middleware", n_middleware),
     ]:
         g.add_node(name, fn)
 

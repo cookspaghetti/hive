@@ -17,6 +17,7 @@ from typing import Protocol
 
 import httpx
 
+from hive.audit import audit_event
 from hive.llm.router import Tier
 from hive.logging_setup import get_logger
 
@@ -80,10 +81,28 @@ class LLMClient:
     ) -> LLMResponse:
         model = self._models[tier]
         payload = [{"role": m.role, "content": m.content} for m in messages]
+        audit_event(
+            "llm_request",
+            "chat_completion_requested",
+            component="llm",
+            payload={
+                "model": model,
+                "tier": tier.value,
+                "temperature": temperature,
+                "messages": payload,
+            },
+        )
         started = time.perf_counter()
         try:
             raw = self._backend.chat(model, payload, temperature=temperature)
         except Exception as exc:  # noqa: BLE001 - log and re-raise for caller
+            audit_event(
+                "llm_error",
+                "chat_completion_failed",
+                component="llm",
+                payload={"model": model, "tier": tier.value, "error": str(exc)},
+                level="error",
+            )
             log.error("LLM call failed: model=%s tier=%s err=%s", model, tier.value, exc)
             raise
         latency = time.perf_counter() - started
@@ -92,6 +111,19 @@ class LLMClient:
         usage = raw.get("usage", {})
         pt = int(usage.get("prompt_tokens", 0))
         ct = int(usage.get("completion_tokens", 0))
+        audit_event(
+            "llm_response",
+            "chat_completion_received",
+            component="llm",
+            payload={
+                "model": model,
+                "tier": tier.value,
+                "text": text,
+                "prompt_tokens": pt,
+                "completion_tokens": ct,
+                "latency_s": latency,
+            },
+        )
         log.info(
             "LLM call ok: model=%s tier=%s latency=%.2fs prompt_tok=%d completion_tok=%d",
             model,
@@ -132,12 +164,31 @@ class VisionClient:
                 ],
             }
         ]
+        audit_event(
+            "vision_request",
+            "vision_description_requested",
+            component="llm.vision",
+            payload={"model": self._model, "messages": messages},
+        )
         try:
             raw = self._backend.chat(self._model, messages, temperature=0.0)
         except Exception as exc:  # noqa: BLE001
+            audit_event(
+                "vision_error",
+                "vision_description_failed",
+                component="llm.vision",
+                payload={"model": self._model, "error": str(exc)},
+                level="error",
+            )
             log.error("vision call failed: model=%s err=%s", self._model, exc)
             raise
         text = raw["choices"][0]["message"]["content"]
+        audit_event(
+            "vision_response",
+            "vision_description_received",
+            component="llm.vision",
+            payload={"model": self._model, "text": text},
+        )
         log.info("vision call ok: model=%s chars=%d", self._model, len(text))
         return text
 

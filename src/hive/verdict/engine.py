@@ -38,6 +38,8 @@ HARD_WEIGHTS: dict[str, float] = {
     "telegram_id": 0.25,
     "bank_name": 0.15,
     "person_name": 0.05,
+    "organization": 0.05,
+    "location": 0.03,
 }
 _HARD_DEFAULT = 0.2
 
@@ -63,7 +65,10 @@ def _noisy_or(weights: list[float]) -> float:
     return 1.0 - p
 
 
-def _collect_weights(session: SessionState, soft: dict[str, float] | None) -> list[tuple[str, float]]:
+def _collect_weights(
+    session: SessionState,
+    soft: dict[str, float] | None,
+) -> list[tuple[str, float]]:
     """Return (reason, weight) contributions for the current state."""
     contribs: list[tuple[str, float]] = []
     for h in session.hvis:
@@ -94,7 +99,10 @@ def update_verdict(session: SessionState, soft: dict[str, float] | None = None) 
     so this function stays pure and offline-testable.
     """
     contribs = _collect_weights(session, soft)
-    score = _noisy_or([w for _, w in contribs])
+    instantaneous_score = _noisy_or([w for _, w in contribs])
+    # Scam evidence is cumulative. A later, less explicit message must not
+    # erase a risk level already supported by the engagement record.
+    score = max(session.verdict_score, instantaneous_score)
     verdict = _map_verdict(score)
 
     session.verdict_score = score
@@ -104,6 +112,7 @@ def update_verdict(session: SessionState, soft: dict[str, float] | None = None) 
             "ts": time.time(),
             "turn": session.turn_count,
             "score": round(score, 4),
+            "instantaneous_score": round(instantaneous_score, 4),
             "verdict": verdict,
             "contributions": [{"reason": r, "weight": round(w, 4)} for r, w in contribs],
         }

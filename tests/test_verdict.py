@@ -57,6 +57,19 @@ def test_signal_trail_records_contributions():
     assert any(c["reason"] == "hvi:url" for c in last["contributions"])
 
 
+def test_scam_risk_does_not_regress_on_a_quieter_later_message():
+    s = _session()
+    assert update_verdict(
+        s,
+        soft={"payment_request": 1.0, "investment_framing": 1.0},
+    ) == "likely_scam"
+    peak = s.verdict_score
+
+    assert update_verdict(s, soft={}) == "likely_scam"
+    assert s.verdict_score == peak
+    assert s.signal_trail[-1]["instantaneous_score"] == 0.0
+
+
 def test_parse_scores_extracts_and_clamps():
     text = 'here: {"urgency": 0.9, "payment_request": 1.5, "nope": 3}'
     scores = _parse_scores(text)

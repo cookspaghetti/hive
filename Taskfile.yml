@@ -24,6 +24,11 @@ tasks:
     cmds:
       - uv run watchfiles hive.dev.run_panel src
 
+  simulate:
+    desc: Test the real conversation pipeline directly, without Telegram
+    cmds:
+      - uv run python -m hive.simulate {{.CLI_ARGS}}
+
   test:
     desc: Run the full test suite
     cmds:

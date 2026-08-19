@@ -14,6 +14,7 @@ Design notes:
 from __future__ import annotations
 
 import random
+import re
 
 from hive.logging_setup import get_logger
 
@@ -21,14 +22,15 @@ log = get_logger(__name__)
 
 # Sensible per-persona defaults; tune during Part 2.
 _PERSONA_TYPO_RATE: dict[str, float] = {
-    "confused_elderly": 0.14,       # more fumbling
-    "naive_young_adult": 0.10,
-    "overseas_worker": 0.07,
-    "small_business_owner": 0.05,   # more fluent
+    "confused_elderly": 0.012,
+    "naive_young_adult": 0.008,
+    "overseas_worker": 0.006,
+    "small_business_owner": 0.004,
 }
-_DEFAULT_TYPO_RATE = 0.09
+_DEFAULT_TYPO_RATE = 0.008
 
-_MANGLISH_PARTICLES = ["lah", "lor", "meh", "ah", "leh", "one"]
+_MANGLISH_PARTICLES = ["lah", "lor", "meh", "ah", "leh"]
+_PARTICLE_RE = re.compile(r"\b(?:lah|lor|meh|ah|leh)\b", re.IGNORECASE)
 
 # QWERTY neighbours for believable fat-finger substitutions.
 _NEIGHBOURS: dict[str, str] = {
@@ -40,7 +42,7 @@ _NEIGHBOURS: dict[str, str] = {
 
 
 def _typo_word(word: str, rng: random.Random) -> str:
-    if len(word) < 3:
+    if len(word) < 3 or not word.isascii() or not any(char.isalpha() for char in word):
         return word
     op = rng.choice(("swap", "drop", "double", "neighbour"))
     i = rng.randrange(len(word) - 1)
@@ -58,12 +60,17 @@ def _typo_word(word: str, rng: random.Random) -> str:
     return word
 
 
+def has_manglish_particle(text: str) -> bool:
+    return _PARTICLE_RE.search(text) is not None
+
+
 def inject_noise(
     text: str,
     persona: str,
     *,
     rate: float | None = None,
     manglish: bool = True,
+    max_typos: int = 1,
     seed: int | None = None,
 ) -> str:
     """Return `text` with human-like imperfections applied.
@@ -75,11 +82,38 @@ def inject_noise(
     typo_rate = rate if rate is not None else _PERSONA_TYPO_RATE.get(persona, _DEFAULT_TYPO_RATE)
 
     words = text.split()
-    noised = [_typo_word(w, rng) if rng.random() < typo_rate else w for w in words]
+    normalized = [re.sub(r"[^a-z0-9]", "", word.lower()) for word in words]
+    protected = {
+        index
+        for index, value in enumerate(normalized)
+        if value
+        and (
+            (index > 0 and normalized[index - 1] == value)
+            or (index + 1 < len(normalized) and normalized[index + 1] == value)
+        )
+    }
+    noised: list[str] = []
+    changed = 0
+    for index, word in enumerate(words):
+        if changed < max_typos and index not in protected and rng.random() < typo_rate:
+            transformed = _typo_word(word, rng)
+            changed += transformed != word
+            noised.append(transformed)
+        else:
+            noised.append(word)
     out = " ".join(noised)
 
     # Occasionally append a Manglish particle (not after punctuation-heavy text).
-    if manglish and words and rng.random() < 0.25:
+    latin_letters = sum(char.isascii() and char.isalpha() for char in text)
+    all_letters = sum(char.isalpha() for char in text)
+    mostly_latin = bool(all_letters) and latin_letters / all_letters >= 0.8
+    if (
+        manglish
+        and words
+        and mostly_latin
+        and not has_manglish_particle(out)
+        and rng.random() < 0.06
+    ):
         particle = rng.choice(_MANGLISH_PARTICLES)
         out = out.rstrip(".!") + " " + particle
 
@@ -88,6 +122,6 @@ def inject_noise(
         persona,
         typo_rate,
         len(words),
-        sum(1 for a, b in zip(words, noised) if a != b),
+        changed,
     )
     return out

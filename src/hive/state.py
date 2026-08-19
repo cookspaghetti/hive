@@ -7,11 +7,12 @@ Telegram peer ID, so concurrent conversations stay isolated (fyp.txt S8).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Literal, TypedDict
+from uuid import uuid4
 
 
-class Phase(str, Enum):
+class Phase(StrEnum):
     """Session lifecycle states (fyp.txt Section 8)."""
 
     IDLE = "idle"
@@ -42,12 +43,18 @@ class Message:
     ts: float
     msg_id: int
     media_kind: str | None = None  # "image", "qr", "voice", ...
+    media_name: str | None = None
+    media_mime: str | None = None
+    media_size: int | None = None
+    media_path: str | None = None
+    media_sha256: str | None = None
 
 
 @dataclass
 class SessionState:
     peer_id: int
     persona: str
+    session_id: str = field(default_factory=lambda: uuid4().hex)
     phase: Phase = Phase.IDLE
     messages: list[Message] = field(default_factory=list)
     hvis: list[HVI] = field(default_factory=list)
@@ -55,6 +62,9 @@ class SessionState:
     verdict_score: float = 0.0
     verdict: Verdict = "inconclusive"
     turn_count: int = 0
+    exchange_count: int = 0
+    next_agent_msg_id: int = -1
+    reply_pace: Literal["fast", "normal", "slow"] = "normal"
     started_ts: float | None = None
     signal_trail: list[dict[str, Any]] = field(default_factory=list)  # explainable verdict log
 

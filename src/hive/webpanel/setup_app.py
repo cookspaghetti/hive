@@ -11,6 +11,7 @@ from typing import Annotated, Any
 from fastapi import Body, Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 
+from hive.audit import audit_event
 from hive.provisioning import EnvStore, TelethonLoginManager
 from hive.provisioning.telegram_bot import verify_control_bot_token
 from hive.vault.signer import generate_keypair
@@ -171,20 +172,43 @@ def register_setup_routes(
             changed()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        audit_event(
+            "configuration",
+            "configuration_saved",
+            component="webpanel.setup",
+            payload={"keys": sorted(payload)},
+        )
         return {"ok": True}
 
     @app.post("/api/setup/bot/verify", dependencies=[Depends(auth)])
     async def verify_bot(payload: Annotated[dict, Body()]) -> dict[str, object]:
         token = str(payload.get("token", "")).strip()
         operator_id = _positive_int(payload.get("operator_id"))
+        operator_name = str(payload.get("operator_name", "")).strip()
         if not operator_id:
             raise HTTPException(status_code=400, detail="operator ID must be a positive integer")
         try:
             bot = await verify_control_bot_token(token)
-            store.save({"HIVE_CONTROL_BOT_TOKEN": token, "HIVE_OPERATOR_ID": operator_id})
+            store.save(
+                {
+                    "HIVE_CONTROL_BOT_TOKEN": token,
+                    "HIVE_OPERATOR_ID": operator_id,
+                    "HIVE_OPERATOR_NAME": operator_name,
+                }
+            )
             changed()
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        audit_event(
+            "configuration",
+            "control_bot_verified",
+            component="webpanel.setup",
+            payload={
+                "operator_id": operator_id,
+                "operator_name": operator_name,
+                "bot": bot,
+            },
+        )
         return {"ok": True, "bot": bot}
 
     @app.post("/api/setup/telethon/start", dependencies=[Depends(auth)])
@@ -203,6 +227,17 @@ def register_setup_routes(
             )
         except (TypeError, ValueError) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        audit_event(
+            "telegram_authorisation",
+            "telethon_authorisation_started",
+            component="webpanel.setup",
+            payload={
+                "api_id": api_id,
+                "phone": str(payload.get("phone", "")),
+                "session_path": session_path,
+                "result": result,
+            },
+        )
         return result
 
     @app.post("/api/setup/telethon/code", dependencies=[Depends(auth)])
@@ -213,6 +248,15 @@ def register_setup_routes(
             )
             if result.get("state") == "ready":
                 changed()
+            audit_event(
+                "telegram_authorisation",
+                "telethon_code_submitted",
+                component="webpanel.setup",
+                payload={
+                    "attempt_id": str(payload.get("attempt_id", "")),
+                    "result": result,
+                },
+            )
             return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -225,13 +269,29 @@ def register_setup_routes(
             )
             if result.get("state") == "ready":
                 changed()
+            audit_event(
+                "telegram_authorisation",
+                "telethon_password_submitted",
+                component="webpanel.setup",
+                payload={
+                    "attempt_id": str(payload.get("attempt_id", "")),
+                    "result": result,
+                },
+            )
             return result
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/setup/telethon/cancel", dependencies=[Depends(auth)])
     async def telethon_cancel(payload: Annotated[dict, Body()]) -> dict[str, bool]:
-        await manager.cancel(str(payload.get("attempt_id", "")))
+        attempt_id = str(payload.get("attempt_id", ""))
+        await manager.cancel(attempt_id)
+        audit_event(
+            "telegram_authorisation",
+            "telethon_authorisation_cancelled",
+            component="webpanel.setup",
+            payload={"attempt_id": attempt_id},
+        )
         return {"ok": True}
 
     @app.post("/api/setup/signing-key", dependencies=[Depends(auth)])
@@ -242,12 +302,24 @@ def register_setup_routes(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if path.exists():
+            audit_event(
+                "signing_key",
+                "signing_key_reused",
+                component="webpanel.setup",
+                payload={"path": _display_path(project_root, path)},
+            )
             return {"ok": True, "created": False, "path": _display_path(project_root, path)}
         path.parent.mkdir(parents=True, exist_ok=True)
         generate_keypair(str(path), str(path) + ".pub")
         os.chmod(path, 0o600)
         store.save({"HIVE_SIGNING_KEY_PATH": requested})
         changed()
+        audit_event(
+            "signing_key",
+            "signing_key_created",
+            component="webpanel.setup",
+            payload={"path": _display_path(project_root, path)},
+        )
         return {"ok": True, "created": True, "path": _display_path(project_root, path)}
 
     return manager
@@ -321,7 +393,7 @@ button.action{border:0;border-radius:4px;background:var(--amber);color:#19150e;p
 <section id=sessions><h2>Sessions</h2><div class=form>
 <label>Peer ID<input id=peerId inputmode=numeric></label><label>Persona<select id=persona style="width:100%;background:var(--panel);border:1px solid var(--line);border-radius:4px;color:var(--text);padding:10px"><option>confused_elderly</option><option>naive_young_adult</option><option>overseas_worker</option><option>small_business_owner</option></select></label>
 <div class="full row"><button class=action onclick=startTakeover()>Start takeover</button><button class="action secondary" onclick=refreshSessions()>Refresh</button><span class=message id=sessionMsg></span></div></div>
-<div class=tablewrap><h3>Recent incoming chats</h3><table><thead><tr><th>Peer</th><th>Account</th><th>Last message</th><th>Received</th><th></th></tr></thead><tbody id=chatRows></tbody></table></div>
+<div class=tablewrap><h3>Takeover requests</h3><table><thead><tr><th>Peer</th><th>Account</th><th>Last message</th><th>Received</th><th></th></tr></thead><tbody id=chatRows></tbody></table></div>
 <div class=tablewrap><h3>Active takeovers</h3><table><thead><tr><th>Peer</th><th>Persona</th><th>Phase</th><th>Verdict</th><th>Score</th><th>Turns</th><th></th></tr></thead><tbody id=sessionRows></tbody></table></div><div id=detail>Select a session to inspect.</div></section>
 <section id=llm><h2>Models</h2><p>Configure the OpenAI-compatible endpoint used by the agent.</p><div class=form>
 <label class=full>API key<input id=llmKey type=password autocomplete=off></label><label class=full>Hugging Face token (optional)<input id=hfToken type=password autocomplete=off></label><label class=full>Base URL<input id=llmUrl value="https://ollama.com/v1"></label>
@@ -350,7 +422,7 @@ async function refreshRuntime(){try{let j=await call('/api/runtime/status');runt
 async function startAgentNow(){try{await call('/api/runtime/start',{method:'POST'});msg('runtimeMsg','Agent started');refreshRuntime()}catch(e){msg('runtimeMsg',e.message,false);refreshRuntime()}}
 async function restartAgentNow(){try{await call('/api/runtime/restart',{method:'POST',body:'{}'});msg('runtimeMsg','Agent restarted');refreshRuntime()}catch(e){if(e.payload?.detail?.code==='active_sessions'&&confirm(`Force restart and discard ${e.payload.detail.count} active takeover(s)?`)){try{await call('/api/runtime/restart',{method:'POST',body:JSON.stringify({force:true})});msg('runtimeMsg','Agent restarted')}catch(forceError){msg('runtimeMsg',forceError.message,false)}}else msg('runtimeMsg',e.message,false);refreshRuntime()}}
 async function stopAgentNow(){try{await call('/api/runtime/stop',{method:'POST',body:'{}'});msg('runtimeMsg','Agent stopped');refreshRuntime()}catch(e){msg('runtimeMsg',e.message,false)}}
-async function refreshSessions(){if(sessionsRefreshing)return;sessionsRefreshing=true;try{let [chats,rows]=await Promise.all([call('/api/chats'),call('/api/sessions')]);chatRows.innerHTML=chats.map(c=>`<tr><td>${c.peer_id}</td><td>${esc(c.name||('Peer '+c.peer_id))}${c.username?`<br><span class=message>@${esc(c.username)}</span>`:''}</td><td>${esc(c.last_message)||'<span class=message>Media or empty message</span>'}</td><td>${new Date(c.last_message_at*1000).toLocaleString()}</td><td>${c.active?'<span class="ready">Active</span>':`<button class="action secondary" onclick="startObserved(${c.peer_id})">Start</button>`}</td></tr>`).join('');sessionRows.innerHTML=rows.map(s=>`<tr><td>${s.peer_id}</td><td>${esc(s.persona)}</td><td>${esc(s.phase)}</td><td>${esc(s.verdict)}</td><td>${s.score}</td><td>${s.turns}</td><td><button class="action secondary" onclick="showSession(${s.peer_id})">View</button> <button class="action secondary" onclick="endSession(${s.peer_id})">Stop</button></td></tr>`).join('');sessionMsg.textContent=chats.length||rows.length?'':'No incoming chats or active takeovers'}catch(e){chatRows.innerHTML='';sessionRows.innerHTML='';msg('sessionMsg',e.message==='agent_not_running'?'Agent is not running':e.message,false)}finally{sessionsRefreshing=false}}
+async function refreshSessions(){if(sessionsRefreshing)return;sessionsRefreshing=true;try{let [chats,rows]=await Promise.all([call('/api/chats'),call('/api/sessions')]);chatRows.innerHTML=chats.map(c=>`<tr><td>${c.peer_id}</td><td>${esc(c.name||('Peer '+c.peer_id))}${c.username?`<br><span class=message>@${esc(c.username)}</span>`:''}</td><td>${esc(c.last_message)||'<span class=message>Media or empty message</span>'}</td><td>${new Date(c.last_message_at*1000).toLocaleString()}</td><td>${c.active?'<span class="ready">Active</span>':`<button class="action secondary" onclick="startObserved(${c.peer_id})">Start</button>`}</td></tr>`).join('');sessionRows.innerHTML=rows.map(s=>`<tr><td>${s.peer_id}</td><td>${esc(s.persona)}</td><td>${esc(s.phase)}</td><td>${esc(s.verdict)}</td><td>${s.score}</td><td>${s.turns}</td><td><button class="action secondary" onclick="showSession(${s.peer_id})">View</button> <button class="action secondary" onclick="endSession(${s.peer_id})">Stop</button></td></tr>`).join('');sessionMsg.textContent=chats.length||rows.length?'':'No takeover requests or active takeovers'}catch(e){chatRows.innerHTML='';sessionRows.innerHTML='';msg('sessionMsg',e.message==='agent_not_running'?'Agent is not running':e.message,false)}finally{sessionsRefreshing=false}}
 async function startTakeover(){try{await call('/api/takeover',{method:'POST',body:JSON.stringify({peer_id:parseInt(peerId.value),persona:persona.value})});msg('sessionMsg','Takeover started');refreshSessions();refreshRuntime()}catch(e){msg('sessionMsg',e.message,false)}}
 async function startObserved(peer){peerId.value=peer;await startTakeover()}
 async function showSession(peer){try{let j=await call('/api/sessions/'+peer);detail.textContent=JSON.stringify(j,null,2)}catch(e){msg('sessionMsg',e.message,false)}}

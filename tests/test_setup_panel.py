@@ -118,12 +118,17 @@ def test_bot_is_verified_before_credentials_are_saved(tmp_path, monkeypatch):
     response = client.post(
         "/api/setup/bot/verify",
         headers=_headers(),
-        json={"token": token, "operator_id": "456"},
+        json={
+            "token": token,
+            "operator_id": "456",
+            "operator_name": "Tho Kai Syuen",
+        },
     )
     assert response.status_code == 200
     assert response.json()["bot"]["username"] == "hive_control_bot"
     assert store.read()["HIVE_CONTROL_BOT_TOKEN"] == token
     assert store.read()["HIVE_OPERATOR_ID"] == "456"
+    assert store.read()["HIVE_OPERATOR_NAME"] == "Tho Kai Syuen"
 
 
 def test_telethon_routes_drive_login_state(tmp_path):

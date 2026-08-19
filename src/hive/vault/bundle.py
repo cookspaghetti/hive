@@ -1,22 +1,13 @@
-"""Evidence Bundle PDF via ReportLab (fyp.txt L5, Forensic Notarization).
-
-Compiles the full chat log, extracted HVIs, sandbox results, verdict + signal
-trail, and the SHA-256 hash chain into a PDF, prepends a Section 90A
-certificate, then seals the PDF bytes with an RSA-PSS signature written to a
-`.sig` sidecar. Suitable for submission to MCMC / PDRM.
-
-Admissibility (fyp.txt L5): the s.90A certificate must be completed/signed by a
-person responsible for the computer; timestamps should be anchored to a trusted
-time source. This module produces the artefact and certificate template — it
-does not by itself guarantee judicial weight.
-
-`reportlab` is lazy-imported so it is only required where a bundle is built.
-"""
+"""Branded, Unicode-safe forensic evidence bundle generation."""
 
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timezone
+import html
+import os
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 from hive.logging_setup import get_logger
 from hive.state import SessionState
@@ -24,11 +15,18 @@ from hive.vault.hashchain import HashChain
 from hive.vault.signer import sign_bytes
 
 log = get_logger(__name__)
+_FONT_PAIR: tuple[str, str] | None = None
+
+_BRAND_INK = "#20242A"
+_BRAND_GOLD = "#E5A321"
+_BRAND_PAPER = "#F6F4EF"
+_BRAND_MUTED = "#667085"
+_BRAND_LINE = "#D9D5CB"
 
 
 def s90a_certificate(session: SessionState, operator_name: str) -> str:
     """Return the Section 90A certificate text for the operator to sign."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     return (
         "SECTION 90A CERTIFICATE (Evidence Act 1950)\n"
         f"I, {operator_name or '________________'}, am responsible for the "
@@ -43,6 +41,210 @@ def s90a_certificate(session: SessionState, operator_name: str) -> str:
     )
 
 
+def _xml(value: object) -> str:
+    return html.escape(str(value or "")).replace("\n", "<br/>")
+
+
+def _timestamp(value: float | None) -> str:
+    if not value:
+        return "Time unavailable"
+    return datetime.fromtimestamp(value, UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+
+def _font_pair() -> tuple[str, str]:
+    """Register an embedded Unicode font, preferring CJK-capable local families."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    from reportlab.pdfbase.ttfonts import TTFError, TTFont
+
+    global _FONT_PAIR
+    if _FONT_PAIR is not None:
+        return _FONT_PAIR
+
+    candidates = [
+        (
+            os.getenv("HIVE_REPORT_FONT_REGULAR", ""),
+            os.getenv("HIVE_REPORT_FONT_BOLD", ""),
+        ),
+        (
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+            "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        ),
+        (r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\msyhbd.ttc"),
+        (r"C:\Windows\Fonts\simhei.ttf", r"C:\Windows\Fonts\simhei.ttf"),
+    ]
+    for index, (regular, bold) in enumerate(candidates):
+        if not regular or not Path(regular).is_file():
+            continue
+        bold_path = bold if bold and Path(bold).is_file() else regular
+        normal_name = f"HIVEText{index}"
+        bold_name = f"HIVETextBold{index}"
+        try:
+            pdfmetrics.registerFont(TTFont(normal_name, regular, subfontIndex=0))
+            pdfmetrics.registerFont(TTFont(bold_name, bold_path, subfontIndex=0))
+        except (OSError, TTFError) as exc:
+            log.warning("report font rejected: path=%s error=%s", regular, exc)
+            continue
+        widths = getattr(pdfmetrics.getFont(normal_name).face, "charWidths", {})
+        if ord("A") not in widths or ord("中") not in widths:
+            log.warning("report font lacks Latin/CJK coverage: path=%s", regular)
+            continue
+        pdfmetrics.registerFontFamily(
+            normal_name,
+            normal=normal_name,
+            bold=bold_name,
+            italic=normal_name,
+            boldItalic=bold_name,
+        )
+        _FONT_PAIR = (normal_name, bold_name)
+        return _FONT_PAIR
+
+    pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+    _FONT_PAIR = ("STSong-Light", "STSong-Light")
+    return _FONT_PAIR
+
+
+def _styles(font: str, bold_font: str) -> dict[str, Any]:
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+
+    sample = getSampleStyleSheet()
+    base = ParagraphStyle(
+        "HIVEBody",
+        parent=sample["BodyText"],
+        fontName=font,
+        fontSize=8.8,
+        leading=13,
+        textColor=colors.HexColor(_BRAND_INK),
+        spaceAfter=6,
+        wordWrap="CJK",
+    )
+    return {
+        "body": base,
+        "small": ParagraphStyle(
+            "HIVESmall",
+            parent=base,
+            fontSize=7.2,
+            leading=10,
+            textColor=colors.HexColor(_BRAND_MUTED),
+        ),
+        "kicker": ParagraphStyle(
+            "HIVEKicker",
+            parent=base,
+            fontName=bold_font,
+            fontSize=7.5,
+            leading=10,
+            textColor=colors.HexColor(_BRAND_GOLD),
+            spaceAfter=7,
+        ),
+        "title": ParagraphStyle(
+            "HIVETitle",
+            parent=base,
+            fontName=bold_font,
+            fontSize=25,
+            leading=29,
+            textColor=colors.HexColor(_BRAND_INK),
+            spaceAfter=8,
+        ),
+        "deck": ParagraphStyle(
+            "HIVEDeck",
+            parent=base,
+            fontSize=10.5,
+            leading=15,
+            textColor=colors.HexColor(_BRAND_MUTED),
+            spaceAfter=16,
+        ),
+        "section": ParagraphStyle(
+            "HIVESection",
+            parent=base,
+            fontName=bold_font,
+            fontSize=13,
+            leading=16,
+            textColor=colors.HexColor(_BRAND_INK),
+            spaceBefore=8,
+            spaceAfter=8,
+            keepWithNext=True,
+        ),
+        "label": ParagraphStyle(
+            "HIVELabel",
+            parent=base,
+            fontName=bold_font,
+            fontSize=7,
+            leading=9,
+            textColor=colors.HexColor(_BRAND_MUTED),
+            alignment=TA_LEFT,
+            spaceAfter=2,
+        ),
+        "metric": ParagraphStyle(
+            "HIVEMetric",
+            parent=base,
+            fontName=bold_font,
+            fontSize=13,
+            leading=16,
+            spaceAfter=0,
+        ),
+        "table_header": ParagraphStyle(
+            "HIVETableHeader",
+            parent=base,
+            fontName=bold_font,
+            fontSize=7,
+            leading=9,
+            textColor=colors.white,
+            spaceAfter=0,
+        ),
+        "table": ParagraphStyle(
+            "HIVETable",
+            parent=base,
+            fontSize=7.5,
+            leading=10,
+            spaceAfter=0,
+        ),
+        "message": ParagraphStyle(
+            "HIVEMessage",
+            parent=base,
+            fontSize=9,
+            leading=13,
+            spaceAfter=0,
+        ),
+    }
+
+
+def _section(story: list[Any], title: str, styles: dict[str, Any]) -> None:
+    from reportlab.platypus import Paragraph
+
+    story.append(Paragraph(_xml(title), styles["section"]))
+
+
+def _data_table(
+    rows: list[list[Any]],
+    widths: list[float],
+    *,
+    repeat_header: bool = True,
+) -> Any:
+    from reportlab.lib import colors
+    from reportlab.platypus import Table, TableStyle
+
+    table = Table(rows, colWidths=widths, repeatRows=1 if repeat_header else 0, hAlign="LEFT")
+    commands = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(_BRAND_INK)),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(_BRAND_LINE)),
+        ("INNERGRID", (0, 0), (-1, -1), 0.25, colors.HexColor(_BRAND_LINE)),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]
+    for row in range(1, len(rows)):
+        if row % 2 == 0:
+            commands.append(
+                ("BACKGROUND", (0, row), (-1, row), colors.HexColor(_BRAND_PAPER))
+            )
+    table.setStyle(TableStyle(commands))
+    return table
+
+
 def build_bundle(
     session: SessionState,
     chain: HashChain,
@@ -50,93 +252,323 @@ def build_bundle(
     key_path: str,
     operator_name: str = "",
 ) -> str:
-    """Render the evidence PDF, sign it, and return the output path.
-
-    Writes `out_path` and `out_path + '.sig'` (the detached RSA signature).
-    """
+    """Render, brand, sign, and return a Unicode-safe evidence PDF."""
+    from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
     from reportlab.platypus import (
+        PageBreak,
         Paragraph,
         SimpleDocTemplate,
         Spacer,
         Table,
         TableStyle,
     )
-    from reportlab.lib import colors
 
-    styles = getSampleStyleSheet()
-    story = []
+    target = Path(out_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    signature_target = Path(str(target) + ".sig")
+    signature_temporary = Path(str(temporary) + ".sig")
 
-    def h(text: str) -> None:
-        story.append(Paragraph(text, styles["Heading2"]))
+    font, bold_font = _font_pair()
+    styles = _styles(font, bold_font)
+    generated = datetime.now(UTC)
+    document_id = f"HIVE-{session.peer_id}-{generated:%Y%m%d%H%M%S}"
+    logo_path = Path(__file__).parents[1] / "webpanel" / "resources" / "logo.png"
 
-    def p(text: str) -> None:
-        story.append(Paragraph(text, styles["Normal"]))
+    doc = SimpleDocTemplate(
+        str(temporary),
+        pagesize=A4,
+        leftMargin=18 * mm,
+        rightMargin=18 * mm,
+        topMargin=28 * mm,
+        bottomMargin=18 * mm,
+        title=f"HIVE Intelligence Report - Peer {session.peer_id}",
+        author="HIVE - Honeypot for Intelligence, Verdict & Evidence",
+        subject="Signed anti-scam intelligence and evidence report",
+    )
 
-    story.append(Paragraph("HIVE Evidence Bundle", styles["Title"]))
-    p(f"Verdict: <b>{session.verdict}</b> (score {session.verdict_score:.3f})")
-    p(f"Turns: {session.turn_count} &nbsp; Peer: {session.peer_id} &nbsp; Persona: {session.persona}")
-    story.append(Spacer(1, 12))
+    def page_chrome(canvas, current_doc) -> None:
+        width, height = A4
+        canvas.saveState()
+        canvas.setFillColor(colors.HexColor(_BRAND_INK))
+        canvas.rect(0, height - 20 * mm, width, 20 * mm, fill=1, stroke=0)
+        if logo_path.is_file():
+            canvas.drawImage(
+                str(logo_path),
+                18 * mm,
+                height - 16.5 * mm,
+                width=11 * mm,
+                height=11 * mm,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        canvas.setFillColor(colors.white)
+        canvas.setFont(bold_font, 12)
+        canvas.drawString(32 * mm, height - 10.5 * mm, "HIVE")
+        canvas.setFont(font, 7)
+        canvas.setFillColor(colors.HexColor("#CDD0D5"))
+        canvas.drawString(32 * mm, height - 14.5 * mm, "INTELLIGENCE & EVIDENCE")
+        canvas.setFont(bold_font, 6.5)
+        canvas.setFillColor(colors.HexColor(_BRAND_GOLD))
+        canvas.drawRightString(width - 18 * mm, height - 11.5 * mm, "RESTRICTED")
 
-    h("Section 90A Certificate")
-    for line in s90a_certificate(session, operator_name).splitlines():
-        p(line or "&nbsp;")
-    story.append(Spacer(1, 12))
+        canvas.setStrokeColor(colors.HexColor(_BRAND_LINE))
+        canvas.line(18 * mm, 12 * mm, width - 18 * mm, 12 * mm)
+        canvas.setFillColor(colors.HexColor(_BRAND_MUTED))
+        canvas.setFont(font, 6.5)
+        canvas.drawString(18 * mm, 8 * mm, document_id)
+        canvas.drawRightString(width - 18 * mm, 8 * mm, f"PAGE {current_doc.page}")
+        canvas.restoreState()
 
-    h("Conversation transcript")
-    for m in session.messages:
-        who = "SCAMMER" if m.role == "stranger" else "AGENT" if m.role == "agent" else "SYS"
-        p(f"<b>{who}:</b> {(m.text or '').replace('<', '&lt;')}")
-    story.append(Spacer(1, 12))
+    story: list[Any] = []
+    story.append(Paragraph("SIGNED CASE FILE", styles["kicker"]))
+    story.append(Paragraph(f"Intelligence report: peer {_xml(session.peer_id)}", styles["title"]))
+    story.append(
+        Paragraph(
+            "A structured record of the engagement, extracted indicators, "
+            "sandbox findings, and cryptographic evidence integrity.",
+            styles["deck"],
+        )
+    )
 
-    if session.hvis:
-        h("Extracted High-Value Indicators")
-        rows = [["Kind", "Value", "Conf", "Msg"]] + [
-            [x.kind, x.value, f"{x.confidence:.2f}", str(x.source_msg_id)] for x in session.hvis
-        ]
-        _table(story, rows, Table, TableStyle, colors)
-        story.append(Spacer(1, 12))
-
-    if session.sandbox_results:
-        h("Forensic sandbox results")
-        for r in session.sandbox_results:
-            p(f"{r.get('url','')} → {r.get('final_url','')} "
-              f"[{r.get('verdict_signal','')}], IP {r.get('dest_ip','')}, "
-              f"cloaking={r.get('cloaking_suspected')}")
-        story.append(Spacer(1, 12))
-
-    h("SHA-256 hash chain")
-    rows = [["#", "Entry hash (sha256)", "Prev hash"]] + [
-        [str(e.index), e.entry_hash[:24] + "…", (e.prev_hash[:16] + "…")] for e in chain.entries
+    metric_values = [
+        ("VERDICT", session.verdict.replace("_", " ").upper()),
+        ("CONFIDENCE", f"{session.verdict_score:.1%}"),
+        ("INBOUND MESSAGES", str(session.turn_count)),
+        ("INDICATORS", str(len(session.hvis))),
     ]
-    _table(story, rows, Table, TableStyle, colors)
-    p(f"Chain integrity: <b>{'VALID' if chain.verify() else 'BROKEN'}</b> "
-      f"({len(chain.entries)} entries)")
-
-    SimpleDocTemplate(out_path, pagesize=A4).build(story)
-
-    with open(out_path, "rb") as fh:
-        pdf_bytes = fh.read()
-    digest = hashlib.sha256(pdf_bytes).hexdigest()
-    signature = sign_bytes(pdf_bytes, key_path)
-    sig_path = out_path + ".sig"
-    with open(sig_path, "wb") as fh:
-        fh.write(signature)
-
-    log.info("L5 bundle: wrote %s (%d bytes, sha256=%s) + %s", out_path, len(pdf_bytes), digest[:12], sig_path)
-    return out_path
-
-
-def _table(story, rows, Table, TableStyle, colors) -> None:
-    t = Table(rows, hAlign="LEFT")
-    t.setStyle(
+    metric_cells = [
+        [Paragraph(_xml(label), styles["label"]), Paragraph(_xml(value), styles["metric"])]
+        for label, value in metric_values
+    ]
+    metrics = Table([metric_cells], colWidths=[doc.width / 4] * 4)
+    metrics.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
-                ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(_BRAND_PAPER)),
+                ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(_BRAND_LINE)),
+                ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.HexColor(_BRAND_LINE)),
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 8),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
             ]
         )
     )
-    story.append(t)
+    story.append(metrics)
+    story.append(Spacer(1, 8 * mm))
+
+    _section(story, "Case overview", styles)
+    overview = [
+        [
+            Paragraph("FIELD", styles["table_header"]),
+            Paragraph("RECORDED VALUE", styles["table_header"]),
+        ],
+        [Paragraph("Peer ID", styles["table"]), Paragraph(_xml(session.peer_id), styles["table"])],
+        [Paragraph("Persona", styles["table"]), Paragraph(_xml(session.persona), styles["table"])],
+        [
+            Paragraph("Session started", styles["table"]),
+            Paragraph(_xml(_timestamp(session.started_ts)), styles["table"]),
+        ],
+        [Paragraph("Document ID", styles["table"]), Paragraph(document_id, styles["table"])],
+        [
+            Paragraph("Generated", styles["table"]),
+            Paragraph(generated.strftime("%Y-%m-%d %H:%M:%S UTC"), styles["table"]),
+        ],
+    ]
+    story.append(_data_table(overview, [42 * mm, doc.width - 42 * mm]))
+    story.append(Spacer(1, 6 * mm))
+
+    _section(story, "Section 90A certificate", styles)
+    certificate = "<br/>".join(
+        _xml(line) if line else "&nbsp;"
+        for line in s90a_certificate(session, operator_name).splitlines()
+    )
+    cert_table = Table([[Paragraph(certificate, styles["body"])]], colWidths=[doc.width])
+    cert_table.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF8E6")),
+                ("BOX", (0, 0), (-1, -1), 0.7, colors.HexColor(_BRAND_GOLD)),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                ("TOPPADDING", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+            ]
+        )
+    )
+    story.append(cert_table)
+    story.append(PageBreak())
+
+    story.append(Paragraph("ENGAGEMENT RECORD", styles["kicker"]))
+    story.append(Paragraph("Conversation transcript", styles["title"]))
+    story.append(
+        Paragraph(
+            "Messages are shown in chronological order. Original multilingual text is preserved.",
+            styles["deck"],
+        )
+    )
+    if not session.messages:
+        story.append(Paragraph("No conversation messages were recorded.", styles["body"]))
+    for message in session.messages:
+        is_agent = message.role == "agent"
+        role = "HIVE PERSONA" if is_agent else "EXTERNAL PARTY"
+        accent = "#667085" if is_agent else _BRAND_GOLD
+        background = "#F2F4F7" if is_agent else "#FFF8E6"
+        body = Paragraph(
+            f"<font name=\"{bold_font}\" size=\"7\">{role}  |  "
+            f"{_xml(_timestamp(message.ts))}</font><br/>{_xml(message.text)}",
+            styles["message"],
+        )
+        bubble = Table([[body]], colWidths=[doc.width])
+        bubble.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(background)),
+                    ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(accent)),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                    ("TOPPADDING", (0, 0), (-1, -1), 7),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ]
+            )
+        )
+        story.append(bubble)
+        story.append(Spacer(1, 3 * mm))
+
+    _section(story, "Extracted intelligence", styles)
+    if session.hvis:
+        rows = [
+            [
+                Paragraph(value, styles["table_header"])
+                for value in ("TYPE", "VALUE", "CONF.", "SOURCE")
+            ]
+        ]
+        rows.extend(
+            [
+                Paragraph(_xml(item.kind.replace("_", " ").upper()), styles["table"]),
+                Paragraph(_xml(item.value), styles["table"]),
+                Paragraph(f"{item.confidence:.0%}", styles["table"]),
+                Paragraph(str(item.source_msg_id), styles["table"]),
+            ]
+            for item in session.hvis
+        )
+        story.append(_data_table(rows, [35 * mm, 86 * mm, 20 * mm, 20 * mm]))
+    else:
+        story.append(Paragraph("No high-value indicators were extracted.", styles["body"]))
+
+    _section(story, "Sandbox findings", styles)
+    if session.sandbox_results:
+        for index, result in enumerate(session.sandbox_results, start=1):
+            finding = (
+                f"<b>Finding {index}: {_xml(result.get('verdict_signal', 'unclassified'))}</b><br/>"
+                f"Submitted URL: {_xml(result.get('url', ''))}<br/>"
+                f"Final URL: {_xml(result.get('final_url', ''))}<br/>"
+                f"Destination IP: {_xml(result.get('dest_ip', ''))}<br/>"
+                f"Cloaking suspected: {_xml(result.get('cloaking_suspected', False))}"
+            )
+            card = Table([[Paragraph(finding, styles["body"])]], colWidths=[doc.width])
+            card.setStyle(
+                TableStyle(
+                    [
+                        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(_BRAND_LINE)),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                        ("TOPPADDING", (0, 0), (-1, -1), 7),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                    ]
+                )
+            )
+            story.append(card)
+            story.append(Spacer(1, 3 * mm))
+    else:
+        story.append(Paragraph("No sandbox analyses were recorded.", styles["body"]))
+
+    story.append(PageBreak())
+    story.append(Paragraph("EVIDENCE INTEGRITY", styles["kicker"]))
+    story.append(Paragraph("Cryptographic chain of custody", styles["title"]))
+    story.append(
+        Paragraph(
+            "Each event is linked to the preceding event by SHA-256. The detached RSA-PSS "
+            "signature accompanying this PDF seals the final report bytes.",
+            styles["deck"],
+        )
+    )
+    integrity = "VALID" if chain.verify() else "BROKEN"
+    integrity_color = "#137A4A" if integrity == "VALID" else "#B42318"
+    integrity_box = Table(
+        [
+            [Paragraph("CHAIN STATUS", styles["label"]), Paragraph(integrity, styles["metric"])],
+            [
+                Paragraph("EVENTS", styles["label"]),
+                Paragraph(str(len(chain.entries)), styles["metric"]),
+            ],
+        ],
+        colWidths=[35 * mm, doc.width - 35 * mm],
+    )
+    integrity_box.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(_BRAND_PAPER)),
+                ("BOX", (0, 0), (-1, -1), 0.8, colors.HexColor(integrity_color)),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("LEFTPADDING", (0, 0), (-1, -1), 9),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+    story.append(integrity_box)
+    story.append(Spacer(1, 6 * mm))
+
+    chain_rows = [[
+        Paragraph("#", styles["table_header"]),
+        Paragraph("ENTRY HASH (SHA-256)", styles["table_header"]),
+        Paragraph("PREVIOUS HASH", styles["table_header"]),
+    ]]
+    chain_rows.extend(
+        [
+            Paragraph(str(entry.index), styles["table"]),
+            Paragraph(_xml(entry.entry_hash), styles["small"]),
+            Paragraph(_xml(entry.prev_hash or "GENESIS"), styles["small"]),
+        ]
+        for entry in chain.entries
+    )
+    story.append(_data_table(chain_rows, [12 * mm, 76 * mm, 73 * mm]))
+    story.append(Spacer(1, 8 * mm))
+    story.append(
+        Paragraph(
+            "This report is generated by HIVE - Honeypot for Intelligence, Verdict & "
+            "Evidence. Legal admissibility depends on proper operator completion of the "
+            "Section 90A certificate and preservation of the PDF, signature, and public key.",
+            styles["small"],
+        )
+    )
+
+    try:
+        doc.build(story, onFirstPage=page_chrome, onLaterPages=page_chrome)
+        pdf_bytes = temporary.read_bytes()
+        digest = hashlib.sha256(pdf_bytes).hexdigest()
+        signature_temporary.write_bytes(sign_bytes(pdf_bytes, key_path))
+        # Publish the detached signature first and the PDF last. Indexers only
+        # discover PDFs, so they can never observe a half-sealed case file.
+        signature_temporary.replace(signature_target)
+        temporary.replace(target)
+    except Exception:
+        temporary.unlink(missing_ok=True)
+        signature_temporary.unlink(missing_ok=True)
+        signature_target.unlink(missing_ok=True)
+        raise
+
+    log.info(
+        "L5 bundle: wrote %s (%d bytes, sha256=%s) + %s",
+        target,
+        len(pdf_bytes),
+        digest[:12],
+        signature_target,
+    )
+    return str(target)

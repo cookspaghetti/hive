@@ -27,8 +27,10 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html { min-width: 320px; background: var(--bg); }
 body { margin: 0; min-height: 100vh; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.5; }
+body:has(.session-dialog[open]) { overflow: hidden; }
 button, input, select { font: inherit; }
 button, select { cursor: pointer; }
 button:disabled, input:disabled, select:disabled { cursor: not-allowed; opacity: .55; }
@@ -138,7 +140,7 @@ input:hover, select:hover { border-color: var(--border-strong); }
 input:focus, select:focus { border-color: var(--focus); }
 input::placeholder { color: var(--subtle); }
 .toolbar select { width: auto; min-width: 175px; }
-.operations-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(330px, 430px); gap: 14px; align-items: start; }
+.operations-layout { display: block; }
 .operations-lists { display: grid; gap: 14px; min-width: 0; }
 .data-surface { padding: 0; overflow: hidden; }
 .data-surface > .surface-heading { margin: 0; padding: 17px 18px 13px; }
@@ -152,7 +154,9 @@ td.ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .table-button { min-height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 6px; background: transparent; color: var(--text); font-weight: 700; }
 .table-button:hover { border-color: var(--accent); color: var(--accent); }
-.session-inspector { position: sticky; top: calc(var(--topbar-height) + 14px); min-height: 420px; max-height: calc(100vh - var(--topbar-height) - 28px); overflow-y: auto; padding: 18px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.session-dialog { width: min(calc(100% - 32px), 1040px); height: min(90dvh, 900px); max-height: none; overflow: hidden; }
+.session-dialog[open] { display: flex; flex-direction: column; }
+.session-dialog #inspectorContent:not([hidden]) { display: flex; flex: 1; min-height: 0; flex-direction: column; overflow: hidden; padding: 22px; }
 .empty-state { display: grid; min-height: 180px; place-content: center; padding: 22px; color: var(--muted); text-align: center; }
 .empty-state strong { color: var(--text); }
 .empty-state p { max-width: 48ch; margin: 6px auto 0; font-size: .78rem; }
@@ -173,20 +177,43 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .inspector-tabs { display: grid; grid-template-columns: repeat(3, 1fr); margin-top: 17px; border-bottom: 1px solid var(--border); }
 .inspector-tabs button { min-height: 42px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--muted); }
 .inspector-tabs button.active { border-color: var(--accent); color: var(--text); }
-.inspector-panel { display: none; min-height: 200px; }
-.inspector-panel.active { display: block; }
-.transcript { display: grid; gap: 10px; max-height: min(52vh, 560px); overflow-y: auto; padding: 14px 4px 14px 0; scrollbar-gutter: stable; }
+.inspector-panel { display: none; flex: 1; min-height: 0; overflow: hidden; }
+.inspector-panel.active { display: flex; flex-direction: column; }
+.transcript, .inspector-panel > .signal-list, .inspector-panel > .indicator-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.transcript { display: grid; align-content: start; gap: 10px; max-height: none; padding: 14px 4px 14px 0; }
+.inspector-panel > .signal-list, .inspector-panel > .indicator-list { align-content: start; padding-right: 4px; }
 .message { max-width: 88%; padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius-small); background: var(--surface-raised); }
 .message.agent { justify-self: end; border-color: color-mix(in srgb, var(--accent) 35%, var(--border)); }
 .message p { margin: 0; color: var(--text); font-size: .78rem; white-space: pre-wrap; }
 .message span { display: block; margin-top: 5px; color: var(--subtle); font-size: .65rem; }
+.transcript-media { display: block; margin-bottom: 8px; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: #080a0d; }
+.transcript-image { display: block; width: auto; max-width: min(100%, 520px); max-height: 420px; object-fit: contain; }
+.message-attachment { display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; align-items: center; min-width: min(420px, 70vw); margin-bottom: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-hover); color: var(--text); text-decoration: none; }
+.message-attachment:hover { border-color: var(--accent); }
+.attachment-icon { display: grid; width: 34px; height: 34px; place-content: center; border-radius: 7px; background: color-mix(in srgb, var(--accent) 15%, var(--surface)); color: var(--accent); font-size: .65rem; font-weight: 800; text-transform: uppercase; }
+.attachment-copy { min-width: 0; }
+.attachment-copy strong, .attachment-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attachment-copy strong { font-size: .76rem; }
+.attachment-copy small { margin-top: 2px; color: var(--subtle); font-size: .65rem; }
+.signal-list { gap: 10px; padding: 14px 0; }
+.signal-card { padding: 13px 14px; border: 1px solid var(--border); border-radius: var(--radius-small); background: var(--surface-raised); }
+.signal-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.signal-card-header strong { font-size: .8rem; }
+.signal-card-header time { color: var(--subtle); font-size: .66rem; }
+.signal-score { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+.signal-detail-list { display: grid; gap: 5px; margin-top: 10px; }
+.signal-detail-row { display: grid; grid-template-columns: minmax(120px, .5fr) minmax(0, 1fr); gap: 12px; align-items: start; font-size: .72rem; }
+.signal-detail-row > span { color: var(--subtle); }
+.signal-detail-row > strong { overflow-wrap: anywhere; font-weight: 650; }
+.signal-contributions { display: flex; flex-wrap: wrap; gap: 6px; }
+.signal-pill { padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: .67rem; }
 .inspector-actions { display: grid; gap: 8px; margin-top: 16px; }
 .inline-message { min-height: 1.4em; margin: 10px 0 0; color: var(--muted); font-size: .76rem; }
 .inline-message.error { color: var(--danger); }
 .inline-message.success { color: var(--success); }
 
 .inline-select { display: grid; gap: 5px; min-width: min(330px, 100%); }
-.intelligence-summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-bottom: 14px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--border); }
+.intelligence-summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; margin-bottom: 14px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--border); }
 .intelligence-summary > div { padding: 13px 15px; background: var(--surface); }
 .intelligence-summary span { display: block; color: var(--subtle); font-size: .7rem; }
 .intelligence-summary strong { font-variant-numeric: tabular-nums; }
@@ -257,9 +284,6 @@ dialog::backdrop { background: rgba(4, 6, 8, .74); }
 
 @media (max-width: 1120px) {
   .overview-grid, .intelligence-grid, .model-layout, .security-layout { grid-template-columns: 1fr; }
-  .operations-layout { grid-template-columns: 1fr; }
-  .session-inspector { position: fixed; z-index: 40; top: var(--topbar-height); right: 0; bottom: 0; width: min(460px, 100%); max-height: none; border-radius: 0; border-bottom: 0; border-right: 0; transform: translateX(105%); transition: transform 180ms ease-out; box-shadow: -20px 0 70px rgba(0,0,0,.42); }
-  .session-inspector.open { transform: translateX(0); }
   .model-status { position: static; }
 }
 
@@ -301,6 +325,9 @@ dialog::backdrop { background: rgba(4, 6, 8, .74); }
   .log-line { grid-template-columns: 66px 52px 1fr; }
   .log-line .logger { display: none; }
   .intelligence-summary { grid-template-columns: 1fr; }
+  .session-dialog { width: calc(100% - 16px); height: calc(100dvh - 16px); max-height: none; }
+  .session-dialog #inspectorContent { padding: 15px; }
+  .signal-detail-row { grid-template-columns: 1fr; gap: 2px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

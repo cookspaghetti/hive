@@ -78,7 +78,7 @@
             </article>
 
             <article class="surface queue-surface">
-              <div class="surface-heading"><div><h2>Incoming queue</h2><p>Most recent private chats observed by the data plane.</p></div><button class="text-button" type="button" data-route-link="takeovers">View queue</button></div>
+              <div class="surface-heading"><div><h2>Takeover requests</h2><p>Pending private chats delivered by the data plane.</p></div><button class="text-button" type="button" data-route-link="takeovers">View queue</button></div>
               <div class="compact-list" id="overviewQueue"></div>
             </article>
 
@@ -88,14 +88,14 @@
             </article>
 
             <article class="surface activity-surface">
-              <div class="surface-heading"><div><h2>Recent activity</h2><p>Operator and control-plane actions.</p></div><button class="text-button" type="button" data-route-link="activity">Open stream</button></div>
+              <div class="surface-heading"><div><h2>Recent audit events</h2><p>Permanent actions, messages, and decisions.</p></div><button class="text-button" type="button" data-route-link="activity">Open ledger</button></div>
               <div class="timeline compact" id="overviewActivity"></div>
             </article>
           </div>
         </section>
 
         <section class="page" data-page="takeovers" aria-labelledby="takeoversTitle">
-          <div class="page-heading"><div><p class="context-line">Live operations</p><h1 id="takeoversTitle">Takeover queue</h1><p>Review incoming chats, begin controlled engagement, and inspect active sessions.</p></div></div>
+          <div class="page-heading"><div><p class="context-line">Live operations</p><h1 id="takeoversTitle">Takeover queue</h1><p>Review pending requests, begin controlled engagement, and inspect active sessions.</p></div></div>
           <div class="toolbar">
             <label class="search-field"><span class="sr-only">Search chats and sessions</span><input id="takeoverSearch" type="search" placeholder="Search peer, account, message, verdict"></label>
             <select id="takeoverPersona" aria-label="Persona for new takeover">
@@ -110,7 +110,7 @@
           <div class="operations-layout">
             <div class="operations-lists">
               <article class="surface data-surface">
-                <div class="surface-heading"><div><h2>Observed chats</h2><p id="chatCountLabel">No chats loaded</p></div></div>
+                <div class="surface-heading"><div><h2>Takeover requests</h2><p id="chatCountLabel">No requests loaded</p></div></div>
                 <div class="table-scroll"><table><thead><tr><th>Account</th><th>Latest message</th><th>Received</th><th><span class="sr-only">Action</span></th></tr></thead><tbody id="chatRows"></tbody></table></div>
               </article>
               <article class="surface data-surface">
@@ -123,8 +123,7 @@
               </article>
             </div>
 
-            <aside class="session-inspector" id="sessionInspector" aria-labelledby="inspectorTitle">
-              <div class="empty-state" id="inspectorEmpty"><strong>Select a takeover</strong><p>Open an active or archived takeover to inspect its transcript, verdict trail, indicators, and sandbox findings.</p></div>
+            <dialog class="session-dialog" id="sessionInspector" aria-labelledby="inspectorTitle">
               <div id="inspectorContent" hidden>
                 <div class="inspector-header"><div><span class="mono" id="inspectorPeer"></span><h2 id="inspectorTitle">Session</h2></div><button class="icon-button" id="closeInspector" type="button" aria-label="Close session inspector">×</button></div>
                 <div class="inspector-status"><span class="status-chip" id="inspectorVerdict"></span><strong id="inspectorScore"></strong><span id="inspectorTurns"></span><span class="live-update"><span aria-hidden="true"></span><span id="inspectorLiveLabel">Live</span></span></div>
@@ -139,13 +138,13 @@
                 <div class="inspector-panel" data-inspector-panel="indicators"><div class="indicator-list" id="inspectorIndicators"></div></div>
                 <div class="inspector-actions" id="inspectorActions"><button class="button danger" id="sealSession" type="button">Stop and seal evidence</button><button class="button secondary" type="button" data-route-link="intelligence">Open intelligence view</button></div>
               </div>
-            </aside>
+            </dialog>
           </div>
           <p class="inline-message" id="takeoverMessage" role="status"></p>
         </section>
 
         <section class="page" data-page="intelligence" aria-labelledby="intelligenceTitle">
-          <div class="page-heading"><div><p class="context-line">Investigation</p><h1 id="intelligenceTitle">Intelligence workspace</h1><p>Extracted indicators and disposable-browser findings for the selected active session.</p></div><label class="inline-select"><span>Session</span><select id="intelligenceSession"></select></label></div>
+          <div class="page-heading"><div><p class="context-line">Investigation</p><h1 id="intelligenceTitle">Intelligence workspace</h1><p>Extracted indicators and disposable-browser findings from active and previous takeover runs.</p></div><label class="inline-select"><span>Run</span><select id="intelligenceSession"></select></label></div>
           <div class="intelligence-summary" id="intelligenceSummary"></div>
           <div class="intelligence-grid">
             <article class="surface data-surface"><div class="surface-heading"><div><h2>High-value indicators</h2><p>Copyable values linked to their source messages.</p></div></div><div class="table-scroll"><table><thead><tr><th>Type</th><th>Value</th><th>Confidence</th><th>Source</th></tr></thead><tbody id="hviRows"></tbody></table></div></article>
@@ -159,13 +158,13 @@
         </section>
 
         <section class="page" data-page="activity" aria-labelledby="activityTitle">
-          <div class="page-heading"><div><p class="context-line">Observation</p><h1 id="activityTitle">Activity stream</h1><p>Redacted, process-local events from operator actions and the control plane.</p></div></div>
-          <div class="toolbar"><label class="search-field"><span class="sr-only">Filter activity</span><input id="activitySearch" type="search" placeholder="Filter by event, category, or peer"></label><select id="activitySeverity" aria-label="Filter by severity"><option value="all">All severities</option><option value="error">Errors</option><option value="warning">Warnings</option><option value="success">Success</option><option value="info">Information</option></select><button class="button secondary compact" id="clearActivityView" type="button">Clear view</button></div>
+          <div class="page-heading"><div><p class="context-line">Operations</p><h1 id="activityTitle">Activity</h1><p>Important persistent milestones by default, with the exhaustive audit ledger available when needed.</p></div></div>
+          <div class="toolbar"><label class="search-field"><span class="sr-only">Filter activity</span><input id="activitySearch" type="search" placeholder="Filter by event, category, or peer"></label><select id="activityScope" aria-label="Activity scope"><option value="important">Important activity</option><option value="all">All audit events</option></select><select id="activitySeverity" aria-label="Filter by severity"><option value="all">All severities</option><option value="error">Errors</option><option value="warning">Warnings</option><option value="success">Success</option><option value="info">Information</option></select><button class="button secondary compact" id="clearActivityView" type="button">Clear view</button></div>
           <div class="timeline full" id="activityTimeline"></div>
         </section>
 
         <section class="page" data-page="logs" aria-labelledby="logsTitle">
-          <div class="page-heading"><div><p class="context-line">Diagnostics</p><h1 id="logsTitle">Live logs</h1><p>Bounded operational logs. Secrets are redacted and forensic records remain in the evidence vault.</p></div><button class="button secondary compact" id="exportLogs" type="button">Export view</button></div>
+          <div class="page-heading"><div><p class="context-line">Diagnostics</p><h1 id="logsTitle">Live logs</h1><p>Bounded, redacted runtime diagnostics; permanent exact records are under Activity → All audit events.</p></div><button class="button secondary compact" id="exportLogs" type="button">Export view</button></div>
           <div class="toolbar"><label class="search-field"><span class="sr-only">Filter logs</span><input id="logSearch" type="search" placeholder="Filter message, logger, or peer"></label><select id="logLevel" aria-label="Filter log level"><option value="all">All levels</option><option value="error">Error</option><option value="warning">Warning</option><option value="info">Info</option></select><label class="toggle"><input id="logFollow" type="checkbox" checked><span>Auto-follow</span></label></div>
           <div class="log-viewer" id="logViewer" role="log" aria-live="off"></div>
         </section>
@@ -190,7 +189,7 @@
           <div class="page-heading"><div><p class="context-line">Messaging planes</p><h1 id="telegramTitle">Telegram health centre</h1><p>Configure and inspect the Telethon data plane and Bot API control plane.</p></div></div>
           <div class="telegram-status" id="telegramStatus"></div>
           <div class="two-column-forms">
-            <form class="surface form-surface" id="botForm"><div class="surface-heading"><div><h2>Control bot</h2><p>Verify the BotFather token and restrict commands to one operator.</p></div></div><div class="form-grid"><label class="field full"><span>Bot API token</span><input id="botToken" type="password" autocomplete="off" required></label><label class="field full"><span>Operator Telegram ID</span><input id="operatorId" inputmode="numeric" required></label></div><div class="form-actions"><button class="button primary" type="submit">Verify and save</button><span class="inline-message" id="botMessage" role="status"></span></div></form>
+            <form class="surface form-surface" id="botForm"><div class="surface-heading"><div><h2>Control bot</h2><p>Verify the BotFather token and restrict commands to one operator.</p></div></div><div class="form-grid"><label class="field full"><span>Bot API token</span><input id="botToken" type="password" autocomplete="off" required></label><label class="field"><span>Operator Telegram ID</span><input id="operatorId" inputmode="numeric" required></label><label class="field"><span>Operator name for reports</span><input id="operatorName" autocomplete="name" placeholder="Responsible operator"></label></div><div class="form-actions"><button class="button primary" type="submit">Verify and save</button><span class="inline-message" id="botMessage" role="status"></span></div></form>
             <form class="surface form-surface" id="telegramForm"><div class="surface-heading"><div><h2>Telegram account</h2><p>Authorize the account used for consented research conversations.</p></div></div><div class="form-grid"><label class="field"><span>API ID</span><input id="apiId" inputmode="numeric" required></label><label class="field"><span>API hash</span><input id="apiHash" type="password" autocomplete="off" required></label><label class="field full"><span>Phone number</span><input id="phone" type="tel" placeholder="+60…" required></label><label class="field full"><span>Encryption passphrase</span><input id="passphrase" type="password" autocomplete="new-password" required></label><label class="field full"><span>Encrypted session path</span><input id="sessionPath" value="./secrets/user.session" required></label><label class="field full auth-step" id="codeField" hidden><span>Login code</span><input id="loginCode" inputmode="numeric" autocomplete="one-time-code"></label><label class="field full auth-step" id="passwordField" hidden><span>Telegram 2FA password</span><input id="tgPassword" type="password" autocomplete="current-password"></label></div><div class="form-actions"><button class="button primary" id="telegramPrimary" type="submit">Send code</button><button class="button secondary" id="cancelTelegramLogin" type="button" hidden>Cancel</button><span class="inline-message" id="telegramMessage" role="status"></span></div></form>
           </div>
         </section>

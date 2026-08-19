@@ -5,10 +5,10 @@
   const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
   const routes = [
     ["overview", "Overview", "Runtime posture, metrics, and current work"],
-    ["takeovers", "Takeovers", "Observed chats and active engagements"],
+    ["takeovers", "Takeovers", "Pending requests and active engagements"],
     ["intelligence", "Intelligence", "Indicators and sandbox findings"],
     ["evidence", "Evidence", "Sealed case bundles"],
-    ["activity", "Activity", "Operator and control-plane events"],
+    ["activity", "Audit ledger", "Permanent actions, messages, and decisions"],
     ["logs", "Logs", "Redacted live diagnostics"],
     ["models", "Models", "Endpoint and tier assignments"],
     ["telegram", "Telegram", "Messaging plane configuration"],
@@ -70,6 +70,7 @@
     telegramAttempt: "",
     telegramStage: "start",
     setupOnly: false,
+    seenTakeoverRequests: new Set(),
     loading: new Set(),
   };
 
@@ -90,15 +91,67 @@
     if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
   };
+  const percentage = (value) => `${Math.round(Number(value || 0) * 100)}%`;
   const chipClass = (value) => {
     const normalized = String(value || "").toLowerCase().replaceAll(" ", "_");
-    if (["running", "ready", "success", "healthy", "configured", "signed"].includes(normalized)) return "success";
-    if (["error", "failed", "stopped", "likely_scam", "missing", "unsigned"].includes(normalized)) return "error";
-    if (["warning", "degraded", "restart_required"].includes(normalized)) return "warning";
+    if (["running", "ready", "success", "healthy", "configured", "signed", "clean"].includes(normalized)) return "success";
+    if (["error", "failed", "stopped", "likely_scam", "malicious", "missing", "unsigned"].includes(normalized)) return "error";
+    if (["warning", "degraded", "restart_required", "suspicious"].includes(normalized)) return "warning";
     return "info";
   };
   const emptyState = (title, detail) => `<div class="empty-state"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail)}</p></div>`;
   const tableEmpty = (columns, title, detail) => `<tr><td colspan="${columns}">${emptyState(title, detail)}</td></tr>`;
+
+  function openInspectorDialog() {
+    const dialog = $("#sessionInspector");
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function closeInspectorDialog() {
+    const dialog = $("#sessionInspector");
+    if (dialog.open) dialog.close();
+  }
+
+  function authenticatedMediaUrl(message) {
+    const path = String(message.media_url || "");
+    if (!path.startsWith("/api/media/")) return "";
+    return `${path}?token=${encodeURIComponent(token)}`;
+  }
+
+  function renderTranscriptMessage(message) {
+    const role = message.role === "agent" || message.role === "assistant" ? "agent" : "peer";
+    const mediaUrl = authenticatedMediaUrl(message);
+    const kind = titleCase(message.media_kind || "file");
+    const name = message.media_name || `Telegram ${kind}`;
+    const metadata = [kind, Number.isFinite(message.media_size) ? formatBytes(message.media_size) : "", message.media_mime || ""].filter(Boolean).join(" · ");
+    let media = "";
+    if (mediaUrl && (message.media_kind === "image" || String(message.media_mime || "").startsWith("image/"))) {
+      media = `<a class="transcript-media" href="${escapeHtml(mediaUrl)}" target="_blank" rel="noopener" title="Open ${escapeHtml(name)}"><img class="transcript-image" src="${escapeHtml(mediaUrl)}" alt="${escapeHtml(name)}" loading="lazy"></a>`;
+    } else if (message.media_kind) {
+      const tag = mediaUrl ? "a" : "div";
+      const link = mediaUrl ? ` href="${escapeHtml(mediaUrl)}" target="_blank" rel="noopener"` : "";
+      const availability = mediaUrl ? metadata : `${metadata}${metadata ? " · " : ""}Preview unavailable`;
+      media = `<${tag} class="message-attachment"${link}><span class="attachment-icon">${escapeHtml(String(message.media_kind).slice(0, 3))}</span><span class="attachment-copy"><strong title="${escapeHtml(name)}">${escapeHtml(name)}</strong><small>${escapeHtml(availability)}</small></span></${tag}>`;
+    }
+    const text = String(message.text || "").trim();
+    return `<div class="message ${role}">${media}${text ? `<p>${escapeHtml(text)}</p>` : ""}<span>${escapeHtml(titleCase(message.role))} · ${formatTime(message.ts)}</span></div>`;
+  }
+
+  function renderSignal(signal) {
+    const verdict = titleCase(signal.verdict || signal.name || signal.kind || "Assessment");
+    const contributions = Array.isArray(signal.contributions) ? signal.contributions : [];
+    const excluded = new Set(["ts", "turn", "score", "instantaneous_score", "verdict", "contributions"]);
+    const extras = Object.entries(signal).filter(([key, value]) => !excluded.has(key) && value != null).map(([key, value]) => {
+      let readable;
+      if (Array.isArray(value)) readable = value.map((item) => typeof item === "object" ? Object.values(item).join(" · ") : item).join(", ");
+      else if (typeof value === "object") readable = Object.entries(value).map(([label, item]) => `${titleCase(label)}: ${item}`).join(" · ");
+      else if (typeof value === "boolean") readable = value ? "Yes" : "No";
+      else readable = value;
+      return `<div class="signal-detail-row"><span>${escapeHtml(titleCase(key))}</span><strong>${escapeHtml(readable)}</strong></div>`;
+    }).join("");
+    const evidence = contributions.length ? `<div class="signal-detail-row"><span>Evidence</span><div class="signal-contributions">${contributions.map((item) => `<span class="signal-pill">${escapeHtml(titleCase(String(item.reason || "signal").replace(":", " · ")))} · ${percentage(item.weight)}</span>`).join("")}</div></div>` : `<div class="signal-detail-row"><span>Evidence</span><strong>No contributing indicators in this assessment</strong></div>`;
+    return `<article class="signal-card"><div class="signal-card-header"><strong>${escapeHtml(verdict)}</strong><time>${signal.turn != null ? `Turn ${Number(signal.turn)} · ` : ""}${formatTime(signal.ts)}</time></div><div class="signal-score"><span class="status-chip ${chipClass(signal.verdict)}">Cumulative ${percentage(signal.score)}</span><span class="status-chip info">This turn ${percentage(signal.instantaneous_score)}</span></div><div class="signal-detail-list">${evidence}${extras}</div></article>`;
+  }
 
   function setMessage(selector, message = "", kind = "") {
     const node = $(selector);
@@ -163,6 +216,7 @@
   function navigate(route) {
     if (!routes.some(([key]) => key === route)) route = "overview";
     state.route = route;
+    if (route !== "takeovers") closeInspectorDialog();
     localStorage.setItem("hive-route", route);
     $$(".page").forEach((page) => page.classList.toggle("active", page.dataset.page === route));
     $$(".nav-item").forEach((item) => {
@@ -213,11 +267,25 @@
   }
 
   function renderCompact(items, kind) {
-    if (!items.length) return emptyState(kind === "chat" ? "Queue is clear" : "No active engagements", kind === "chat" ? "New observed private chats will appear here." : "Begin a takeover from the incoming queue.");
+    if (!items.length) return emptyState(kind === "chat" ? "Queue is clear" : "No active engagements", kind === "chat" ? "New takeover requests will appear here and in the Telegram bot." : "Begin a takeover from the incoming queue.");
     return items.map((item) => {
-      if (kind === "chat") return `<div class="compact-item"><div><strong>${escapeHtml(item.display_name || item.username || `Peer ${item.peer_id}`)}</strong><span>${escapeHtml(item.latest_text || item.text || "No message preview")}</span></div><time>${formatTime(item.latest_ts || item.ts)}</time></div>`;
+      if (kind === "chat") return `<div class="compact-item"><div><strong>${escapeHtml(item.display_name || item.name || item.username || `Peer ${item.peer_id}`)}</strong><span>${escapeHtml(item.latest_text || item.last_message || item.text || "No message preview")}</span></div><time>${formatTime(item.latest_ts || item.last_message_at || item.ts)}</time></div>`;
       return `<button class="compact-item text-button" type="button" data-open-peer="${Number(item.peer_id)}"><div><strong>Peer ${Number(item.peer_id)}</strong><span>${escapeHtml(titleCase(item.verdict))} · ${item.turns} turns</span></div><span>${Math.round(Number(item.score || 0) * 100)}%</span></button>`;
     }).join("");
+  }
+
+  function notifyTakeoverRequests(chats) {
+    const fresh = chats.filter((chat) => {
+      if (chat.request_pending === false) return false;
+      const key = `${chat.peer_id}:${chat.request_created_at || chat.latest_ts || chat.last_message_at || 0}`;
+      if (state.seenTakeoverRequests.has(key)) return false;
+      state.seenTakeoverRequests.add(key);
+      return true;
+    });
+    if (!fresh.length) return;
+    const first = fresh[0];
+    const account = first.display_name || first.name || first.username || `Peer ${first.peer_id}`;
+    toast(fresh.length === 1 ? `New takeover request from ${account}.` : `${fresh.length} new takeover requests.`, "warning");
   }
 
   function renderActivity(items, compact = false) {
@@ -228,6 +296,7 @@
   async function loadDashboard() {
     try {
       const data = await api("/api/dashboard");
+      notifyTakeoverRequests(data.chats || []);
       state.dashboard = data;
       state.setupOnly = false;
       renderRuntime(data.runtime);
@@ -275,6 +344,7 @@
     state.history = await api("/api/history");
     try {
       const [chats, sessions] = await Promise.all([api("/api/chats"), api("/api/sessions")]);
+      notifyTakeoverRequests(chats);
       state.chats = chats;
       state.sessions = sessions;
       $("#takeoverCount").textContent = sessions.length;
@@ -286,7 +356,15 @@
       state.sessions = [];
       renderOperations();
       renderIntelligenceSessionOptions();
-      setMessage("#takeoverMessage", "Start the agent to load observed chats and active takeovers.");
+      setMessage("#takeoverMessage", "Start the agent to load takeover requests and active takeovers.");
+    }
+  }
+
+  async function pollTakeoverRequests() {
+    try {
+      notifyTakeoverRequests(await api("/api/chats"));
+    } catch (error) {
+      if (error.status !== 409) throw error;
     }
   }
 
@@ -295,11 +373,11 @@
     const chats = state.chats.filter((item) => JSON.stringify(item).toLowerCase().includes(query));
     const sessions = state.sessions.filter((item) => JSON.stringify(item).toLowerCase().includes(query));
     const history = state.history.filter((item) => JSON.stringify(item).toLowerCase().includes(query));
-    $("#chatCountLabel").textContent = `${chats.length} observed chat${chats.length === 1 ? "" : "s"}`;
+    $("#chatCountLabel").textContent = `${chats.length} pending request${chats.length === 1 ? "" : "s"}`;
     $("#sessionCountLabel").textContent = `${sessions.length} active takeover${sessions.length === 1 ? "" : "s"}`;
     $("#historyCountLabel").textContent = `${history.length} archived takeover${history.length === 1 ? "" : "s"}`;
-    $("#chatRows").innerHTML = chats.length ? chats.map((item) => `<tr><td><strong>${escapeHtml(item.display_name || item.username || `Peer ${item.peer_id}`)}</strong><br><span class="mono">${Number(item.peer_id)}</span></td><td class="ellipsis">${escapeHtml(item.latest_text || item.text || "No preview")}</td><td>${formatDate(item.latest_ts || item.ts)}</td><td class="actions"><button class="table-button" type="button" data-takeover-peer="${Number(item.peer_id)}">Take over</button></td></tr>`).join("") : tableEmpty(4, "No observed chats", "Start the data plane or adjust the search filter.");
-    $("#sessionRows").innerHTML = sessions.length ? sessions.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${escapeHtml(personaLabels[item.persona] || titleCase(item.persona))}</td><td>${escapeHtml(titleCase(item.phase))}</td><td><span class="status-chip ${chipClass(item.verdict)}">${escapeHtml(titleCase(item.verdict))}</span></td><td>${Math.round(Number(item.score || 0) * 100)}%</td><td class="actions"><button class="table-button" type="button" data-open-peer="${Number(item.peer_id)}">Inspect</button></td></tr>`).join("") : tableEmpty(6, "No active takeovers", "Begin a controlled engagement from an observed chat.");
+    $("#chatRows").innerHTML = chats.length ? chats.map((item) => `<tr><td><strong>${escapeHtml(item.display_name || item.name || item.username || `Peer ${item.peer_id}`)}</strong><br><span class="mono">${Number(item.peer_id)}</span></td><td class="ellipsis">${escapeHtml(item.latest_text || item.last_message || item.text || "No preview")}</td><td>${formatDate(item.latest_ts || item.last_message_at || item.ts)}</td><td class="actions"><button class="table-button" type="button" data-takeover-peer="${Number(item.peer_id)}">Take over</button></td></tr>`).join("") : tableEmpty(4, "No takeover requests", "New private messages will appear here and in the Telegram control bot.");
+    $("#sessionRows").innerHTML = sessions.length ? sessions.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${escapeHtml(personaLabels[item.persona] || titleCase(item.persona))}</td><td>${escapeHtml(titleCase(item.phase))}</td><td><span class="status-chip ${chipClass(item.verdict)}">${escapeHtml(titleCase(item.verdict))}</span></td><td>${Math.round(Number(item.score || 0) * 100)}%</td><td class="actions"><button class="table-button" type="button" data-open-peer="${Number(item.peer_id)}">Inspect</button></td></tr>`).join("") : tableEmpty(6, "No active takeovers", "Begin a controlled engagement from a takeover request.");
     $("#historyRows").innerHTML = history.length ? history.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${formatDate(item.ended_ts)}</td><td><span class="status-chip ${chipClass(item.verdict)}">${escapeHtml(titleCase(item.verdict))}</span></td><td>${Number(item.message_count || 0)}</td><td class="actions"><button class="table-button" type="button" data-history-id="${escapeHtml(item.id)}">View chat</button></td></tr>`).join("") : tableEmpty(5, "No takeover history", "Completed takeovers and their transcripts will appear here.");
   }
 
@@ -344,7 +422,7 @@
       state.selectedHistoryId = null;
       state.selectedSession = session;
       renderInspector(session, true, false);
-      $("#sessionInspector").classList.add("open");
+      if (state.route === "takeovers") openInspectorDialog();
       if (state.route === "intelligence") renderIntelligence(session);
     } catch (error) { toast(error.message, "error"); }
   }
@@ -356,13 +434,23 @@
       state.selectedHistoryId = historyId;
       state.selectedSession = session;
       renderInspector(session, true, true);
-      $("#sessionInspector").classList.add("open");
+      openInspectorDialog();
+    } catch (error) { toast(error.message, "error"); }
+  }
+
+  async function openIntelligenceHistory(historyId) {
+    try {
+      const session = await api(`/api/history/${encodeURIComponent(historyId)}`);
+      state.selectedPeer = null;
+      state.selectedHistoryId = historyId;
+      state.selectedSession = session;
+      renderIntelligence(session, true);
     } catch (error) { toast(error.message, "error"); }
   }
 
   async function refreshSelectedSession() {
     if (!state.selectedPeer || state.loading.has("session-refresh")) return;
-    if (state.route === "takeovers" && !$("#sessionInspector").classList.contains("open")) return;
+    if (state.route === "takeovers" && !$("#sessionInspector").open) return;
     const peerId = state.selectedPeer;
     state.loading.add("session-refresh");
     try {
@@ -377,7 +465,7 @@
       if (state.selectedPeer !== peerId) return;
       state.selectedPeer = null;
       state.selectedSession = null;
-      $("#sessionInspector").classList.remove("open");
+      closeInspectorDialog();
       await loadOperations();
     } finally {
       state.loading.delete("session-refresh");
@@ -387,7 +475,6 @@
   function renderInspector(session, initial = false, archived = false) {
     const transcript = $("#inspectorTranscript");
     const followLatest = initial || transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 48;
-    $("#inspectorEmpty").hidden = true;
     $("#inspectorContent").hidden = false;
     $("#inspectorPeer").textContent = `PEER ${session.peer_id}`;
     $("#inspectorTitle").textContent = personaLabels[session.persona] || titleCase(session.persona);
@@ -400,35 +487,71 @@
     $("#inspectorActions").hidden = archived;
     $(".live-update").classList.toggle("archived", archived);
     $("#inspectorLiveLabel").textContent = archived ? "Archived" : "Live";
-    transcript.innerHTML = session.messages?.length ? session.messages.map((message) => `<div class="message ${message.role === "agent" || message.role === "assistant" ? "agent" : "peer"}"><p>${escapeHtml(message.text)}</p><span>${escapeHtml(titleCase(message.role))} · ${formatTime(message.ts)}${message.media_kind ? ` · ${escapeHtml(message.media_kind)}` : ""}</span></div>`).join("") : emptyState("No transcript yet", "Messages will appear after the engagement begins.");
+    transcript.innerHTML = session.messages?.length ? session.messages.map(renderTranscriptMessage).join("") : emptyState("No transcript yet", "Messages will appear after the engagement begins.");
     if (followLatest) requestAnimationFrame(() => { transcript.scrollTop = transcript.scrollHeight; });
-    $("#inspectorSignals").innerHTML = session.signal_trail?.length ? session.signal_trail.map((signal) => `<div class="signal-item"><strong>${escapeHtml(signal.name || signal.kind || titleCase(signal.signal || "Signal"))}</strong><p>${escapeHtml(signal.detail || signal.reason || JSON.stringify(signal))}</p></div>`).join("") : emptyState("No signals yet", "Classifier evidence will appear as messages are assessed.");
+    $("#inspectorSignals").innerHTML = session.signal_trail?.length ? session.signal_trail.map(renderSignal).join("") : emptyState("No signals yet", "Classifier evidence will appear as messages are assessed.");
     $("#inspectorIndicators").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<div class="indicator-item"><strong>${escapeHtml(titleCase(item.kind))}</strong><p class="mono">${escapeHtml(item.value)}</p><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence</span></div>`).join("") : emptyState("No indicators extracted", "URLs, wallet addresses, accounts, and phone numbers will appear here.");
   }
 
   function renderIntelligenceSessionOptions() {
     const select = $("#intelligenceSession");
-    if (!state.sessions.length) {
-      select.innerHTML = "<option>No active sessions</option>";
+    if (!state.sessions.length && !state.history.length) {
+      select.innerHTML = "<option>No takeover runs</option>";
       select.disabled = true;
-      $("#intelligenceSummary").innerHTML = emptyState("No session selected", "Start a takeover to inspect extracted intelligence.");
-      $("#hviRows").innerHTML = tableEmpty(4, "No indicators", "No active session is selected.");
-      $("#sandboxList").innerHTML = emptyState("No sandbox results", "No active session is selected.");
+      $("#intelligenceSummary").innerHTML = emptyState("No run selected", "Start and seal a takeover to retain its intelligence findings.");
+      $("#hviRows").innerHTML = tableEmpty(4, "No indicators", "No takeover run is available.");
+      $("#sandboxList").innerHTML = emptyState("No sandbox results", "No takeover run is available.");
       return;
     }
     select.disabled = false;
-    select.innerHTML = state.sessions.map((item) => `<option value="${Number(item.peer_id)}" ${item.peer_id === state.selectedPeer ? "selected" : ""}>Peer ${Number(item.peer_id)} · ${escapeHtml(titleCase(item.verdict))}</option>`).join("");
-    const peer = state.selectedPeer && state.sessions.some((item) => item.peer_id === state.selectedPeer) ? state.selectedPeer : Number(select.value);
-    if (!state.selectedSession || state.selectedSession.peer_id !== peer) openSession(peer);
+    const activeOptions = state.sessions.map((item) => `<option value="active:${Number(item.peer_id)}">Peer ${Number(item.peer_id)} · ${escapeHtml(titleCase(item.verdict))}</option>`).join("");
+    const historyOptions = state.history.map((item) => `<option value="history:${escapeHtml(item.id)}">${escapeHtml(formatDate(item.ended_ts))} · Peer ${Number(item.peer_id)} · ${escapeHtml(titleCase(item.verdict))}</option>`).join("");
+    select.innerHTML = [
+      activeOptions ? `<optgroup label="Active sessions">${activeOptions}</optgroup>` : "",
+      historyOptions ? `<optgroup label="Previous runs">${historyOptions}</optgroup>` : "",
+    ].join("");
+
+    const preferred = state.selectedPeer != null
+      ? `active:${state.selectedPeer}`
+      : state.selectedHistoryId
+        ? `history:${state.selectedHistoryId}`
+        : "";
+    if (preferred && [...select.options].some((option) => option.value === preferred)) select.value = preferred;
+
+    const [kind, identifier] = select.value.split(":", 2);
+    if (kind === "active") {
+      const peer = Number(identifier);
+      if (state.selectedPeer !== peer || !state.selectedSession) openSession(peer);
+    } else if (kind === "history" && (state.selectedHistoryId !== identifier || !state.selectedSession)) {
+      openIntelligenceHistory(identifier);
+    }
   }
 
-  function renderIntelligence(session) {
-    $("#intelligenceSession").value = String(session.peer_id);
+  function renderIntelligence(session, archived = false) {
+    $("#intelligenceSession").value = archived ? `history:${state.selectedHistoryId}` : `active:${session.peer_id}`;
     $("#intelligenceSummary").innerHTML = [
-      ["Peer", session.peer_id], ["Verdict", titleCase(session.verdict)], ["Confidence", `${Math.round(Number(session.score || 0) * 100)}%`], ["Duration", formatDuration(session.duration_s)],
+      ["Peer", session.peer_id],
+      ["Verdict", titleCase(session.verdict)],
+      ["Confidence", `${Math.round(Number(session.score || 0) * 100)}%`],
+      ["Duration", formatDuration(session.duration_s)],
+      ["Run", archived ? `Archived · ${formatDate(session.ended_ts)}` : "Active · Live updating"],
     ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
-    $("#hviRows").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<tr><td>${escapeHtml(titleCase(item.kind))}</td><td class="mono">${escapeHtml(item.value)}</td><td>${Math.round(Number(item.confidence || 0) * 100)}%</td><td>Active transcript</td></tr>`).join("") : tableEmpty(4, "No high-value indicators", "The extraction pipeline has not found a supported value.");
-    $("#sandboxList").innerHTML = session.sandbox_results?.length ? session.sandbox_results.map((item) => `<div class="sandbox-item"><strong>${escapeHtml(item.url || item.target || "Sandbox run")}</strong><p>${escapeHtml(item.summary || item.verdict || JSON.stringify(item))}</p></div>`).join("") : emptyState("No sandbox analysis", "Links are analyzed only when the active policy permits it.");
+    $("#hviRows").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<tr><td>${escapeHtml(titleCase(item.kind))}</td><td class="mono">${escapeHtml(item.value)}</td><td>${Math.round(Number(item.confidence || 0) * 100)}%</td><td>${archived ? "Archived transcript" : "Active transcript"}</td></tr>`).join("") : tableEmpty(4, "No high-value indicators", archived ? "No indicators were retained for this run." : "The extraction pipeline has not found a supported value.");
+    $("#sandboxList").innerHTML = session.sandbox_results?.length ? session.sandbox_results.map(renderSandboxResult).join("") : emptyState("No sandbox analysis", "A sandbox run starts when a URL or bare domain is found in an incoming message.");
+  }
+
+  function renderSandboxResult(item) {
+    const signal = item.verdict_signal || (item.error ? "error" : "unknown");
+    const facts = [
+      ["Final URL", item.final_url],
+      ["Destination IP", item.dest_ip],
+      ["Page title", item.title],
+      ["Redirects", item.redirect_chain?.length ? String(item.redirect_chain.length) : "0"],
+      ["Password field", item.has_password_field == null ? "" : (item.has_password_field ? "Detected" : "Not detected")],
+      ["Cloaking", item.cloaking_suspected ? "Suspected" : "Not detected"],
+      ["Error", item.error],
+    ].filter(([, value]) => value !== "" && value != null);
+    return `<div class="sandbox-item"><div class="surface-heading"><div><strong>${escapeHtml(item.url || item.target || "Sandbox run")}</strong><p>${escapeHtml(item.final_url || item.error || "Analysis completed")}</p></div><span class="status-chip ${chipClass(signal)}">${escapeHtml(titleCase(signal))}</span></div><div class="signal-details">${facts.map(([label, value]) => `<div class="signal-detail-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div></div>`;
   }
 
   async function sealSession() {
@@ -441,7 +564,7 @@
         toast(`Evidence sealed for peer ${state.selectedPeer}.`, "success");
         state.selectedPeer = null;
         state.selectedSession = null;
-        $("#sessionInspector").classList.remove("open");
+        closeInspectorDialog();
         await loadOperations();
         navigate("evidence");
       } catch (error) { toast(error.message, "error"); }
@@ -451,24 +574,25 @@
   async function loadEvidence() {
     const rows = await api("/api/evidence");
     $("#evidenceCount").textContent = `${rows.length} sealed bundle${rows.length === 1 ? "" : "s"}`;
-    $("#evidenceRows").innerHTML = rows.length ? rows.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${formatDate(item.created_ts)}</td><td>${formatBytes(item.size)}</td><td><div class="hash" title="${escapeHtml(item.sha256)}">${escapeHtml(item.sha256)}</div></td><td><span class="status-chip ${item.signature_present ? "success" : "error"}">${item.signature_present ? "Signed" : "Unsigned"}</span></td><td class="actions"><button class="table-button" type="button" data-download-evidence="${Number(item.peer_id)}">Download PDF</button></td></tr>`).join("") : tableEmpty(6, "No evidence bundles", "Stop and seal a takeover to create the first case file.");
+    $("#evidenceRows").innerHTML = rows.length ? rows.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${formatDate(item.created_ts)}</td><td>${formatBytes(item.size)}</td><td><div class="hash" title="${escapeHtml(item.sha256)}">${escapeHtml(item.sha256)}</div></td><td><span class="status-chip ${item.signature_present ? "success" : "error"}">${item.signature_present ? "Signed" : "Unsigned"}</span></td><td class="actions"><button class="table-button" type="button" data-download-evidence="${escapeHtml(item.download_url)}" data-evidence-filename="${escapeHtml(item.filename)}">Download PDF</button></td></tr>`).join("") : tableEmpty(6, "No evidence bundles", "Stop and seal a takeover to create the first case file.");
   }
 
-  async function downloadEvidence(peerId) {
+  async function downloadEvidence(downloadUrl, filename) {
     try {
-      const response = await fetch(`/api/sessions/${peerId}/evidence`, { headers: { "X-HIVE-Token": token } });
+      const response = await fetch(downloadUrl, { headers: { "X-HIVE-Token": token } });
       if (!response.ok) throw new Error(`Download failed (${response.status})`);
       const url = URL.createObjectURL(await response.blob());
       const anchor = document.createElement("a");
       anchor.href = url;
-      anchor.download = `evidence_${peerId}.pdf`;
+      anchor.download = filename || "hive-evidence.pdf";
       anchor.click();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (error) { toast(error.message, "error"); }
   }
 
   async function loadActivity() {
-    const data = await api("/api/activity?limit=300");
+    const scope = $("#activityScope").value;
+    const data = await api(`/api/activity?limit=300&scope=${encodeURIComponent(scope)}`);
     state.activity = data.items || [];
     renderActivityPage();
   }
@@ -477,7 +601,9 @@
     const query = $("#activitySearch").value.trim().toLowerCase();
     const severity = $("#activitySeverity").value;
     const items = state.activity.filter((item) => item.id > state.activityHiddenBefore && (severity === "all" || item.severity === severity) && JSON.stringify(item).toLowerCase().includes(query));
-    $("#activityTimeline").innerHTML = renderActivity(items);
+    $("#activityTimeline").innerHTML = items.length
+      ? renderActivity(items)
+      : emptyState($("#activityScope").value === "important" ? "No important activity" : "No audit events", "Adjust the filters or wait for new runtime activity.");
   }
 
   async function loadLogs() {
@@ -558,8 +684,8 @@
       const data = await api("/api/telegram/status");
       const cards = [
         ["Data plane", data.account?.component?.state || (data.account?.configured ? "configured" : "missing"), data.account?.phone || "No account configured"],
-        ["Control plane", data.control_bot?.component?.state || (data.control_bot?.configured ? "configured" : "missing"), data.control_bot?.operator_id ? `Operator ${data.control_bot.operator_id}` : "No operator configured"],
-        ["Observed chats", String(data.observed_chats || 0), data.running ? "Live from Telegram" : "Agent is stopped"],
+        ["Control plane", data.control_bot?.component?.state || (data.control_bot?.configured ? "configured" : "missing"), data.control_bot?.operator_name || (data.control_bot?.operator_id ? `Operator ${data.control_bot.operator_id}` : "No operator configured")],
+        ["Takeover requests", String(data.observed_chats || 0), data.running ? "Live from Telegram" : "Agent is stopped"],
       ];
       $("#telegramStatus").innerHTML = cards.map(([label, status, detail]) => `<div class="health-card"><div><span>${escapeHtml(label)}</span><strong title="${escapeHtml(detail)}">${escapeHtml(detail)}</strong></div><span class="status-chip ${chipClass(status)}">${escapeHtml(titleCase(status))}</span></div>`).join("");
     } catch (error) {
@@ -572,7 +698,7 @@
     event.preventDefault();
     await withLoading("bot", event.submitter, async () => {
       try {
-        const result = await api("/api/setup/bot/verify", { method: "POST", body: JSON.stringify({ token: $("#botToken").value, operator_id: Number($("#operatorId").value) }) });
+        const result = await api("/api/setup/bot/verify", { method: "POST", body: JSON.stringify({ token: $("#botToken").value, operator_id: Number($("#operatorId").value), operator_name: $("#operatorName").value.trim() }) });
         $("#botToken").value = "";
         setMessage("#botMessage", `Verified ${result.bot?.username ? `@${result.bot.username}` : "control bot"}.`, "success");
         await Promise.all([loadTelegram(), loadSetup()]);
@@ -660,11 +786,16 @@
     $("#stopAgent").addEventListener("click", async () => { if (await confirmAction("Stop the agent?", "The control panel will remain available. Active sessions must be sealed or explicitly discarded.", "Stop agent")) runtimeAction("stop"); });
     $("#takeoverSearch").addEventListener("input", renderOperations);
     $("#manualTakeover").addEventListener("click", showManualTakeover);
-    $("#closeInspector").addEventListener("click", () => {
-      $("#sessionInspector").classList.remove("open");
-      state.selectedPeer = null;
-      state.selectedHistoryId = null;
-      state.selectedSession = null;
+    $("#closeInspector").addEventListener("click", closeInspectorDialog);
+    $("#sessionInspector").addEventListener("close", () => {
+      if (state.route === "takeovers") {
+        state.selectedPeer = null;
+        state.selectedHistoryId = null;
+        state.selectedSession = null;
+      }
+    });
+    $("#sessionInspector").addEventListener("click", (event) => {
+      if (event.target === $("#sessionInspector")) closeInspectorDialog();
     });
     $("#sealSession").addEventListener("click", sealSession);
     $("#inspectorPersona").addEventListener("change", async (event) => {
@@ -675,8 +806,13 @@
       $$("[data-inspector-tab]").forEach((item) => item.classList.toggle("active", item === tab));
       $$("[data-inspector-panel]").forEach((panel) => panel.classList.toggle("active", panel.dataset.inspectorPanel === tab.dataset.inspectorTab));
     }));
-    $("#intelligenceSession").addEventListener("change", (event) => openSession(Number(event.target.value)));
+    $("#intelligenceSession").addEventListener("change", (event) => {
+      const [kind, identifier] = event.target.value.split(":", 2);
+      if (kind === "active") openSession(Number(identifier));
+      if (kind === "history") openIntelligenceHistory(identifier);
+    });
     $("#activitySearch").addEventListener("input", renderActivityPage);
+    $("#activityScope").addEventListener("change", () => loadActivity().catch((error) => toast(error.message, "error")));
     $("#activitySeverity").addEventListener("change", renderActivityPage);
     $("#clearActivityView").addEventListener("click", () => { state.activityHiddenBefore = Math.max(0, ...state.activity.map((item) => item.id || 0)); renderActivityPage(); });
     $("#logSearch").addEventListener("input", renderLogs);
@@ -696,12 +832,12 @@
       const takeover = event.target.closest("[data-takeover-peer]")?.dataset.takeoverPeer;
       const peer = event.target.closest("[data-open-peer]")?.dataset.openPeer;
       const historyId = event.target.closest("[data-history-id]")?.dataset.historyId;
-      const download = event.target.closest("[data-download-evidence]")?.dataset.downloadEvidence;
+      const downloadButton = event.target.closest("[data-download-evidence]");
       if (route) navigate(route);
       if (takeover) beginTakeover(Number(takeover));
       if (peer) { if (state.route === "overview") navigate("takeovers"); openSession(Number(peer)); }
       if (historyId) openHistory(historyId);
-      if (download) downloadEvidence(Number(download));
+      if (downloadButton) downloadEvidence(downloadButton.dataset.downloadEvidence, downloadButton.dataset.evidenceFilename);
     });
     document.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#openCommand").click(); }
@@ -721,6 +857,7 @@
       if (["takeovers", "intelligence"].includes(state.route)) loadOperations().catch(() => {});
       if (state.route === "activity") loadActivity().catch(() => {});
       if (state.route === "logs") loadLogs().catch(() => {});
+      if (!["overview", "takeovers", "intelligence"].includes(state.route)) pollTakeoverRequests().catch(() => {});
     }, 5000);
     setInterval(() => {
       if (document.hidden || !["takeovers", "intelligence"].includes(state.route)) return;

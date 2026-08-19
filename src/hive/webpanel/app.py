@@ -5,7 +5,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
-import os
+import json
+import mimetypes
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -16,11 +18,19 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from hive.agent.personas import PERSONAS
+from hive.audit import AuditLedger, get_audit_ledger
 from hive.config import load_settings
 from hive.history import HistoryStore, build_history_store
 from hive.logging_setup import get_logger
 from hive.provisioning import EnvStore, TelethonLoginManager
 from hive.runtime_manager import ActiveSessionsError, RuntimeNotReadyError, probe_llm
+from hive.takeover import (
+    TakeoverBusyError,
+    TakeoverCoordinator,
+    TakeoverNotFoundError,
+    TakeoverSealError,
+)
+from hive.vault.paths import parse_bundle_name
 from hive.webpanel.assets import LOGO_PATH, PANEL_CSS_PATH, PANEL_JS_PATH
 from hive.webpanel.observability import get_observation_hub
 from hive.webpanel.setup_app import panel_page, register_setup_routes
@@ -28,6 +38,43 @@ from hive.webpanel.setup_app import panel_page, register_setup_routes
 log = get_logger(__name__)
 VALID_PERSONAS = set(PERSONAS)
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
+_SESSION_ID = re.compile(r"^[a-f0-9]{32}$")
+_IMPORTANT_ACTIVITY_TYPES = frozenset(
+    {
+        "budget",
+        "configuration",
+        "control_message",
+        "extraction",
+        "llm_error",
+        "media_capture",
+        "operator_event",
+        "reply_delivery",
+        "reply_steering",
+        "sandbox",
+        "session_lifecycle",
+        "signing_key",
+        "takeover",
+        "takeover_request",
+        "telegram_authorisation",
+        "verdict",
+        "vision_error",
+    }
+)
+_IMPORTANT_SESSION_ACTIONS = frozenset(
+    {
+        "benign_handback_requested",
+        "session_seal_failed",
+        "session_sealed",
+        "session_started",
+    }
+)
+_IMPORTANT_TAKEOVER_REQUEST_ACTIONS = frozenset(
+    {
+        "takeover_request_created",
+        "takeover_request_dismissed",
+        "takeover_request_notification_failed",
+    }
+)
 
 
 def _session_summary(peer_id, session) -> dict:
@@ -39,6 +86,7 @@ def _session_summary(peer_id, session) -> dict:
         "verdict": session.verdict,
         "score": round(session.verdict_score, 3),
         "turns": session.turn_count,
+        "exchanges": getattr(session, "exchange_count", session.turn_count),
         "hvis": len(session.hvis),
         "sandbox": len(session.sandbox_results),
         "started_ts": started,
@@ -49,6 +97,7 @@ def _session_summary(peer_id, session) -> dict:
 
 def _session_detail(peer_id, session) -> dict:
     detail = _session_summary(peer_id, session)
+    detail["session_id"] = session.session_id
     detail["messages"] = [
         {
             "role": m.role,
@@ -56,6 +105,14 @@ def _session_detail(peer_id, session) -> dict:
             "ts": m.ts,
             "msg_id": m.msg_id,
             "media_kind": m.media_kind,
+            "media_name": m.media_name,
+            "media_mime": m.media_mime,
+            "media_size": m.media_size,
+            "media_available": bool(m.media_path),
+            "media_sha256": m.media_sha256,
+            "media_url": (
+                f"/api/media/{session.session_id}/{m.msg_id}" if m.media_path else None
+            ),
         }
         for m in session.messages
     ]
@@ -66,6 +123,156 @@ def _session_detail(peer_id, session) -> dict:
     detail["sandbox_results"] = session.sandbox_results
     detail["signal_trail"] = session.signal_trail[-20:]
     return detail
+
+
+def _history_detail(record: dict[str, Any]) -> dict[str, Any]:
+    """Add authenticated media URLs without exposing archive internals."""
+    detail = dict(record)
+    session_id = str(record.get("session_id") or "")
+    messages = []
+    for original in record.get("messages", []):
+        message = dict(original)
+        available = bool(message.pop("media_path", None) or message.get("media_available"))
+        message["media_available"] = available
+        message["media_url"] = (
+            f"/api/media/{session_id}/{message.get('msg_id')}"
+            if available and _SESSION_ID.fullmatch(session_id)
+            else None
+        )
+        messages.append(message)
+    detail["messages"] = messages
+    return detail
+
+
+def _pending_takeover_requests(userbot: Any) -> list[dict[str, object]]:
+    return [
+        chat
+        for chat in userbot.list_observed_chats()
+        if bool(chat.get("request_pending", not chat.get("active", False)))
+    ]
+
+
+def _important_activity(row: dict[str, Any]) -> bool:
+    event_type = str(row.get("event_type", ""))
+    action = str(row.get("action", ""))
+    payload = row.get("payload") or {}
+    if event_type == "operator_event":
+        return True
+    if event_type in {"configuration", "signing_key", "telegram_authorisation"}:
+        return True
+    if event_type in {"budget", "llm_error", "sandbox", "vision_error"}:
+        return True
+    if event_type == "extraction":
+        return bool(payload.get("discovered"))
+    if event_type == "session_lifecycle":
+        return action in _IMPORTANT_SESSION_ACTIONS
+    if event_type == "takeover":
+        return True
+    if event_type == "takeover_request":
+        return action in _IMPORTANT_TAKEOVER_REQUEST_ACTIONS
+    if event_type == "media_capture":
+        return action in {"telegram_media_captured", "telegram_media_capture_failed"}
+    if event_type == "reply_delivery":
+        return action == "telegram_send_failed"
+    if event_type == "reply_steering":
+        return action == "reply_steering_failed"
+    if event_type == "control_message":
+        return action == "control_bot_document_sent"
+    return event_type == "verdict"
+
+
+def _activity_detail(row: dict[str, Any], *, exhaustive: bool) -> str:
+    payload = row.get("payload") or {}
+    if exhaustive:
+        detail = payload.get("message") or payload.get("text") or payload.get("detail")
+        if not detail and payload:
+            detail = json.dumps(payload, ensure_ascii=False, default=str)
+        return str(detail or "")
+
+    action = str(row.get("action", ""))
+    if action == "indicators_extracted":
+        discovered = payload.get("discovered") or []
+        values = [
+            f"{str(item.get('kind', 'indicator')).replace('_', ' ')}: {item.get('value', '')}"
+            for item in discovered[:3]
+            if isinstance(item, dict)
+        ]
+        suffix = f" (+{len(discovered) - 3} more)" if len(discovered) > 3 else ""
+        return f"{len(discovered)} new indicator(s): {', '.join(values)}{suffix}"
+    if action == "verdict_updated":
+        verdict = str(payload.get("verdict", "inconclusive")).replace("_", " ").title()
+        score = round(float(payload.get("score", 0) or 0) * 100)
+        return f"{verdict} · {score}% risk"
+    if action == "takeover_request_created":
+        sender = payload.get("name") or payload.get("username") or "New contact"
+        text = str(payload.get("text", "")).strip()
+        return f"{sender}: {text}" if text else str(sender)
+    if action == "takeover_started":
+        return f"Persona: {str(payload.get('persona', 'default')).replace('_', ' ')}"
+    if action in {"session_sealed", "stop_and_seal_completed"}:
+        bundle = payload.get("bundle") or payload.get("out_path")
+        verdict = str(payload.get("verdict", "")).replace("_", " ")
+        return " · ".join(str(value) for value in (verdict, bundle) if value)
+    if action == "telegram_media_captured":
+        name = payload.get("name") or "Telegram media"
+        size = payload.get("size")
+        return f"{name} · {size} bytes" if size is not None else str(name)
+    for key in ("detail", "message", "error", "summary", "reason", "url", "path"):
+        if payload.get(key):
+            return str(payload[key])
+    return ""
+
+
+def _activity_severity(row: dict[str, Any]) -> str:
+    level = str(row.get("level", "info"))
+    action = str(row.get("action", ""))
+    payload = row.get("payload") or {}
+    if level in {"error", "critical"} or action.endswith("_failed"):
+        return "error"
+    if level == "warning" or payload.get("verdict") == "likely_scam":
+        return "warning"
+    if action.endswith(("_completed", "_created", "_saved", "_sealed", "_succeeded")):
+        return "success"
+    return "info"
+
+
+def _audit_activity(
+    ledger: AuditLedger,
+    *,
+    after: int = 0,
+    limit: int = 200,
+    important_only: bool = True,
+) -> list[dict]:
+    rows = ledger.list(
+        after=after,
+        limit=1000 if important_only else limit,
+        event_types=_IMPORTANT_ACTIVITY_TYPES if important_only else None,
+    )
+    items = []
+    last_verdict: dict[tuple[object, object], str] = {}
+    for row in rows:
+        if important_only and not _important_activity(row):
+            continue
+        payload = row.get("payload") or {}
+        if important_only and row.get("event_type") == "verdict":
+            key = (row.get("peer_id"), row.get("session_id"))
+            verdict = str(payload.get("verdict", ""))
+            if last_verdict.get(key) == verdict:
+                continue
+            last_verdict[key] = verdict
+        action = str(row.get("action") or row.get("event_type") or "Activity")
+        items.append(
+            {
+                "id": row.get("sequence", 0),
+                "ts": row.get("ts"),
+                "category": row.get("event_type") or row.get("component"),
+                "title": action.replace("_", " ").capitalize(),
+                "detail": _activity_detail(row, exhaustive=not important_only),
+                "peer_id": row.get("peer_id"),
+                "severity": _activity_severity(row),
+            }
+        )
+    return items[-max(1, min(limit, 1000)) :]
 
 
 class _LegacyRuntime:
@@ -115,6 +322,7 @@ def create_app(
     env_store: EnvStore | None = None,
     login_manager: TelethonLoginManager | None = None,
     history_store: HistoryStore | None = None,
+    audit_ledger: AuditLedger | None = None,
 ) -> FastAPI:
     """Create one panel that remains available across Telegram restarts."""
     if runtime_manager is None:
@@ -126,12 +334,32 @@ def create_app(
     token = session_token or getattr(settings, "panel_token", "") or secrets.token_urlsafe(32)
     store = env_store or EnvStore(project_root / ".env")
     configured = settings or load_settings()
+    configured_media_root = Path(
+        getattr(configured, "media_path", "./evidence/media")
+    )
+    media_root = (
+        configured_media_root
+        if configured_media_root.is_absolute()
+        else project_root / configured_media_root
+    ).resolve()
     history = history_store or build_history_store(
         project_root / "evidence" / "history",
         getattr(configured, "database_url", ""),
     )
+    fallback_takeovers = (
+        TakeoverCoordinator(
+            runtime.engine,
+            runtime.userbot,
+            configured,
+            history,
+            evidence_root=project_root / "evidence",
+        )
+        if isinstance(runtime, _LegacyRuntime)
+        else None
+    )
     telethon_login = login_manager or TelethonLoginManager(store)
     observations = get_observation_hub()
+    audit = audit_ledger or get_audit_ledger()
     observations.event("runtime", "Control panel ready", "Local operator console initialized")
 
     @asynccontextmanager
@@ -147,6 +375,43 @@ def create_app(
             await runtime.stop(force=True)
 
     app = FastAPI(title="HIVE Control Panel", docs_url=None, redoc_url=None, lifespan=lifespan)
+
+    @app.middleware("http")
+    async def audit_http_request(request: Request, call_next):
+        started = time.perf_counter()
+        payload = {
+            "method": request.method,
+            "path": request.url.path,
+            "query_keys": sorted(request.query_params.keys()),
+            "client": request.client.host if request.client else "",
+        }
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            audit.append(
+                "panel_request",
+                "http_request_failed",
+                component="webpanel.http",
+                payload={
+                    **payload,
+                    "error": str(exc),
+                    "duration_s": time.perf_counter() - started,
+                },
+                level="error",
+            )
+            raise
+        audit.append(
+            "panel_request",
+            "http_request_completed",
+            component="webpanel.http",
+            payload={
+                **payload,
+                "status_code": response.status_code,
+                "duration_s": time.perf_counter() - started,
+            },
+            level="warning" if response.status_code >= 400 else "info",
+        )
+        return response
 
     def authorised(supplied: str) -> bool:
         candidates = [token]
@@ -237,7 +502,7 @@ def create_app(
                 _session_summary(peer_id, session)
                 for peer_id, (session, _chain) in runtime.userbot._sessions.items()
             ]
-            chats = runtime.userbot.list_observed_chats()
+            chats = _pending_takeover_requests(runtime.userbot)
         return {
             "runtime": status,
             "metrics": {
@@ -254,12 +519,53 @@ def create_app(
                 reverse=True,
             )[:6],
             "chats": chats[:6],
-            "activity": observations.events(limit=8),
+            "activity": (
+                _audit_activity(audit, limit=8)
+                if audit.status().get("enabled")
+                else observations.events(limit=8)
+            ),
         }
 
     @app.get("/api/activity", dependencies=[Depends(auth)])
-    def activity(after: int = 0, limit: int = 200) -> dict[str, object]:
-        return {"items": observations.events(after=after, limit=limit)}
+    def activity(
+        after: int = 0,
+        limit: int = 200,
+        scope: str = "important",
+    ) -> dict[str, object]:
+        if scope not in {"important", "all"}:
+            raise HTTPException(status_code=400, detail="scope must be 'important' or 'all'")
+        if audit.status().get("enabled"):
+            return {
+                "items": _audit_activity(
+                    audit,
+                    after=after,
+                    limit=limit,
+                    important_only=scope == "important",
+                ),
+                "scope": scope,
+            }
+        return {"items": observations.events(after=after, limit=limit), "scope": scope}
+
+    @app.get("/api/audit", dependencies=[Depends(auth)])
+    def audit_records(
+        after: int = 0,
+        limit: int = 200,
+        peer_id: int | None = None,
+        event_type: str = "",
+    ) -> dict[str, object]:
+        return {
+            "status": audit.status(),
+            "items": audit.list(
+                after=after,
+                limit=limit,
+                peer_id=peer_id,
+                event_type=event_type,
+            ),
+        }
+
+    @app.get("/api/audit/status", dependencies=[Depends(auth)])
+    def audit_status() -> dict[str, Any]:
+        return audit.status()
 
     @app.get("/api/logs", dependencies=[Depends(auth)])
     def logs(after: int = 0, limit: int = 200) -> dict[str, object]:
@@ -272,23 +578,24 @@ def create_app(
             return []
         rows = []
         for path in evidence_root.glob("bundle_*.pdf"):
-            try:
-                peer_id = int(path.stem.removeprefix("bundle_"))
-            except ValueError:
+            parsed = parse_bundle_name(path.name)
+            if parsed is None:
                 continue
+            peer_id, bundle_id = parsed
             data = path.read_bytes()
             signature = Path(str(path) + ".sig")
             stat = path.stat()
             rows.append(
                 {
                     "peer_id": peer_id,
+                    "bundle_id": bundle_id,
                     "filename": path.name,
                     "created_ts": stat.st_mtime,
                     "size": stat.st_size,
                     "sha256": hashlib.sha256(data).hexdigest(),
                     "signature_present": signature.is_file(),
                     "signature_size": signature.stat().st_size if signature.is_file() else 0,
-                    "download_url": f"/api/sessions/{peer_id}/evidence",
+                    "download_url": f"/api/evidence/{path.name}",
                 }
             )
         return sorted(rows, key=lambda row: float(row["created_ts"]), reverse=True)
@@ -302,7 +609,50 @@ def create_app(
         record = history.get(history_id)
         if record is None:
             raise HTTPException(status_code=404, detail="takeover history not found")
-        return record
+        return _history_detail(record)
+
+    @app.get("/api/media/{session_id}/{message_id}")
+    def takeover_media(
+        session_id: str,
+        message_id: int,
+        token: str = "",
+        x_hive_token: str = Header(default=""),
+    ) -> FileResponse:
+        if not authorised(x_hive_token or token):
+            raise HTTPException(status_code=401, detail="unauthorised")
+        if not _SESSION_ID.fullmatch(session_id):
+            raise HTTPException(status_code=404, detail="media not found")
+        session_directory = (media_root / session_id).resolve()
+        if session_directory.parent != media_root or not session_directory.is_dir():
+            raise HTTPException(status_code=404, detail="media not found")
+        matches = sorted(session_directory.glob(f"{message_id}_*"))
+        path = next((candidate for candidate in matches if candidate.is_file()), None)
+        if path is None:
+            raise HTTPException(status_code=404, detail="media not found")
+        download_name = path.name.split("_", 1)[1] if "_" in path.name else path.name
+        media_type = mimetypes.guess_type(download_name)[0] or "application/octet-stream"
+        return FileResponse(
+            path,
+            media_type=media_type,
+            filename=download_name,
+            content_disposition_type="inline" if media_type.startswith("image/") else "attachment",
+            headers={"Cache-Control": "private, max-age=60"},
+        )
+
+    @app.get("/api/evidence/{filename}")
+    def evidence_file(
+        filename: str,
+        token: str = "",
+        x_hive_token: str = Header(default=""),
+    ):
+        if not authorised(x_hive_token or token):
+            raise HTTPException(status_code=401, detail="unauthorised")
+        if parse_bundle_name(filename) is None:
+            raise HTTPException(status_code=404, detail="no sealed bundle")
+        path = project_root / "evidence" / filename
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no sealed bundle")
+        return FileResponse(path, media_type="application/pdf", filename=filename)
 
     @app.get("/api/panel/session")
     def panel_session() -> JSONResponse:
@@ -356,10 +706,11 @@ def create_app(
             "control_bot": {
                 "configured": bool(current.control_bot_token and current.operator_id > 0),
                 "operator_id": current.operator_id or None,
+                "operator_name": getattr(current, "operator_name", "") or None,
                 "component": snapshot.get("components", {}).get("control_bot", {}),
             },
             "observed_chats": (
-                len(runtime.userbot.list_observed_chats())
+                len(_pending_takeover_requests(runtime.userbot))
                 if runtime.is_running and runtime.userbot is not None
                 else 0
             ),
@@ -441,7 +792,7 @@ def create_app(
     @app.get("/api/chats", dependencies=[Depends(auth)])
     def list_chats() -> list[dict[str, object]]:
         _engine, current_userbot, _settings = live()
-        return current_userbot.list_observed_chats()
+        return _pending_takeover_requests(current_userbot)
 
     @app.get("/api/sessions/{peer_id}", dependencies=[Depends(auth)])
     def get_session(peer_id: int) -> dict:
@@ -485,34 +836,58 @@ def create_app(
 
     @app.post("/api/sessions/{peer_id}/stop", dependencies=[Depends(auth)])
     def stop_session(peer_id: int) -> dict:
-        current_engine, current_userbot, current_settings = live()
-        entry = current_userbot.end_takeover(peer_id)
-        if entry is None:
-            raise HTTPException(status_code=404, detail="no active takeover")
-        session, chain = entry
-        os.makedirs(project_root / "evidence", exist_ok=True)
-        out_path = project_root / "evidence" / f"bundle_{peer_id}.pdf"
-        current_engine.close_session(
-            session, chain, str(out_path), current_settings.signing_key_path
-        )
-        history.archive(session, evidence_path=out_path)
+        live()
+        coordinator = getattr(runtime, "takeovers", None) or fallback_takeovers
+        if coordinator is None:
+            raise HTTPException(status_code=409, detail="takeover service unavailable")
+        try:
+            sealed = coordinator.seal(peer_id)
+        except TakeoverNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="no active takeover") from exc
+        except TakeoverBusyError as exc:
+            raise HTTPException(status_code=409, detail="takeover is already being sealed") from exc
+        except TakeoverSealError as exc:
+            observations.event(
+                "evidence",
+                "Seal failed",
+                "Takeover remains active and can be retried",
+                peer_id=peer_id,
+                severity="error",
+            )
+            log.exception("panel: seal failed; takeover retained peer=%s", peer_id)
+            raise HTTPException(
+                status_code=500,
+                detail="seal failed; takeover remains active and can be retried",
+            ) from exc
         observations.event(
             "evidence",
             "Session sealed",
-            f"{len(session.hvis)} indicators; verdict {session.verdict}",
+            f"{len(sealed.session.hvis)} indicators; verdict {sealed.session.verdict}",
             peer_id=peer_id,
             severity="success",
         )
         log.info("panel: stopped + sealed peer=%s", peer_id)
-        return {"ok": True, "summary": current_engine.summary(session), "bundle": str(out_path)}
+        return {
+            "ok": True,
+            "summary": sealed.summary,
+            "bundle": str(sealed.path),
+            "history_id": sealed.history_record["id"],
+            "download_url": f"/api/evidence/{sealed.path.name}",
+        }
 
     @app.get("/api/sessions/{peer_id}/evidence")
     def evidence(peer_id: int, token: str = "", x_hive_token: str = Header(default="")):
         if not authorised(x_hive_token or token):
             raise HTTPException(status_code=401, detail="unauthorised")
-        path = project_root / "evidence" / f"bundle_{peer_id}.pdf"
-        if not path.exists():
+        evidence_root = project_root / "evidence"
+        matches = [
+            path
+            for path in evidence_root.glob(f"bundle_{peer_id}*.pdf")
+            if (parsed := parse_bundle_name(path.name)) is not None and parsed[0] == peer_id
+        ]
+        if not matches:
             raise HTTPException(status_code=404, detail="no sealed bundle")
+        path = max(matches, key=lambda candidate: candidate.stat().st_mtime_ns)
         return FileResponse(path, media_type="application/pdf", filename=f"evidence_{peer_id}.pdf")
 
     return app

@@ -35,8 +35,11 @@ class FakeSettings:
 class FakeEngine:
     def __init__(self):
         self.closed = []
+        self.fail_seal = False
 
     def close_session(self, session, chain, out_path, key_path, operator_name=""):
+        if self.fail_seal:
+            raise RuntimeError("report renderer failed")
         self.closed.append(out_path)
         return out_path
 
@@ -73,7 +76,7 @@ def client(tmp_path):
     userbot._sessions[100] = (s, HashChain())
     app = create_app(engine, userbot, FakeSettings(), root=tmp_path)
     c = TestClient(app)
-    c._engine, c._userbot = engine, userbot
+    c._engine, c._userbot, c._root = engine, userbot, tmp_path
     return c
 
 
@@ -99,9 +102,14 @@ def test_index_is_public(client):
 def test_panel_assets_are_served(client):
     css = client.get("/panel.css")
     script = client.get("/panel.js")
+    page = client.get("/")
 
     assert css.status_code == 200 and "--accent:" in css.text
     assert script.status_code == 200 and 'api("/api/dashboard")' in script.text
+    assert 'id="activityScope"' in page.text
+    assert "All audit events" in page.text
+    assert "scope=${encodeURIComponent(scope)}" in script.text
+    assert '$("#activityScope").addEventListener("change"' in script.text
     assert css.headers["cache-control"] == "no-store"
     assert script.headers["cache-control"] == "no-store"
 
@@ -179,6 +187,18 @@ def test_list_recent_incoming_chats(client):
     assert response.json()[0]["peer_id"] == 200
 
 
+def test_chat_endpoint_returns_only_pending_takeover_requests(client):
+    client._userbot._observed_chats = [
+        {"peer_id": 200, "active": False, "request_pending": True},
+        {"peer_id": 201, "active": False, "request_pending": False},
+        {"peer_id": 202, "active": True, "request_pending": False},
+    ]
+
+    response = client.get("/api/chats", headers=_h())
+
+    assert [chat["peer_id"] for chat in response.json()] == [200]
+
+
 def test_session_detail(client):
     r = client.get("/api/sessions/100", headers=_h())
     d = r.json()
@@ -206,6 +226,81 @@ def test_panel_script_polls_the_selected_session_for_live_updates(client):
     assert "refreshSelectedSession().catch(() => {})" in script
 
 
+def test_intelligence_workspace_can_open_archived_runs(client):
+    page = client.get("/").text
+    script = client.get("/panel.js").text
+
+    assert "findings from active and previous takeover runs" in page
+    assert '<optgroup label="Active sessions">' in script
+    assert '<optgroup label="Previous runs">' in script
+    assert "async function openIntelligenceHistory(historyId)" in script
+    assert "openIntelligenceHistory(identifier)" in script
+    assert 'archived ? "Archived transcript" : "Active transcript"' in script
+    assert "function renderSandboxResult(item)" in script
+    assert "A sandbox run starts when a URL or bare domain is found" in script
+
+
+def test_takeover_inspector_is_a_live_media_aware_dialog(client):
+    page = client.get("/").text
+    css = client.get("/panel.css").text
+    script = client.get("/panel.js").text
+
+    assert '<dialog class="session-dialog" id="sessionInspector"' in page
+    assert 'id="inspectorEmpty"' not in page
+    assert "dialog.showModal()" in script
+    assert "renderTranscriptMessage" in script
+    assert "transcript-image" in script
+    assert "session.signal_trail.map(renderSignal)" in script
+    assert "JSON.stringify(signal)" not in script
+    assert "[hidden] { display: none !important; }" in css
+    assert ".session-dialog #inspectorContent:not([hidden])" in css
+    assert ".inspector-panel.active { display: flex; flex-direction: column; }" in css
+    assert "body:has(.session-dialog[open]) { overflow: hidden; }" in css
+
+
+def test_session_media_is_served_only_with_panel_authentication(client):
+    session = client._userbot._sessions[100][0]
+    media_dir = client._root / "evidence" / "media" / session.session_id
+    media_dir.mkdir(parents=True)
+    media_file = media_dir / "42_receipt.jpg"
+    media_file.write_bytes(b"fake-jpeg")
+    session.messages.append(
+        Message(
+            "stranger",
+            "payment receipt",
+            time.time(),
+            42,
+            media_kind="image",
+            media_name="receipt.jpg",
+            media_mime="image/jpeg",
+            media_size=9,
+            media_path=str(media_file),
+            media_sha256="abc123",
+        )
+    )
+
+    detail = client.get("/api/sessions/100", headers=_h()).json()
+    media = detail["messages"][-1]
+    assert media["media_name"] == "receipt.jpg"
+    assert media["media_url"] == f"/api/media/{session.session_id}/42"
+    assert "media_path" not in media
+
+    assert client.get(media["media_url"]).status_code == 401
+    response = client.get(media["media_url"], headers=_h())
+    assert response.status_code == 200
+    assert response.content == b"fake-jpeg"
+    assert response.headers["content-type"].startswith("image/jpeg")
+
+
+def test_panel_notifies_for_new_takeover_requests(client):
+    script = client.get("/panel.js").text
+
+    assert "function notifyTakeoverRequests(chats)" in script
+    assert "async function pollTakeoverRequests()" in script
+    assert "New takeover request from" in script
+    assert "seenTakeoverRequests: new Set()" in script
+
+
 def test_takeover_and_persona(client):
     assert (
         client.post(
@@ -230,7 +325,10 @@ def test_stop_seals_and_removes(client):
     r = client.post("/api/sessions/100/stop", headers=_h())
     assert r.status_code == 200 and r.json()["summary"] == "SUMMARY"
     assert 100 not in client._userbot._sessions
-    assert Path(client._engine.closed[0]).parts[-2:] == ("evidence", "bundle_100.pdf")
+    bundle = Path(client._engine.closed[0])
+    assert bundle.parent.name == "evidence"
+    assert bundle.name.startswith("bundle_100_") and bundle.suffix == ".pdf"
+    assert r.json()["download_url"] == f"/api/evidence/{bundle.name}"
 
     history = client.get("/api/history", headers=_h()).json()
     assert history[0]["peer_id"] == 100
@@ -238,6 +336,25 @@ def test_stop_seals_and_removes(client):
 
     detail = client.get(f"/api/history/{history[0]['id']}", headers=_h()).json()
     assert detail["messages"][0]["text"] == "transfer to Maybank 123"
+
+
+def test_stop_failure_keeps_takeover_active_and_unarchived(client):
+    client._engine.fail_seal = True
+
+    response = client.post("/api/sessions/100/stop", headers=_h())
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "seal failed; takeover remains active and can be retried"
+    assert 100 in client._userbot._sessions
+    assert client.get("/api/history", headers=_h()).json() == []
+
+
+def test_repeated_peer_sessions_receive_distinct_bundle_names(client):
+    first = client.post("/api/sessions/100/stop", headers=_h()).json()
+    client._userbot.begin_takeover(100, "naive_young_adult")
+    second = client.post("/api/sessions/100/stop", headers=_h()).json()
+
+    assert Path(first["bundle"]).name != Path(second["bundle"]).name
 
 
 def test_takeover_history_rejects_unknown_or_invalid_ids(client):

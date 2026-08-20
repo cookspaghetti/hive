@@ -9,6 +9,11 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from hive.analysis_runs import (
+    analysis_run_record,
+    build_analysis_run_store,
+    model_manifest,
+)
 from hive.audit import configure_audit
 from hive.config import load_settings
 from hive.extraction.media import describe_image
@@ -19,22 +24,21 @@ from hive.replay import replay_history_record
 from hive.runtime import build_engine
 
 
-def _archived_record(audit_path: Path, peer_id: int) -> dict[str, Any]:
-    matches = []
-    for line in audit_path.read_text(encoding="utf-8").splitlines():
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if (
-            event.get("action") == "takeover_history_archived"
-            and int(event.get("peer_id") or 0) == peer_id
-            and isinstance(event.get("payload", {}).get("record"), dict)
-        ):
-            matches.append(event["payload"]["record"])
+def _archived_record(history, selector: str) -> dict[str, Any]:
+    direct = history.get(selector)
+    if direct is not None:
+        return direct
+    try:
+        peer_id = int(selector)
+    except ValueError as exc:
+        raise LookupError(f"no archived takeover found for {selector}") from exc
+    matches = [row for row in history.list() if int(row.get("peer_id") or 0) == peer_id]
     if not matches:
         raise LookupError(f"no archived takeover found for peer {peer_id}")
-    return max(matches, key=lambda item: float(item.get("ended_ts") or 0))
+    record = history.get(str(matches[0]["id"]))
+    if record is None:
+        raise LookupError(f"archived takeover {matches[0]['id']} disappeared")
+    return record
 
 
 def _attachments(values: list[str]) -> dict[int, Path]:
@@ -64,7 +68,7 @@ def _persist_media(session, attachments: dict[int, Path], media_root: Path) -> N
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("peer_id", type=int)
+    parser.add_argument("selector", help="history UUID, legacy ID, or peer ID")
     parser.add_argument(
         "--attach-image",
         action="append",
@@ -82,10 +86,11 @@ def run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     settings = load_settings()
     live_audit_path = Path(settings.audit_path)
-    record = _archived_record(live_audit_path, args.peer_id)
     replay_audit_path = live_audit_path.with_name("replays.jsonl")
     configure_audit(replay_audit_path, settings.database_url)
     configure_logging(settings.log_level)
+    history = build_history_store(args.history_root, settings.database_url)
+    record = _archived_record(history, args.selector)
     attachments = _attachments(args.attach_image)
     descriptions: dict[int, str] = {}
     if attachments and not args.no_vision:
@@ -103,28 +108,32 @@ def run(argv: Sequence[str] | None = None) -> int:
         media_descriptions=descriptions,
     )
     _persist_media(replayed, attachments, Path(settings.media_path))
-    history = build_history_store(args.history_root, settings.database_url)
     migrated = (
         history.migrate_legacy_ids()
         if args.migrate_legacy_ids and hasattr(history, "migrate_legacy_ids")
         else {}
     )
-    archived = history.archive(
+    analysis = analysis_run_record(
+        record,
         replayed,
-        ended_ts=float(record.get("ended_ts") or 0) or None,
-        status="reanalyzed",
+        models=model_manifest(settings),
     )
+    analysis_store = build_analysis_run_store(
+        args.history_root / "analysis_runs",
+        settings.database_url,
+    )
+    analysis_store.create(analysis)
     print(
         json.dumps(
             {
-                "history_id": archived["id"],
-                "replay_of": replayed.replay_of,
+                "history_id": record["id"],
+                "analysis_run_id": analysis["id"],
                 "peer_id": replayed.peer_id,
                 "verdict": replayed.verdict,
                 "score": round(replayed.verdict_score, 4),
                 "turns": replayed.turn_count,
                 "exchanges": replayed.exchange_count,
-                "indicators": archived["hvi_items"],
+                "indicators": analysis["hvi_items"],
                 "media_analysis": replayed.media_analysis,
                 "migrated_history_ids": migrated,
             },

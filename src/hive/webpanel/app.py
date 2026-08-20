@@ -18,11 +18,17 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 
 from hive.agent.personas import PERSONAS
+from hive.analysis_runs import (
+    AnalysisRunStore,
+    analysis_summary,
+    build_analysis_run_store,
+)
 from hive.audit import AuditLedger, get_audit_ledger
 from hive.config import load_settings
 from hive.history import HistoryStore, build_history_store
 from hive.logging_setup import get_logger
 from hive.provisioning import EnvStore, TelethonLoginManager
+from hive.reanalysis_service import ReanalysisRunner, ReanalysisService
 from hive.runtime_manager import ActiveSessionsError, RuntimeNotReadyError, probe_llm
 from hive.takeover import (
     TakeoverBusyError,
@@ -147,6 +153,41 @@ def _history_detail(record: dict[str, Any]) -> dict[str, Any]:
         )
         messages.append(message)
     detail["messages"] = messages
+    return detail
+
+
+def _embedded_analysis(record: dict[str, Any]) -> dict[str, Any] | None:
+    metadata = record.get("analysis")
+    if not isinstance(metadata, dict) or not metadata.get("id"):
+        return None
+    return {
+        **metadata,
+        "peer_id": record.get("peer_id"),
+        "verdict": record.get("verdict"),
+        "score": record.get("score"),
+        "turns": record.get("turns"),
+        "exchanges": record.get("exchanges"),
+    }
+
+
+def _history_with_analysis(
+    record: dict[str, Any],
+    analysis: dict[str, Any],
+) -> dict[str, Any]:
+    detail = _history_detail(record)
+    for field in (
+        "verdict",
+        "score",
+        "turns",
+        "exchanges",
+        "hvi_items",
+        "sandbox_results",
+        "signal_trail",
+        "media_analysis",
+    ):
+        if field in analysis:
+            detail[field] = analysis[field]
+    detail["selected_analysis"] = analysis_summary(analysis)
     return detail
 
 
@@ -328,6 +369,8 @@ def create_app(
     env_store: EnvStore | None = None,
     login_manager: TelethonLoginManager | None = None,
     history_store: HistoryStore | None = None,
+    analysis_run_store: AnalysisRunStore | None = None,
+    reanalysis_runner: ReanalysisRunner | None = None,
     audit_ledger: AuditLedger | None = None,
 ) -> FastAPI:
     """Create one panel that remains available across Telegram restarts."""
@@ -351,6 +394,14 @@ def create_app(
     history = history_store or build_history_store(
         project_root / "evidence" / "history",
         getattr(configured, "database_url", ""),
+    )
+    analysis_runs = analysis_run_store or build_analysis_run_store(
+        project_root / "evidence" / "history" / "analysis_runs",
+        getattr(configured, "database_url", ""),
+    )
+    reanalysis = ReanalysisService(
+        analysis_runs,
+        **({"runner": reanalysis_runner} if reanalysis_runner is not None else {}),
     )
     fallback_takeovers = (
         TakeoverCoordinator(
@@ -619,6 +670,53 @@ def create_app(
         if record is None:
             raise HTTPException(status_code=404, detail="takeover history not found")
         return _history_detail(record)
+
+    @app.get("/api/history/{history_id}/analyses", dependencies=[Depends(auth)])
+    def takeover_analysis_runs(history_id: str) -> list[dict[str, Any]]:
+        record = history.get(history_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="takeover history not found")
+        embedded = _embedded_analysis(record)
+        return ([embedded] if embedded else []) + analysis_runs.list(str(record["id"]))
+
+    @app.get(
+        "/api/history/{history_id}/analyses/{run_id}",
+        dependencies=[Depends(auth)],
+    )
+    def takeover_analysis_detail(history_id: str, run_id: str) -> dict[str, Any]:
+        record = history.get(history_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="takeover history not found")
+        canonical_id = str(record["id"])
+        embedded = _embedded_analysis(record)
+        if embedded and embedded["id"] == run_id:
+            return _history_with_analysis(record, embedded)
+        analysis = analysis_runs.get(canonical_id, run_id)
+        if analysis is None:
+            raise HTTPException(status_code=404, detail="analysis run not found")
+        return _history_with_analysis(record, analysis)
+
+    @app.post(
+        "/api/history/{history_id}/reanalyze",
+        dependencies=[Depends(auth)],
+        status_code=202,
+    )
+    def reanalyze_takeover(history_id: str) -> dict[str, Any]:
+        record = history.get(history_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="takeover history not found")
+        try:
+            current_engine, _current_userbot, current_settings = live()
+        except HTTPException as exc:
+            raise HTTPException(status_code=409, detail="runtime must be ready") from exc
+        return reanalysis.submit(record, current_engine, current_settings)
+
+    @app.get("/api/reanalysis/{job_id}", dependencies=[Depends(auth)])
+    def reanalysis_status(job_id: str) -> dict[str, Any]:
+        job = reanalysis.status(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail="reanalysis job not found")
+        return job
 
     @app.get("/api/media/{session_id}/{message_id}")
     def takeover_media(

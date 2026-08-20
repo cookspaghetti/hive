@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from hive.analysis_runs import analysis_run_record
 from hive.state import HVI, Message, Phase, SessionState
 from hive.vault.hashchain import HashChain
 from hive.webpanel import create_app
@@ -63,6 +64,21 @@ class FakeUserbot:
         return self._sessions.pop(peer_id, None)
 
 
+def fake_reanalysis(record, engine, settings):
+    session = SessionState(peer_id=int(record["peer_id"]), persona=record["persona"])
+    session.turn_count = 1
+    session.exchange_count = 1
+    session.verdict = "likely_scam"
+    session.verdict_score = 0.91
+    session.hvis.append(HVI("bank_account", "87654321", 0, 0.8, "regex"))
+    return analysis_run_record(
+        record,
+        session,
+        models={"behavior_classifier": settings.llm_model_light},
+        created_ts=50,
+    )
+
+
 @pytest.fixture
 def client(tmp_path):
     engine, userbot = FakeEngine(), FakeUserbot()
@@ -74,7 +90,13 @@ def client(tmp_path):
     s.messages.append(Message("stranger", "transfer to Maybank 123", time.time(), 0))
     s.hvis.append(HVI(kind="bank_account", value="123", source_msg_id=0, confidence=0.9))
     userbot._sessions[100] = (s, HashChain())
-    app = create_app(engine, userbot, FakeSettings(), root=tmp_path)
+    app = create_app(
+        engine,
+        userbot,
+        FakeSettings(),
+        root=tmp_path,
+        reanalysis_runner=fake_reanalysis,
+    )
     c = TestClient(app)
     c._engine, c._userbot, c._root = engine, userbot, tmp_path
     return c
@@ -369,6 +391,36 @@ def test_repeated_peer_sessions_receive_distinct_bundle_names(client):
 def test_takeover_history_rejects_unknown_or_invalid_ids(client):
     assert client.get("/api/history/not-a-record", headers=_h()).status_code == 404
     assert client.get("/api/history/..%2F.env", headers=_h()).status_code == 404
+
+
+def test_archived_case_keeps_original_and_new_analysis_runs(client):
+    client.post("/api/sessions/100/stop", headers=_h())
+    history_id = client.get("/api/history", headers=_h()).json()[0]["id"]
+
+    original = client.get(f"/api/history/{history_id}/analyses", headers=_h()).json()
+    assert len(original) == 1
+    assert original[0]["kind"] == "original"
+
+    queued = client.post(f"/api/history/{history_id}/reanalyze", headers=_h())
+    assert queued.status_code == 202
+    job = queued.json()
+    for _attempt in range(100):
+        status = client.get(f"/api/reanalysis/{job['id']}", headers=_h()).json()
+        if status["status"] in {"completed", "failed"}:
+            break
+        time.sleep(0.01)
+
+    assert status["status"] == "completed"
+    analyses = client.get(f"/api/history/{history_id}/analyses", headers=_h()).json()
+    assert [item["kind"] for item in analyses] == ["original", "reanalysis"]
+    selected = client.get(
+        f"/api/history/{history_id}/analyses/{status['analysis_run_id']}",
+        headers=_h(),
+    ).json()
+    assert selected["selected_analysis"]["id"] == status["analysis_run_id"]
+    assert selected["verdict"] == "likely_scam"
+    assert selected["score"] == 0.91
+    assert selected["hvi_items"][0]["value"] == "87654321"
 
 
 def test_detail_404_when_missing(client):

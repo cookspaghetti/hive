@@ -3,7 +3,7 @@
 import time
 
 from hive.state import HVI, Message, SessionState
-from hive.verdict.classifier import _parse_scores, classify_soft
+from hive.verdict.classifier import _parse_assessment, _parse_scores, classify_soft
 from hive.verdict.engine import _noisy_or, update_verdict
 from tests.fakes import fake_client
 
@@ -49,12 +49,35 @@ def test_soft_signals_alone_can_reach_inconclusive():
 
 def test_signal_trail_records_contributions():
     s = _session()
+    source = Message("stranger", "visit http://x.co", time.time(), 1)
+    s.messages.append(source)
     s.hvis = [HVI(kind="url", value="http://x.co", source_msg_id=1, confidence=1.0)]
     update_verdict(s)
     assert s.signal_trail
     last = s.signal_trail[-1]
     assert last["verdict"] == s.verdict
     assert any(c["reason"] == "hvi:url" for c in last["contributions"])
+    assert last["source_message_ids"] == [1]
+    assert last["contributions"][0]["source_message_ids"] == [1]
+
+
+def test_signal_trail_omits_zero_weight_noise_and_records_batch_sources():
+    s = _session()
+    sources = [
+        Message("stranger", "hello", time.time(), 7),
+        Message("stranger", "pay today", time.time(), 8),
+    ]
+
+    update_verdict(
+        s,
+        soft={"urgency": 0.8, "authority_impersonation": 0.0},
+        source_messages=sources,
+    )
+
+    last = s.signal_trail[-1]
+    assert last["source_message_ids"] == [7, 8]
+    assert [item["reason"] for item in last["contributions"]] == ["soft:urgency"]
+    assert last["contributions"][0]["source_message_ids"] == [7, 8]
 
 
 def test_scam_risk_does_not_regress_on_a_quieter_later_message():
@@ -82,9 +105,25 @@ def test_parse_scores_handles_garbage():
     assert _parse_scores("no json here") == {}
 
 
+def test_structured_assessment_keeps_only_valid_message_evidence():
+    assessment = _parse_assessment(
+        """{"urgency":{"score":0.8,"message_ids":[7,999]},
+        "payment_request":{"score":0.9,"message_ids":[999]}}""",
+        {7},
+    )
+
+    assert assessment.scores["urgency"] == 0.8
+    assert assessment.evidence["urgency"] == [7]
+    assert assessment.scores["payment_request"] == 0.0
+
+
 def test_classify_soft_with_fake_client():
     s = _session()
     s.messages.append(Message(role="stranger", text="urgent! pay now!", ts=time.time(), msg_id=0))
-    client = fake_client('{"urgency": 0.8, "payment_request": 0.7}')
-    scores = classify_soft(s, client)
-    assert scores["urgency"] == 0.8
+    client = fake_client(
+        '{"urgency":{"score":0.8,"message_ids":[0]},'
+        '"payment_request":{"score":0.7,"message_ids":[0]}}'
+    )
+    assessment = classify_soft(s, client)
+    assert assessment.scores["urgency"] == 0.8
+    assert assessment.evidence["urgency"] == [0]

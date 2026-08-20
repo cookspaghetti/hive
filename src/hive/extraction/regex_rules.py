@@ -40,10 +40,17 @@ PATTERNS: dict[str, re.Pattern[str]] = {
 # Malaysian bank keywords for context-gated account detection.
 _BANK_KEYWORDS = (
     "maybank", "cimb", "public bank", "rhb", "hong leong", "ambank", "bank islam",
-    "bsn", "uob", "ocbc", "hsbc", "affin", "alliance", "account", "acc", "acct", "a/c",
+    "mbb", "bsn", "uob", "ocbc", "hsbc", "affin", "alliance", "account", "acc", "acct",
+    "a/c",
 )
 # 8–17 digit run, optionally spaced/hyphenated, near a bank keyword.
 _ACCOUNT_RE = re.compile(r"\b\d[\d\s-]{6,16}\d\b")
+
+
+def has_bank_context(text: str) -> bool:
+    """Return whether text contains a bank or account marker."""
+    lower = text.casefold()
+    return any(keyword in lower for keyword in _BANK_KEYWORDS)
 
 
 def extract_regex(text: str, source_msg_id: int) -> list[HVI]:
@@ -55,10 +62,16 @@ def extract_regex(text: str, source_msg_id: int) -> list[HVI]:
                 value = value.rstrip(_URL_TRAILING_PUNCTUATION)
                 if not re.match(r"https?://", value, re.IGNORECASE):
                     value = f"https://{value}"
-            hits.append(HVI(kind=kind, value=value, source_msg_id=source_msg_id))
+            hits.append(
+                HVI(
+                    kind=kind,
+                    value=value,
+                    source_msg_id=source_msg_id,
+                    extractor="regex",
+                )
+            )
 
-    lower = text.lower()
-    if any(kw in lower for kw in _BANK_KEYWORDS):
+    if has_bank_context(text):
         for m in _ACCOUNT_RE.finditer(text):
             digits = re.sub(r"\D", "", m.group(0))
             if 8 <= len(digits) <= 17:
@@ -68,6 +81,7 @@ def extract_regex(text: str, source_msg_id: int) -> list[HVI]:
                         value=digits,
                         source_msg_id=source_msg_id,
                         confidence=0.6,
+                        extractor="regex",
                     )
                 )
     return hits

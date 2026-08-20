@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 from hive.extraction.ner import NerBackend, extract_entities
-from hive.extraction.regex_rules import extract_regex
+from hive.extraction.regex_rules import extract_regex, has_bank_context
 from hive.logging_setup import get_logger
 from hive.state import HVI
 
@@ -22,6 +22,35 @@ log = get_logger(__name__)
 
 
 _PERSON_HONORIFICS = re.compile(r"^(?:mr|mrs|ms|miss|dr|dato|datuk)\.?\s+", re.IGNORECASE)
+_PHONE_MY = re.compile(r"^(?:\+?60|0)1\d{8,9}$")
+
+
+def _validate_hvi(item: HVI, source_text: str) -> HVI | None:
+    """Apply deterministic type guards to noisy NER spans."""
+    item.value = item.value.strip()
+    if not item.value:
+        return None
+
+    if item.kind in {"phone", "phone_my", "bank_account"}:
+        digits = re.sub(r"\D", "", item.value)
+        if item.kind == "bank_account":
+            if not 8 <= len(digits) <= 17:
+                return None
+            item.value = digits
+            return item
+
+        # A label such as "phone number" is not itself an indicator.
+        if not 8 <= len(digits) <= 15:
+            return None
+        compact = re.sub(r"[\s()-]", "", item.value)
+        if has_bank_context(source_text) and not _PHONE_MY.fullmatch(compact):
+            item.kind = "bank_account"
+            item.value = digits
+        return item
+
+    if item.kind == "person_name" and len(re.sub(r"[^A-Za-z]", "", item.value)) < 2:
+        return None
+    return item
 
 
 def hvi_key(hvi: HVI) -> tuple[str, str]:
@@ -30,7 +59,8 @@ def hvi_key(hvi: HVI) -> tuple[str, str]:
     if hvi.kind == "person_name":
         value = _PERSON_HONORIFICS.sub("", value)
     if hvi.kind in {"bank_account", "phone", "phone_my"}:
-        value = re.sub(r"\D", "", value)
+        digits = re.sub(r"\D", "", value)
+        value = digits or value
     elif hvi.kind == "url":
         value = re.sub(r"^https?://(?:www\.)?", "", value).rstrip("/")
     else:
@@ -78,7 +108,8 @@ def extract_hvis(
     hvis = extract_regex(text, source_msg_id)
     if ner_backend is not None:
         hvis += extract_entities(text, source_msg_id, ner_backend)
-    result = _dedup(hvis)
+    validated = [item for item in hvis if _validate_hvi(item, text) is not None]
+    result = _dedup(validated)
     log.info(
         "L3 extract: msg=%d raw=%d unique=%d kinds=%s",
         source_msg_id,

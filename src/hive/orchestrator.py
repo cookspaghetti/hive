@@ -210,8 +210,14 @@ def build_turn_graph(engine: HiveEngine):
 
     def n_verdict(state: TurnState) -> TurnState:
         session = state["session"]
+        inbounds = state.get("inbounds") or [state["inbound"]]
         soft = classify_soft(session, engine.agent_client)
-        verdict = update_verdict(session, soft=soft)
+        verdict = update_verdict(
+            session,
+            soft=soft.scores,
+            source_messages=inbounds,
+            soft_evidence=soft.evidence,
+        )
         audit_event(
             "verdict",
             "verdict_updated",
@@ -219,7 +225,8 @@ def build_turn_graph(engine: HiveEngine):
             payload={
                 "verdict": verdict,
                 "score": session.verdict_score,
-                "soft_signals": soft,
+                "soft_signals": soft.scores,
+                "soft_evidence": soft.evidence,
                 "signal_trail": session.signal_trail[-1:] or [],
             },
             peer_id=session.peer_id,

@@ -109,6 +109,7 @@ def extract_entities(
                 value=value.strip(),
                 source_msg_id=source_msg_id,
                 confidence=score,
+                extractor="ner",
             )
         )
     log.info("L3 NER: msg=%d entities=%d", source_msg_id, len(hvis))

@@ -53,3 +53,14 @@ def test_extract_from_image_prefers_local_qr(tmp_path):
         hvis = extract_from_image(str(img), source_msg_id=5, vision_client=vc)
     assert any(h.kind == "url" for h in hvis)
     assert vc.calls == []  # vision NOT invoked when QR already yielded HVIs
+
+
+def test_unstructured_vision_description_does_not_become_raw_qr(tmp_path):
+    img = tmp_path / "character.png"
+    img.write_bytes(b"not-a-real-qr")
+    vc = FakeVision("A cartoon character wearing a white shirt and green trousers.")
+
+    with mock.patch("hive.extraction.media.decode_qr", return_value=[]):
+        hvis = extract_from_image(str(img), source_msg_id=9, vision_client=vc)
+
+    assert hvis == []

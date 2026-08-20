@@ -19,7 +19,7 @@ from __future__ import annotations
 import time
 
 from hive.logging_setup import get_logger
-from hive.state import SessionState, Verdict
+from hive.state import Message, SessionState, Verdict
 
 log = get_logger(__name__)
 
@@ -65,22 +65,71 @@ def _noisy_or(weights: list[float]) -> float:
     return 1.0 - p
 
 
-def _collect_weights(
+def _collect_contributions(
     session: SessionState,
     soft: dict[str, float] | None,
-) -> list[tuple[str, float]]:
-    """Return (reason, weight) contributions for the current state."""
-    contribs: list[tuple[str, float]] = []
+    source_message_ids: list[int],
+    soft_evidence: dict[str, list[int]] | None,
+) -> list[dict[str, object]]:
+    """Return scored contributions and the messages that support them."""
+    contribs: list[dict[str, object]] = []
     for h in session.hvis:
         w = HARD_WEIGHTS.get(h.kind, _HARD_DEFAULT) * h.confidence
-        contribs.append((f"hvi:{h.kind}", w))
+        if w > 0:
+            contribs.append(
+                {
+                    "reason": f"hvi:{h.kind}",
+                    "weight": w,
+                    "source_message_ids": [h.source_msg_id],
+                    "value": h.value,
+                    "confidence": round(h.confidence, 4),
+                    "extractor": h.extractor,
+                    "scope": "new" if h.source_msg_id in source_message_ids else "carried",
+                }
+            )
     for res in session.sandbox_results:
         if res.get("verdict_signal") == "malicious":
-            contribs.append(("sandbox:malicious", _SANDBOX_MALICIOUS))
+            url = str(res.get("url") or "")
+            url_sources = [
+                h.source_msg_id
+                for h in session.hvis
+                if h.kind == "url" and (not url or h.value == url)
+            ]
+            contribs.append(
+                {
+                    "reason": "sandbox:malicious",
+                    "weight": _SANDBOX_MALICIOUS,
+                    "source_message_ids": url_sources,
+                    "scope": (
+                        "new"
+                        if any(message_id in source_message_ids for message_id in url_sources)
+                        else "carried"
+                    ),
+                }
+            )
     if soft:
         for label, conf in soft.items():
             w = SOFT_WEIGHTS.get(label, 0.1) * conf
-            contribs.append((f"soft:{label}", w))
+            if w > 0:
+                evidence_ids = (
+                    soft_evidence.get(label, [])
+                    if soft_evidence is not None
+                    else source_message_ids
+                )
+                contribs.append(
+                    {
+                        "reason": f"soft:{label}",
+                        "weight": w,
+                        "source_message_ids": evidence_ids,
+                        "confidence": round(conf, 4),
+                        "extractor": "llm_classifier",
+                        "scope": (
+                            "new"
+                            if any(message_id in source_message_ids for message_id in evidence_ids)
+                            else "context"
+                        ),
+                    }
+                )
     return contribs
 
 
@@ -92,14 +141,25 @@ def _map_verdict(score: float) -> Verdict:
     return "inconclusive"
 
 
-def update_verdict(session: SessionState, soft: dict[str, float] | None = None) -> Verdict:
+def update_verdict(
+    session: SessionState,
+    soft: dict[str, float] | None = None,
+    source_messages: list[Message] | None = None,
+    soft_evidence: dict[str, list[int]] | None = None,
+) -> Verdict:
     """Recompute the verdict from accumulated signals; update the session.
 
     `soft` is the soft-signal classifier output (see classifier.py), injected
     so this function stays pure and offline-testable.
     """
-    contribs = _collect_weights(session, soft)
-    instantaneous_score = _noisy_or([w for _, w in contribs])
+    if source_messages is None:
+        source_messages = next(
+            ([message] for message in reversed(session.messages) if message.role == "stranger"),
+            [],
+        )
+    source_message_ids = list(dict.fromkeys(message.msg_id for message in source_messages))
+    contribs = _collect_contributions(session, soft, source_message_ids, soft_evidence)
+    instantaneous_score = _noisy_or([float(item["weight"]) for item in contribs])
     # Scam evidence is cumulative. A later, less explicit message must not
     # erase a risk level already supported by the engagement record.
     score = max(session.verdict_score, instantaneous_score)
@@ -114,7 +174,14 @@ def update_verdict(session: SessionState, soft: dict[str, float] | None = None) 
             "score": round(score, 4),
             "instantaneous_score": round(instantaneous_score, 4),
             "verdict": verdict,
-            "contributions": [{"reason": r, "weight": round(w, 4)} for r, w in contribs],
+            "source_message_ids": source_message_ids,
+            "contributions": [
+                {
+                    **item,
+                    "weight": round(float(item["weight"]), 4),
+                }
+                for item in contribs
+            ],
         }
     )
     log.info(

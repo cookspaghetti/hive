@@ -32,7 +32,15 @@ def classify_payload(payload: str, source_msg_id: int) -> list[HVI]:
     hvis = extract_regex(payload, source_msg_id)
     if not hvis:
         # Unrecognised structured payload — keep it verbatim as evidence.
-        hvis = [HVI(kind="raw_qr", value=payload, source_msg_id=source_msg_id, confidence=0.5)]
+        hvis = [
+            HVI(
+                kind="raw_qr",
+                value=payload,
+                source_msg_id=source_msg_id,
+                confidence=0.5,
+                extractor="qr",
+            )
+        ]
     log.info("L3 media: qr payload classified into %d HVI(s)", len(hvis))
     return hvis
 
@@ -101,4 +109,10 @@ def extract_from_image(image_path: str, source_msg_id: int, vision_client=None) 
     if hvis or vision_client is None:
         return hvis
     description = describe_image(image_path, vision_client)
-    return classify_payload(description, source_msg_id)
+    # A natural-language description is not a QR payload. Retain only concrete
+    # structured indicators and never turn an arbitrary visual description into
+    # a raw_qr hard signal.
+    hvis = extract_regex(description, source_msg_id)
+    for item in hvis:
+        item.extractor = "vision"
+    return hvis

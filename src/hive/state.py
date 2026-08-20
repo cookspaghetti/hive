@@ -34,6 +34,7 @@ class HVI:
     value: str
     source_msg_id: int
     confidence: float = 1.0
+    extractor: str = "unknown"
 
 
 @dataclass
@@ -67,6 +68,8 @@ class SessionState:
     reply_pace: Literal["fast", "normal", "slow"] = "normal"
     started_ts: float | None = None
     signal_trail: list[dict[str, Any]] = field(default_factory=list)  # explainable verdict log
+    replay_of: str | None = None
+    media_analysis: list[dict[str, Any]] = field(default_factory=list)
 
 
 class GraphState(TypedDict, total=False):

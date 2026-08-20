@@ -68,6 +68,23 @@ def test_engine_dedup_keeps_higher_confidence():
     assert accounts[0].confidence == 0.95
 
 
+def test_ner_rejects_phone_label_without_a_number():
+    ner = FakeNer([("phone number", "phone number", 0.91)])
+
+    assert extract_hvis("Just send me your phone number", 41, ner_backend=ner) == []
+
+
+def test_mbb_account_context_overrides_ner_phone_misclassification():
+    ner = FakeNer([("phone number", "257282782992", 0.56)])
+
+    hvis = extract_hvis("There you go: 257282782992 Mbb", 42, ner_backend=ner)
+
+    assert [(item.kind, item.value) for item in hvis] == [
+        ("bank_account", "257282782992")
+    ]
+    assert hvis[0].extractor == "regex"
+
+
 def test_engine_extracts_organization_and_location_labels():
     ner = FakeNer(
         [

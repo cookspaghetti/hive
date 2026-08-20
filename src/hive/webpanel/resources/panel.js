@@ -726,6 +726,7 @@
       ["Password field", item.has_password_field == null ? "" : (item.has_password_field ? "Detected" : "Not detected")],
       ["Cloaking", item.cloaking_suspected ? "Suspected" : "Not detected"],
       ["Blocked private requests", item.blocked_requests?.length ? String(item.blocked_requests.length) : "0"],
+      ["Screenshot warning", item.screenshot_error],
       ["Error", item.error],
     ].filter(([, value]) => value !== "" && value != null);
     return `<div class="sandbox-item"><div class="surface-heading"><div><strong>${escapeHtml(item.url || item.target || "Sandbox run")}</strong><p>${escapeHtml(item.final_url || item.error || "Analysis completed")}</p></div><span class="status-chip ${chipClass(signal)}">${escapeHtml(titleCase(signal))}</span></div><div class="signal-details">${facts.map(([label, value]) => `<div class="signal-detail-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div></div>`;

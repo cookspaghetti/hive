@@ -47,6 +47,7 @@ class RawFindings:
     redirect_chain: list[str] = field(default_factory=list)
     dest_ip: str = ""
     screenshot_path: str = ""
+    screenshot_error: str = ""
     title: str = ""
     has_password_field: bool = False
     body_len: int = 0
@@ -153,14 +154,16 @@ async function ensurePublic(raw) {
     await page.waitForTimeout(750);
     const hasPw = await page.$('input[type=password]') !== null;
     const body = await page.content();
-    await page.screenshot({ path: '/out/shot.png', fullPage: true });
+    let screenshotError = '';
+    try { await page.screenshot({ path: '/out/shot.png', fullPage: true }); }
+    catch (error) { screenshotError = String(error); }
     const server = resp && typeof resp.serverAddr === 'function'
       ? await resp.serverAddr().catch(() => null) : null;
     console.log(JSON.stringify({
       final_url: page.url(), redirect_chain: chain,
       dest_ip: server ? server.ipAddress : '',
       title: await page.title(), has_password_field: hasPw, body_len: body.length,
-      blocked_requests: blocked,
+      blocked_requests: blocked, screenshot_error: screenshotError,
     }));
   } catch (e) {
     console.log(JSON.stringify({ error: String(e), blocked_requests: blocked }));
@@ -212,7 +215,12 @@ class PlaywrightDockerRunner:
             subprocess.run(["docker", "network", "create", "--driver", "bridge", name], check=True)
             log.info("L4 sandbox: created network %s", name)
 
-    def _docker_cmd(self, url: str, container_name: str = "") -> list[str]:
+    def _docker_cmd(
+        self,
+        url: str,
+        container_name: str = "",
+        output_dir: str = "",
+    ) -> list[str]:
         resource_limits = ["--pids-limit", "128"]
         if self.memory_limit:
             resource_limits = ["--memory", self.memory_limit, *resource_limits]
@@ -228,17 +236,20 @@ class PlaywrightDockerRunner:
             "--security-opt", "no-new-privileges",
             *resource_limits,
             "--dns", self.dns,
-            "-v", f"{self.out_dir}:/out",
+            "-v", f"{output_dir or self.out_dir}:/out",
             self.image, "node", "-e", _PLAYWRIGHT_SCRIPT, url,
         ]
 
     def run(self, url: str) -> RawFindings:
         container_name = f"hive-sandbox-{uuid.uuid4().hex[:12]}"
+        output_dir = Path(self.out_dir) / container_name
         try:
             validate_public_url(url)
+            output_dir.mkdir(parents=True, exist_ok=False)
+            output_dir.chmod(0o777)
             self.ensure_network(self.network)
             proc = subprocess.run(
-                self._docker_cmd(url, container_name),
+                self._docker_cmd(url, container_name, str(output_dir)),
                 capture_output=True,
                 text=True,
                 timeout=self.run_timeout_s,
@@ -280,7 +291,8 @@ class PlaywrightDockerRunner:
             final_url=data.get("final_url", ""),
             redirect_chain=data.get("redirect_chain", []),
             dest_ip=data.get("dest_ip", ""),
-            screenshot_path=f"{self.out_dir}/shot.png",
+            screenshot_path=str(output_dir / "shot.png"),
+            screenshot_error=str(data.get("screenshot_error") or ""),
             title=data.get("title", ""),
             has_password_field=bool(data.get("has_password_field")),
             body_len=int(data.get("body_len", 0)),

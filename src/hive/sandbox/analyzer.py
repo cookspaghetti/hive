@@ -69,6 +69,7 @@ def analyze_url(url: str, runner: BrowserRunner) -> dict:
         "redirect_chain": findings.redirect_chain,
         "dest_ip": findings.dest_ip,
         "screenshot_path": findings.screenshot_path,
+        "screenshot_error": findings.screenshot_error,
         "title": findings.title,
         "has_password_field": findings.has_password_field,
         "blocked_requests": findings.blocked_requests,

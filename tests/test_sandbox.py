@@ -82,6 +82,7 @@ def test_result_shape_is_sandbox_entry():
         "redirect_chain",
         "dest_ip",
         "screenshot_path",
+        "screenshot_error",
         "blocked_requests",
     ):
         assert key in r

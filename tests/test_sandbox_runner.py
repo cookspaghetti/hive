@@ -41,10 +41,11 @@ def test_docker_cmd_writable_tmpfs_under_readonly():
 
 def test_docker_cmd_hardening_flags_present():
     cmd = PlaywrightDockerRunner()._docker_cmd(
-        "http://x.example/", "hive-sandbox-test"
+        "http://x.example/", "hive-sandbox-test", "/tmp/hive-sandbox/test"
     )
     assert "--rm" in cmd
     assert cmd[cmd.index("--name") + 1] == "hive-sandbox-test"
+    assert "/tmp/hive-sandbox/test:/out" in cmd
     assert "ALL" in cmd  # --cap-drop ALL
     assert "no-new-privileges" in cmd
 
@@ -104,8 +105,8 @@ def test_ensure_network_noop_when_present():
         assert run.call_count == 1  # inspect only, no create
 
 
-def test_run_ensures_network_before_docker_run():
-    runner = PlaywrightDockerRunner(network="custom-net")
+def test_run_ensures_network_before_docker_run(tmp_path):
+    runner = PlaywrightDockerRunner(network="custom-net", out_dir=str(tmp_path))
     with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
         runner, "ensure_network"
     ) as ensure, mock.patch("subprocess.run") as run:
@@ -118,10 +119,11 @@ def test_run_ensures_network_before_docker_run():
         ensure.assert_called_once_with("custom-net")
         assert run.call_count == 1
         assert result.final_url == "http://x/"
+        assert "hive-sandbox-" in result.screenshot_path
 
 
-def test_run_returns_error_when_network_setup_fails():
-    runner = PlaywrightDockerRunner(network="custom-net")
+def test_run_returns_error_when_network_setup_fails(tmp_path):
+    runner = PlaywrightDockerRunner(network="custom-net", out_dir=str(tmp_path))
     with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
         runner,
         "ensure_network",
@@ -132,8 +134,8 @@ def test_run_returns_error_when_network_setup_fails():
         run.assert_not_called()
 
 
-def test_run_reports_nonzero_container_exit_with_stderr():
-    runner = PlaywrightDockerRunner()
+def test_run_reports_nonzero_container_exit_with_stderr(tmp_path):
+    runner = PlaywrightDockerRunner(out_dir=str(tmp_path))
     with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
         runner, "ensure_network"
     ), mock.patch("subprocess.run") as run:
@@ -145,8 +147,8 @@ def test_run_reports_nonzero_container_exit_with_stderr():
     assert "cgroup failed" in result.error
 
 
-def test_run_removes_named_container_after_timeout():
-    runner = PlaywrightDockerRunner(run_timeout_s=12)
+def test_run_removes_named_container_after_timeout(tmp_path):
+    runner = PlaywrightDockerRunner(out_dir=str(tmp_path), run_timeout_s=12)
     timeout = subprocess.TimeoutExpired(["docker", "run"], 12)
     with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
         runner, "ensure_network"

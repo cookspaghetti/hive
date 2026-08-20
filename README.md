@@ -441,6 +441,10 @@ English, Mandarin, and Manglish regression corpus:
 task evaluate
 ```
 
+With the Compose stack running, `task services:verify` creates transient test
+records in PostgreSQL and an isolated Qdrant collection, verifies exact and
+semantic retrieval, and removes all test data before exiting.
+
 Focused review-fix coverage:
 
 ```powershell

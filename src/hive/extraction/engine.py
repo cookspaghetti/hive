@@ -14,15 +14,66 @@ from __future__ import annotations
 import re
 
 from hive.extraction.ner import NerBackend, extract_entities
-from hive.extraction.regex_rules import extract_regex, has_bank_context
+from hive.extraction.regex_rules import account_numbers, extract_regex, has_bank_context
 from hive.logging_setup import get_logger
-from hive.state import HVI
+from hive.state import HVI, Message
 
 log = get_logger(__name__)
 
 
 _PERSON_HONORIFICS = re.compile(r"^(?:mr|mrs|ms|miss|dr|dato|datuk)\.?\s+", re.IGNORECASE)
 _PHONE_MY = re.compile(r"^(?:\+?60|0)1\d{8,9}$")
+_LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3}")
+_CJK_NAME = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]{2,6}")
+_DIRECT_NAME_PATTERNS = (
+    re.compile(
+        r"\b(?:my name is|name'?s|call me|my agent is|agent'?s name is|"
+        r"account holder is|beneficiary is|under the name of)\s+"
+        r"([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\b(?:i am|i'm)\s+([A-Za-z][A-Za-z'.-]*)\b", re.IGNORECASE),
+    re.compile(
+        r"(?:我叫|我的名字是|姓名是|名字是|代理叫|代理是|户名是|账户名是|收款人是)"
+        r"\s*([\u3400-\u4dbf\u4e00-\u9fff]{2,6})"
+    ),
+)
+_NAME_QUESTION = re.compile(
+    r"\b(?:what|which|whose)\s+(?:is\s+the\s+)?name\b|"
+    r"\b(?:under|holder|beneficiary)\b.{0,24}\bname\b|"
+    r"(?:叫什么|什么名字|谁的名字|户名|账户名|收款人)",
+    re.IGNORECASE,
+)
+_AGENT_REFERENCE = re.compile(
+    r"\b(?:this|that|he|she)\s*(?:is|'s)?\s*my\s+agent\b|"
+    r"\bmy\s+agent\b|(?:这是|他是|她是).{0,8}(?:代理|经纪人)",
+    re.IGNORECASE,
+)
+_NAME_STOPWORDS = {
+    "and",
+    "agent",
+    "bro",
+    "fine",
+    "from",
+    "good",
+    "hello",
+    "here",
+    "hi",
+    "no",
+    "nope",
+    "ok",
+    "okay",
+    "on",
+    "quick",
+    "ready",
+    "thanks",
+    "the",
+    "the website",
+    "this my agent",
+    "website",
+    "with",
+    "yes",
+}
 
 
 def _validate_hvi(item: HVI, source_text: str) -> HVI | None:
@@ -48,9 +99,130 @@ def _validate_hvi(item: HVI, source_text: str) -> HVI | None:
             item.value = digits
         return item
 
-    if item.kind == "person_name" and len(re.sub(r"[^A-Za-z]", "", item.value)) < 2:
-        return None
+    if item.kind == "person_name":
+        letters = re.findall(r"[^\W\d_]", item.value, re.UNICODE)
+        if len(letters) < 2 or not _plausible_name(item.value):
+            return None
     return item
+
+
+def _plausible_name(text: str) -> bool:
+    value = text.strip().strip(".,!?;:'\"")
+    if not value or any(character.isdigit() for character in value):
+        return False
+    words = {word.casefold().strip(".'-") for word in value.split()}
+    if value.casefold() in _NAME_STOPWORDS or words.issubset(_NAME_STOPWORDS):
+        return False
+    return bool(_LATIN_NAME.fullmatch(value) or _CJK_NAME.fullmatch(value))
+
+
+def _context_name(text: str) -> str | None:
+    for pattern in _DIRECT_NAME_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            candidate = re.split(
+                r"\b(?:and|from|with|at|who)\b",
+                match.group(1),
+                maxsplit=1,
+            )[0]
+            candidate = candidate.strip().strip(".,!?;:'\"")
+            if _plausible_name(candidate):
+                return candidate.strip()
+    return None
+
+
+def extract_contextual_hvis(
+    messages: list[Message],
+    current_message_ids: set[int],
+) -> list[HVI]:
+    """Extract indicators whose meaning depends on neighbouring messages.
+
+    The window is intentionally small and rule-bound. It covers split account
+    disclosures and names introduced by a preceding question or following role
+    description without treating arbitrary short chat fragments as entities.
+    """
+    hits: list[HVI] = []
+    for index, message in enumerate(messages):
+        if message.role != "stranger":
+            continue
+
+        if message.msg_id in current_message_ids:
+            name = _context_name(message.text)
+            if name:
+                hits.append(
+                    HVI(
+                        kind="person_name",
+                        value=name,
+                        source_msg_id=message.msg_id,
+                        confidence=0.86,
+                        extractor="context",
+                    )
+                )
+
+            if _plausible_name(message.text):
+                recent = messages[max(0, index - 4) : index]
+                if any(
+                    item.role == "agent" and _NAME_QUESTION.search(item.text)
+                    for item in recent
+                ):
+                    hits.append(
+                        HVI(
+                            kind="person_name",
+                            value=message.text.strip(),
+                            source_msg_id=message.msg_id,
+                            confidence=0.78,
+                            extractor="context",
+                        )
+                    )
+
+        if message.msg_id in current_message_ids and _AGENT_REFERENCE.search(message.text):
+            for candidate in reversed(messages[max(0, index - 3) : index]):
+                if candidate.role == "stranger" and _plausible_name(candidate.text):
+                    hits.append(
+                        HVI(
+                            kind="person_name",
+                            value=candidate.text.strip(),
+                            source_msg_id=candidate.msg_id,
+                            confidence=0.84,
+                            extractor="context",
+                        )
+                    )
+                    break
+
+    for index, message in enumerate(messages):
+        if message.role != "stranger":
+            continue
+        candidates = account_numbers(message.text)
+        if not candidates:
+            continue
+        neighbours = messages[max(0, index - 2) : index + 3]
+        contextual = [item for item in neighbours if has_bank_context(item.text)]
+        if not contextual or not (
+            message.msg_id in current_message_ids
+            or any(item.msg_id in current_message_ids for item in contextual)
+        ):
+            continue
+        for value in candidates:
+            hits.append(
+                HVI(
+                    kind="bank_account",
+                    value=value,
+                    source_msg_id=message.msg_id,
+                    confidence=0.55,
+                    extractor="context",
+                )
+            )
+
+    validated = [
+        item
+        for item in hits
+        if _validate_hvi(
+            item,
+            next(message.text for message in messages if message.msg_id == item.source_msg_id),
+        )
+        is not None
+    ]
+    return _dedup(validated)
 
 
 def hvi_key(hvi: HVI) -> tuple[str, str]:
@@ -58,6 +230,8 @@ def hvi_key(hvi: HVI) -> tuple[str, str]:
     value = hvi.value.strip().casefold()
     if hvi.kind == "person_name":
         value = _PERSON_HONORIFICS.sub("", value)
+        value = re.sub(r"[^\w\s'-]", "", value)
+        value = re.sub(r"\s+", " ", value).strip()
     if hvi.kind in {"bank_account", "phone", "phone_my"}:
         digits = re.sub(r"\D", "", value)
         value = digits or value

@@ -6,13 +6,19 @@
       "id": "en-maybank-account",
       "language": "en",
       "text": "Transfer it to Maybank account 1234567890.",
-      "expected": [{"kind": "bank_account", "value": "1234567890"}]
+      "expected": [
+        {"kind": "bank_name", "value": "Maybank"},
+        {"kind": "bank_account", "value": "1234567890"}
+      ]
     },
     {
       "id": "manglish-mbb-spaced-account",
       "language": "manglish",
       "text": "Can lah, send to 2572 8278 2992 MBB.",
-      "expected": [{"kind": "bank_account", "value": "257282782992"}]
+      "expected": [
+        {"kind": "bank_name", "value": "Maybank"},
+        {"kind": "bank_account", "value": "257282782992"}
+      ]
     },
     {
       "id": "zh-account-context",
@@ -63,6 +69,68 @@
       "id": "zh-unscoped-number",
       "language": "zh",
       "text": "订单编号是 9988776655，不是银行账号。",
+      "expected": []
+    },
+    {
+      "id": "en-explicit-name",
+      "language": "en",
+      "text": "My name is John Tan.",
+      "expected": [{"kind": "person_name", "value": "John Tan"}]
+    },
+    {
+      "id": "zh-explicit-name",
+      "language": "zh",
+      "text": "我叫陈伟。",
+      "expected": [{"kind": "person_name", "value": "陈伟"}]
+    },
+    {
+      "id": "manglish-cross-message-agent-alias",
+      "language": "manglish",
+      "messages": [
+        {"role": "agent", "text": "The bank account under what name ah?"},
+        {"role": "stranger", "text": "yes quick"},
+        {"role": "stranger", "text": "petasan"},
+        {"role": "stranger", "text": "this my agent"}
+      ],
+      "expected": [{"kind": "person_name", "value": "petasan"}]
+    },
+    {
+      "id": "en-cross-message-account",
+      "language": "en",
+      "messages": [
+        {"role": "stranger", "text": "Use Maybank."},
+        {"role": "stranger", "text": "1234567890"}
+      ],
+      "expected": [
+        {"kind": "bank_name", "value": "Maybank"},
+        {"kind": "bank_account", "value": "1234567890"}
+      ]
+    },
+    {
+      "id": "en-bank-context-phone-shape",
+      "language": "en",
+      "text": "MBB account 0123456789.",
+      "expected": [
+        {"kind": "bank_name", "value": "Maybank"},
+        {"kind": "bank_account", "value": "0123456789"}
+      ]
+    },
+    {
+      "id": "en-status-not-name",
+      "language": "en",
+      "text": "I am ready.",
+      "expected": []
+    },
+    {
+      "id": "en-website-not-name",
+      "language": "en",
+      "text": "This is the website.",
+      "expected": []
+    },
+    {
+      "id": "en-account-prefix-not-context",
+      "language": "en",
+      "text": "The accident reference is 8877665544.",
       "expected": []
     }
   ]

@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from langgraph.graph import END, START, StateGraph
 
 from hive.audit import audit_event
-from hive.extraction.engine import extract_hvis, merge_hvis
+from hive.extraction.engine import extract_contextual_hvis, extract_hvis, merge_hvis
 from hive.guardrails.injection import persona_defense_note, screen
 from hive.llm.router import RouteInputs
 from hive.logging_setup import get_logger
@@ -157,6 +157,12 @@ def build_turn_graph(engine: HiveEngine):
                 ner_backend=engine.ner_backend,
             )
         ]
+        hvis.extend(
+            extract_contextual_hvis(
+                session.messages,
+                {inbound.msg_id for inbound in inbounds},
+            )
+        )
         hvis.extend(item for inbound in inbounds for item in inbound.media_hvis)
         known_media = {
             int(item.get("source_msg_id") or 0)

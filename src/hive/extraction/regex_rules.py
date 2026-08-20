@@ -38,19 +38,61 @@ PATTERNS: dict[str, re.Pattern[str]] = {
 }
 
 # Malaysian bank keywords for context-gated account detection.
-_BANK_KEYWORDS = (
-    "maybank", "cimb", "public bank", "rhb", "hong leong", "ambank", "bank islam",
-    "mbb", "bsn", "uob", "ocbc", "hsbc", "affin", "alliance", "account", "acc", "acct",
-    "a/c",
+_BANK_NAMES: dict[str, tuple[str, ...]] = {
+    "Maybank": ("maybank", "mbb"),
+    "CIMB": ("cimb",),
+    "Public Bank": ("public bank", "pbb"),
+    "RHB": ("rhb",),
+    "Hong Leong Bank": ("hong leong", "hlb"),
+    "AmBank": ("ambank",),
+    "Bank Islam": ("bank islam",),
+    "BSN": ("bsn",),
+    "UOB": ("uob",),
+    "OCBC": ("ocbc",),
+    "HSBC": ("hsbc",),
+    "Affin Bank": ("affin",),
+    "Alliance Bank": ("alliance bank",),
+}
+_ACCOUNT_CONTEXT = re.compile(
+    r"\b(?:bank\s+account|account|acct|acc|a/c)\b|(?:账户|账号|银行)",
+    re.IGNORECASE,
 )
 # 8–17 digit run, optionally spaced/hyphenated, near a bank keyword.
 _ACCOUNT_RE = re.compile(r"\b\d[\d\s-]{6,16}\d\b")
+_NEGATED_BANK_CONTEXT = re.compile(
+    r"\b(?:not|isn'?t|is not)\s+(?:a\s+|my\s+|the\s+)?(?:bank\s+)?account\b|"
+    r"(?:不是|并非)(?:银行)?(?:账号|账户)",
+    re.IGNORECASE,
+)
 
 
 def has_bank_context(text: str) -> bool:
     """Return whether text contains a bank or account marker."""
-    lower = text.casefold()
-    return any(keyword in lower for keyword in _BANK_KEYWORDS)
+    if _NEGATED_BANK_CONTEXT.search(text):
+        return False
+    return bool(bank_names(text) or _ACCOUNT_CONTEXT.search(text))
+
+
+def bank_names(text: str) -> list[str]:
+    """Return canonical bank names explicitly mentioned in text."""
+    names: list[str] = []
+    for canonical, aliases in _BANK_NAMES.items():
+        if any(
+            re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text, re.IGNORECASE)
+            for alias in aliases
+        ):
+            names.append(canonical)
+    return names
+
+
+def account_numbers(text: str) -> list[str]:
+    """Return structurally plausible account-number candidates without context."""
+    numbers: list[str] = []
+    for match in _ACCOUNT_RE.finditer(text):
+        digits = re.sub(r"\D", "", match.group(0))
+        if 8 <= len(digits) <= 17:
+            numbers.append(digits)
+    return list(dict.fromkeys(numbers))
 
 
 def extract_regex(text: str, source_msg_id: int) -> list[HVI]:
@@ -71,17 +113,36 @@ def extract_regex(text: str, source_msg_id: int) -> list[HVI]:
                 )
             )
 
+    for name in bank_names(text):
+        hits.append(
+            HVI(
+                kind="bank_name",
+                value=name,
+                source_msg_id=source_msg_id,
+                confidence=0.95,
+                extractor="regex",
+            )
+        )
+
     if has_bank_context(text):
-        for m in _ACCOUNT_RE.finditer(text):
-            digits = re.sub(r"\D", "", m.group(0))
-            if 8 <= len(digits) <= 17:
-                hits.append(
-                    HVI(
-                        kind="bank_account",
-                        value=digits,
-                        source_msg_id=source_msg_id,
-                        confidence=0.6,
-                        extractor="regex",
-                    )
+        account_values = account_numbers(text)
+        if account_values:
+            hits = [
+                item
+                for item in hits
+                if not (
+                    item.kind in {"phone", "phone_my"}
+                    and re.sub(r"\D", "", item.value) in account_values
                 )
+            ]
+        for digits in account_values:
+            hits.append(
+                HVI(
+                    kind="bank_account",
+                    value=digits,
+                    source_msg_id=source_msg_id,
+                    confidence=0.6,
+                    extractor="regex",
+                )
+            )
     return hits

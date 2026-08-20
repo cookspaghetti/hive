@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from hive.audit import audit_event
-from hive.extraction.engine import extract_hvis, merge_hvis
+from hive.extraction.engine import extract_contextual_hvis, extract_hvis, merge_hvis
 from hive.extraction.regex_rules import extract_regex
 from hive.runtime import HiveEngine
 from hive.state import Message, Phase, SessionState
@@ -74,6 +74,8 @@ def replay_history_record(
         nonlocal analyzed_turns
         if not batch:
             return
+        batch_message_ids = {inbound.msg_id for inbound in batch}
+        batch_hvis = []
         for inbound in batch:
             session.messages.append(inbound)
             hvis = extract_hvis(
@@ -94,7 +96,9 @@ def replay_history_record(
                 for item in visual_hvis:
                     item.extractor = "vision"
                 hvis.extend(visual_hvis)
-            merge_hvis(session.hvis, hvis)
+            batch_hvis.extend(hvis)
+        batch_hvis.extend(extract_contextual_hvis(session.messages, batch_message_ids))
+        merge_hvis(session.hvis, batch_hvis)
         session.turn_count += len(batch)
         analyzed_turns = session.turn_count
         session.exchange_count += 1

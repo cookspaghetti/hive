@@ -60,6 +60,28 @@ def test_burst_preserves_each_inbound_and_records_each_reply_bubble():
     assert [message.msg_id for message in session.messages[-2:]] == [-1, -2]
 
 
+def test_burst_extracts_name_from_cross_message_role_context():
+    eng = _engine()
+    session, chain = eng.new_session(peer_id=18, persona="naive_young_adult")
+    session.messages.append(
+        Message("agent", "the bank account under what name ah?", time.time(), -1)
+    )
+
+    eng.process_messages(
+        session,
+        chain,
+        [
+            Message("stranger", "yes quick", time.time(), 20),
+            Message("stranger", "petasan", time.time(), 21),
+            Message("stranger", "this my agent", time.time(), 22),
+        ],
+    )
+
+    assert [(item.kind, item.value, item.source_msg_id) for item in session.hvis] == [
+        ("person_name", "petasan", 21)
+    ]
+
+
 def test_transport_can_defer_outbound_evidence_until_delivery():
     eng = HiveEngine(
         agent_client=fake_client("[[pace:fast]] wait ah ||| which account?"),

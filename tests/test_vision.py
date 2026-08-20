@@ -81,7 +81,10 @@ def test_live_image_analysis_prefers_local_ocr_for_structured_indicators(tmp_pat
         result = analyze_image(str(img), source_msg_id=22, vision_client=vc)
 
     assert result.source == "local_ocr"
-    assert result.hvis[0].kind == "bank_account"
+    assert {(item.kind, item.value) for item in result.hvis} == {
+        ("bank_name", "Maybank"),
+        ("bank_account", "1234567890"),
+    }
     assert result.hvis[0].extractor == "ocr"
     assert vc.calls == []
 

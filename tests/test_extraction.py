@@ -1,8 +1,9 @@
 """L3 extraction tests (fyp.txt L3), fully offline."""
 
-from hive.extraction.engine import extract_hvis, merge_hvis
+from hive.extraction.engine import extract_contextual_hvis, extract_hvis, merge_hvis
 from hive.extraction.media import classify_payload
 from hive.extraction.regex_rules import extract_regex
+from hive.state import Message
 
 
 class FakeNer:
@@ -41,8 +42,19 @@ def test_bare_domain_extraction_ignores_email_addresses_and_decimal_versions():
 def test_bank_account_only_with_keyword():
     with_kw = extract_regex("transfer to Maybank account 1234567890", 1)
     without_kw = extract_regex("my lucky number is 1234567890", 1)
+    accidental_prefix = extract_regex("accident reference 9988776655", 1)
     assert any(h.kind == "bank_account" and h.value == "1234567890" for h in with_kw)
     assert not any(h.kind == "bank_account" for h in without_kw)
+    assert not any(h.kind == "bank_account" for h in accidental_prefix)
+
+
+def test_regex_normalizes_bank_alias_and_prefers_account_over_phone():
+    hvis = extract_regex("MBB account 0123456789", 11)
+
+    assert {(item.kind, item.value) for item in hvis} == {
+        ("bank_name", "Maybank"),
+        ("bank_account", "0123456789"),
+    }
 
 
 def test_crypto_and_telegram():
@@ -81,9 +93,10 @@ def test_mbb_account_context_overrides_ner_phone_misclassification():
     hvis = extract_hvis("There you go: 257282782992 Mbb", 42, ner_backend=ner)
 
     assert [(item.kind, item.value) for item in hvis] == [
-        ("bank_account", "257282782992")
+        ("bank_name", "Maybank"),
+        ("bank_account", "257282782992"),
     ]
-    assert hvis[0].extractor == "regex"
+    assert hvis[1].extractor == "regex"
 
 
 def test_engine_extracts_organization_and_location_labels():
@@ -121,6 +134,59 @@ def test_cross_message_merge_normalizes_person_honorifics():
     assert existing[0].value == "Mr alex"
     assert existing[0].confidence == 0.73
     assert existing[0].source_msg_id == 7
+
+
+def test_context_extracts_explicit_english_and_mandarin_names():
+    messages = [
+        Message("stranger", "my name is John Tan", 1.0, 80),
+        Message("stranger", "我叫陈伟", 2.0, 81),
+    ]
+
+    hvis = extract_contextual_hvis(messages, {80, 81})
+
+    assert {(item.kind, item.value, item.source_msg_id) for item in hvis} == {
+        ("person_name", "John Tan", 80),
+        ("person_name", "陈伟", 81),
+    }
+
+
+def test_context_links_agent_alias_to_preceding_name_message():
+    messages = [
+        Message("agent", "the bank account under what name ah?", 1.0, -1),
+        Message("stranger", "yes quick", 2.0, 90),
+        Message("stranger", "petasan", 3.0, 91),
+        Message("stranger", "this my agent", 4.0, 92),
+    ]
+
+    hvis = extract_contextual_hvis(messages, {90, 91, 92})
+
+    assert [(item.kind, item.value, item.source_msg_id) for item in hvis] == [
+        ("person_name", "petasan", 91)
+    ]
+
+
+def test_context_extracts_account_split_across_messages():
+    messages = [
+        Message("stranger", "use Maybank", 1.0, 100),
+        Message("stranger", "1234567890", 2.0, 101),
+    ]
+
+    hvis = extract_contextual_hvis(messages, {100, 101})
+
+    assert [(item.kind, item.value, item.source_msg_id) for item in hvis] == [
+        ("bank_account", "1234567890", 101)
+    ]
+
+
+def test_context_rejects_status_words_and_unscoped_numbers():
+    messages = [
+        Message("stranger", "I am ready", 1.0, 110),
+        Message("stranger", "this is the website", 2.0, 111),
+        Message("stranger", "order reference", 3.0, 112),
+        Message("stranger", "1234567890", 4.0, 113),
+    ]
+
+    assert extract_contextual_hvis(messages, {110, 111, 112, 113}) == []
 
 
 def test_qr_payload_url_classified():

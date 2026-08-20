@@ -8,8 +8,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
-from hive.extraction.engine import extract_hvis, hvi_key
-from hive.state import HVI
+from hive.extraction.engine import extract_contextual_hvis, extract_hvis, hvi_key, merge_hvis
+from hive.state import HVI, Message
 
 DEFAULT_CORPUS = Path(__file__).resolve().parents[2] / "evaluation" / "indicator_cases.json"
 
@@ -50,7 +50,25 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
     failures: list[dict[str, Any]] = []
     for index, case in enumerate(cases, start=1):
         expected = {_expected_key(item) for item in case.get("expected", [])}
-        actual = {hvi_key(item) for item in extract_hvis(str(case["text"]), index)}
+        raw_messages = case.get("messages")
+        if not isinstance(raw_messages, list):
+            raw_messages = [{"role": "stranger", "text": str(case["text"])}]
+        messages = [
+            Message(
+                role=str(raw.get("role") or "stranger"),
+                text=str(raw.get("text") or ""),
+                ts=float(offset),
+                msg_id=index * 100 + offset,
+            )
+            for offset, raw in enumerate(raw_messages, start=1)
+        ]
+        extracted: list[HVI] = []
+        for message in messages:
+            if message.role == "stranger":
+                merge_hvis(extracted, extract_hvis(message.text, message.msg_id))
+        current_ids = {message.msg_id for message in messages if message.role == "stranger"}
+        merge_hvis(extracted, extract_contextual_hvis(messages, current_ids))
+        actual = {hvi_key(item) for item in extracted}
         matched = expected & actual
         unexpected = actual - expected
         missing = expected - actual

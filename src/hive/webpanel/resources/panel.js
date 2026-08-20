@@ -137,10 +137,45 @@
     return `<div class="message ${role}">${media}${text ? `<p>${escapeHtml(text)}</p>` : ""}<span>${escapeHtml(titleCase(message.role))} · ${formatTime(message.ts)}</span></div>`;
   }
 
-  function renderSignal(signal) {
+  function signalReasonLabel(reason) {
+    const [kind, ...parts] = String(reason || "signal").split(":");
+    const label = titleCase(parts.join(" ") || kind);
+    if (kind === "hvi") return `Indicator · ${label}`;
+    if (kind === "soft") return `Behavior · ${label}`;
+    if (kind === "sandbox") return `Sandbox · ${label}`;
+    return label;
+  }
+
+  function resolveSignalMessages(signal, messages) {
+    const strangerMessages = (Array.isArray(messages) ? messages : []).filter((message) => message.role === "stranger");
+    const reasonsById = new Map();
+    const addSource = (rawId, reason = "") => {
+      const key = String(rawId);
+      if (!reasonsById.has(key)) reasonsById.set(key, new Set());
+      if (reason) reasonsById.get(key).add(reason);
+    };
+    (Array.isArray(signal.source_message_ids) ? signal.source_message_ids : []).forEach((id) => addSource(id));
+    (Array.isArray(signal.contributions) ? signal.contributions : []).forEach((item) => {
+      if (Number(item.weight || 0) <= 0) return;
+      (Array.isArray(item.source_message_ids) ? item.source_message_ids : []).forEach((id) => addSource(id, signalReasonLabel(item.reason)));
+    });
+    let matches = strangerMessages.filter((message) => reasonsById.has(String(message.msg_id)));
+    return matches.map((message) => ({ message, reasons: [...(reasonsById.get(String(message.msg_id)) || [])] }));
+  }
+
+  function renderSignalMessage({ message, reasons }) {
+    const attachment = message.media_kind ? `[${titleCase(message.media_kind)}${message.media_name ? `: ${message.media_name}` : ""}]` : "";
+    const excerpt = String(message.text || "").trim() || attachment || "[Empty message]";
+    const messageId = message.msg_id != null ? `Message ${message.msg_id} · ` : "";
+    const tags = reasons.length ? `<div class="signal-message-tags">${reasons.map((reason) => `<span>${escapeHtml(reason)}</span>`).join("")}</div>` : "";
+    return `<div class="signal-message"><div><strong>Stranger</strong><span>${escapeHtml(messageId)}${formatTime(message.ts)}</span></div><p>${escapeHtml(excerpt)}</p>${tags}</div>`;
+  }
+
+  function renderSignal(signal, messages = []) {
     const verdict = titleCase(signal.verdict || signal.name || signal.kind || "Assessment");
-    const contributions = Array.isArray(signal.contributions) ? signal.contributions : [];
-    const excluded = new Set(["ts", "turn", "score", "instantaneous_score", "verdict", "contributions"]);
+    const contributions = (Array.isArray(signal.contributions) ? signal.contributions : []).filter((item) => Number(item.weight || 0) > 0);
+    const relatedMessages = resolveSignalMessages(signal, messages);
+    const excluded = new Set(["ts", "turn", "score", "instantaneous_score", "verdict", "contributions", "source_message_ids"]);
     const extras = Object.entries(signal).filter(([key, value]) => !excluded.has(key) && value != null).map(([key, value]) => {
       let readable;
       if (Array.isArray(value)) readable = value.map((item) => typeof item === "object" ? Object.values(item).join(" · ") : item).join(", ");
@@ -149,8 +184,16 @@
       else readable = value;
       return `<div class="signal-detail-row"><span>${escapeHtml(titleCase(key))}</span><strong>${escapeHtml(readable)}</strong></div>`;
     }).join("");
-    const evidence = contributions.length ? `<div class="signal-detail-row"><span>Evidence</span><div class="signal-contributions">${contributions.map((item) => `<span class="signal-pill">${escapeHtml(titleCase(String(item.reason || "signal").replace(":", " · ")))} · ${percentage(item.weight)}</span>`).join("")}</div></div>` : `<div class="signal-detail-row"><span>Evidence</span><strong>No contributing indicators in this assessment</strong></div>`;
-    return `<article class="signal-card"><div class="signal-card-header"><strong>${escapeHtml(verdict)}</strong><time>${signal.turn != null ? `Turn ${Number(signal.turn)} · ` : ""}${formatTime(signal.ts)}</time></div><div class="signal-score"><span class="status-chip ${chipClass(signal.verdict)}">Cumulative ${percentage(signal.score)}</span><span class="status-chip info">This turn ${percentage(signal.instantaneous_score)}</span></div><div class="signal-detail-list">${evidence}${extras}</div></article>`;
+    const contributionPill = (item) => {
+      const value = item.value ? ` · ${item.value}` : "";
+      return `<span class="signal-pill" title="${escapeHtml(`${item.extractor || "unknown source"}${item.confidence != null ? ` · ${percentage(item.confidence)} confidence` : ""}`)}">${escapeHtml(signalReasonLabel(item.reason))}${escapeHtml(value)} · ${percentage(item.weight)}</span>`;
+    };
+    const currentContributions = contributions.filter((item) => item.scope !== "carried");
+    const carriedContributions = contributions.filter((item) => item.scope === "carried");
+    const currentEvidence = currentContributions.length ? `<div class="signal-detail-row"><span>Current assessment</span><div class="signal-contributions">${currentContributions.map(contributionPill).join("")}</div></div>` : `<div class="signal-detail-row"><span>Current assessment</span><strong>No new contributing signals</strong></div>`;
+    const carriedEvidence = carriedContributions.length ? `<div class="signal-detail-row"><span>Carried session evidence</span><div class="signal-contributions">${carriedContributions.map(contributionPill).join("")}</div></div>` : "";
+    const messageEvidence = relatedMessages.length ? `<div class="signal-detail-row signal-message-row"><span>Related messages</span><div class="signal-messages">${relatedMessages.map(renderSignalMessage).join("")}</div></div>` : `<div class="signal-detail-row"><span>Related messages</span><strong>No message reference was recorded for this assessment</strong></div>`;
+    return `<article class="signal-card"><div class="signal-card-header"><strong>${escapeHtml(verdict)}</strong><time>${signal.turn != null ? `Turn ${Number(signal.turn)} · ` : ""}${formatTime(signal.ts)}</time></div><div class="signal-score"><span class="status-chip ${chipClass(signal.verdict)}">Session risk ${percentage(signal.score)}</span><span class="status-chip info">Assessment ${percentage(signal.instantaneous_score)}</span></div><div class="signal-detail-list">${messageEvidence}${currentEvidence}${carriedEvidence}${extras}</div></article>`;
   }
 
   function setMessage(selector, message = "", kind = "") {
@@ -489,8 +532,12 @@
     $("#inspectorLiveLabel").textContent = archived ? "Archived" : "Live";
     transcript.innerHTML = session.messages?.length ? session.messages.map(renderTranscriptMessage).join("") : emptyState("No transcript yet", "Messages will appear after the engagement begins.");
     if (followLatest) requestAnimationFrame(() => { transcript.scrollTop = transcript.scrollHeight; });
-    $("#inspectorSignals").innerHTML = session.signal_trail?.length ? session.signal_trail.map(renderSignal).join("") : emptyState("No signals yet", "Classifier evidence will appear as messages are assessed.");
-    $("#inspectorIndicators").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<div class="indicator-item"><strong>${escapeHtml(titleCase(item.kind))}</strong><p class="mono">${escapeHtml(item.value)}</p><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence</span></div>`).join("") : emptyState("No indicators extracted", "URLs, wallet addresses, accounts, and phone numbers will appear here.");
+    $("#inspectorSignals").innerHTML = session.signal_trail?.length ? session.signal_trail.map((signal) => renderSignal(signal, session.messages)).join("") : emptyState("No signals yet", "Classifier evidence will appear as messages are assessed.");
+    $("#inspectorIndicators").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => {
+      const source = item.source_msg_id != null ? ` · Message ${item.source_msg_id}` : "";
+      const extractor = item.extractor && item.extractor !== "unknown" ? ` · ${titleCase(item.extractor)}` : "";
+      return `<div class="indicator-item"><strong>${escapeHtml(titleCase(item.kind))}</strong><p class="mono">${escapeHtml(item.value)}</p><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence${escapeHtml(extractor)}${escapeHtml(source)}</span></div>`;
+    }).join("") : emptyState("No indicators extracted", "URLs, wallet addresses, accounts, and phone numbers will appear here.");
   }
 
   function renderIntelligenceSessionOptions() {

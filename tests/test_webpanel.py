@@ -203,6 +203,7 @@ def test_session_detail(client):
     r = client.get("/api/sessions/100", headers=_h())
     d = r.json()
     assert d["hvi_items"][0]["value"] == "123"
+    assert d["hvi_items"][0]["source_msg_id"] == 0
     assert d["messages"][0]["role"] == "stranger"
 
 
@@ -250,8 +251,16 @@ def test_takeover_inspector_is_a_live_media_aware_dialog(client):
     assert "dialog.showModal()" in script
     assert "renderTranscriptMessage" in script
     assert "transcript-image" in script
-    assert "session.signal_trail.map(renderSignal)" in script
+    assert "renderSignal(signal, session.messages)" in script
+    assert "resolveSignalMessages" in script
+    assert "Related messages" in script
+    assert "Session risk" in script
+    assert "Current assessment" in script
+    assert "Carried session evidence" in script
+    assert "source_msg_id" in script
     assert "JSON.stringify(signal)" not in script
+    assert "Each assessment links its risk signals" in page
+    assert ".signal-message" in css
     assert "[hidden] { display: none !important; }" in css
     assert ".session-dialog #inspectorContent:not([hidden])" in css
     assert ".inspector-panel.active { display: flex; flex-direction: column; }" in css

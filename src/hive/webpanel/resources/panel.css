@@ -196,6 +196,7 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .attachment-copy strong { font-size: .76rem; }
 .attachment-copy small { margin-top: 2px; color: var(--subtle); font-size: .65rem; }
 .signal-list { gap: 10px; padding: 14px 0; }
+.signal-guide { flex: none; margin: 12px 4px 0 0; padding: 9px 11px; border-left: 2px solid var(--info); background: color-mix(in srgb, var(--info) 7%, transparent); color: var(--muted); font-size: .7rem; line-height: 1.5; }
 .signal-card { padding: 13px 14px; border: 1px solid var(--border); border-radius: var(--radius-small); background: var(--surface-raised); }
 .signal-card-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .signal-card-header strong { font-size: .8rem; }
@@ -207,6 +208,15 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .signal-detail-row > strong { overflow-wrap: anywhere; font-weight: 650; }
 .signal-contributions { display: flex; flex-wrap: wrap; gap: 6px; }
 .signal-pill { padding: 4px 7px; border: 1px solid var(--border); border-radius: 999px; background: var(--surface); font-size: .67rem; }
+.signal-message-row { margin-bottom: 3px; }
+.signal-messages { display: grid; gap: 7px; min-width: 0; }
+.signal-message { min-width: 0; padding: 8px 10px; border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 7px; background: var(--surface); }
+.signal-message > div:first-child { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 5px 12px; }
+.signal-message strong { font-size: .69rem; }
+.signal-message > div:first-child span { color: var(--subtle); font-size: .62rem; }
+.signal-message p { margin: 5px 0 0; color: var(--text); font-size: .72rem; line-height: 1.45; overflow-wrap: anywhere; white-space: pre-wrap; }
+.signal-message-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.signal-message-tags span { padding: 2px 5px; border-radius: 5px; background: color-mix(in srgb, var(--accent) 10%, var(--surface-raised)); color: var(--muted); font-size: .6rem; }
 .inspector-actions { display: grid; gap: 8px; margin-top: 16px; }
 .inline-message { min-height: 1.4em; margin: 10px 0 0; color: var(--muted); font-size: .76rem; }
 .inline-message.error { color: var(--danger); }

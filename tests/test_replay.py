@@ -1,0 +1,60 @@
+"""Archived takeover analysis replay tests."""
+
+from hive.replay import replay_history_record
+from hive.runtime import HiveEngine
+from tests.fakes import fake_client
+
+
+class FakeSandbox:
+    pass
+
+
+class FakeNer:
+    def predict(self, text, labels):
+        if text == "I am John":
+            return [("person name", "John", 0.8)]
+        if "phone number" in text:
+            return [("phone number", "phone number", 0.9)]
+        return []
+
+
+def test_replay_preserves_transcript_and_reruns_analysis():
+    record = {
+        "id": "123_919",
+        "peer_id": 919,
+        "persona": "confused_elderly",
+        "started_ts": 10,
+        "signal_trail": [{"turn": 1}, {"turn": 2}],
+        "messages": [
+            {"role": "stranger", "text": "I am John", "ts": 11, "msg_id": 1},
+            {"role": "agent", "text": "hello John", "ts": 12, "msg_id": -1},
+            {
+                "role": "stranger",
+                "text": "Just send me your phone number",
+                "ts": 13,
+                "msg_id": 2,
+            },
+        ],
+    }
+    classifier = (
+        '{"urgency":{"score":0.0,"message_ids":[]},'
+        '"payment_request":{"score":0.7,"message_ids":[2]}}'
+    )
+    engine = HiveEngine(
+        agent_client=fake_client(classifier),
+        sandbox_runner=FakeSandbox(),
+        ner_backend=FakeNer(),
+        enable_early_exit=False,
+    )
+
+    replayed = replay_history_record(record, engine)
+
+    assert [(message.role, message.text) for message in replayed.messages] == [
+        ("stranger", "I am John"),
+        ("agent", "hello John"),
+        ("stranger", "Just send me your phone number"),
+    ]
+    assert [(item.kind, item.value) for item in replayed.hvis] == [("person_name", "John")]
+    assert replayed.replay_of == "123_919"
+    assert replayed.turn_count == 2
+    assert replayed.signal_trail[-1]["contributions"][-1]["source_message_ids"] == [2]

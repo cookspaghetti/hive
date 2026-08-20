@@ -117,7 +117,13 @@ def _session_detail(peer_id, session) -> dict:
         for m in session.messages
     ]
     detail["hvi_items"] = [
-        {"kind": h.kind, "value": h.value, "confidence": round(h.confidence, 2)}
+        {
+            "kind": h.kind,
+            "value": h.value,
+            "confidence": round(h.confidence, 2),
+            "source_msg_id": h.source_msg_id,
+            "extractor": h.extractor,
+        }
         for h in session.hvis
     ]
     detail["sandbox_results"] = session.sandbox_results
@@ -360,6 +366,9 @@ def create_app(
     telethon_login = login_manager or TelethonLoginManager(store)
     observations = get_observation_hub()
     audit = audit_ledger or get_audit_ledger()
+    migrate_history_ids = getattr(history, "migrate_legacy_ids", None)
+    if migrate_history_ids is not None:
+        migrate_history_ids()
     observations.event("runtime", "Control panel ready", "Local operator console initialized")
 
     @asynccontextmanager

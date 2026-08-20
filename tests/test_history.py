@@ -1,5 +1,8 @@
 """Completed takeover history persistence tests."""
 
+import json
+from uuid import UUID
+
 from hive.history import (
     PostgresTakeoverHistoryStore,
     TakeoverHistoryStore,
@@ -26,6 +29,37 @@ def test_history_store_persists_and_lists_newest_first(tmp_path):
     assert rows[0]["session_id"] == newer.session_id
     assert store.get(archived["id"])["exchanges"] == 1
     assert store.get(archived["id"]) == archived
+    assert UUID(archived["id"]).version == 4
+    assert archived["hvi_items"][0]["source_msg_id"] == 2
+
+
+def test_history_store_migrates_legacy_ids_and_keeps_old_alias(tmp_path):
+    legacy_id = "123456789_20"
+    record = {"id": legacy_id, "peer_id": 20, "ended_ts": 40, "messages": []}
+    tmp_path.joinpath(f"{legacy_id}.json").write_text(json.dumps(record), encoding="utf-8")
+    store = TakeoverHistoryStore(tmp_path)
+
+    migrated = store.migrate_legacy_ids()
+
+    new_id = migrated[legacy_id]
+    assert UUID(new_id).version == 4
+    assert store.get(new_id)["legacy_id"] == legacy_id
+    assert store.get(legacy_id)["id"] == new_id
+    assert not tmp_path.joinpath(f"{legacy_id}.json").exists()
+
+
+def test_history_store_imports_prepared_uuid_record(tmp_path):
+    store = TakeoverHistoryStore(tmp_path)
+    record = {
+        "id": "8514213f-a1eb-4986-a2dc-bd3fa196ea96",
+        "peer_id": 919,
+        "ended_ts": 40,
+        "messages": [],
+    }
+
+    store.import_record(record)
+
+    assert store.get(record["id"]) == record
 
 
 def test_history_store_ignores_invalid_and_corrupt_records(tmp_path):

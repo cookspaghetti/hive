@@ -6,9 +6,9 @@ gated to HIVE_OPERATOR_ID. Commands:
     /chats                        list recent private incoming chats
     /takeovers                    list active takeovers with controls
     /takeover <peer_id> [persona]  begin a takeover on the userbot
-    /persona <name>                set the default persona for new takeovers
+    /persona                       choose the default persona with buttons
     /stop <peer_id>                confirm, reclaim, seal evidence, report
-    /status <peer_id>              current verdict + summary
+    /status                        choose a takeover and show its status
 
 Requires a live Bot API connection, so not unit-tested.
 """
@@ -38,9 +38,9 @@ HELP_TEXT = (
     "HIVE control bot\n\n"
     "/chats - list recent incoming private chats\n"
     "/takeover <peer_id> [persona] - start a takeover\n"
-    "/persona <name> - set the default persona\n"
+    "/persona - choose the default persona with buttons\n"
     "/takeovers - list active takeovers with controls\n"
-    "/status <peer_id> - show an active takeover and controls\n"
+    "/status - choose an active takeover and show its controls\n"
     "/stop <peer_id> - request stop-and-seal confirmation\n"
     "/help - show this command reference"
 )
@@ -226,6 +226,119 @@ class ControlBot:
         )
 
     @staticmethod
+    def _persona_label(persona: str) -> str:
+        return persona.replace("_", " ").title()
+
+    def _status_picker_markup(self):
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        buttons = []
+        for peer_id, (session, _chain) in sorted(self.userbot._sessions.items()):
+            buttons.append(
+                [
+                    InlineKeyboardButton(
+                        f"{peer_id} · {self._persona_label(session.persona)}",
+                        callback_data=f"hive_status:show:{peer_id}",
+                    )
+                ]
+            )
+        return InlineKeyboardMarkup(buttons)
+
+    def _persona_picker_markup(self):
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        buttons = []
+        row = []
+        for persona in sorted(VALID_PERSONAS):
+            label = self._persona_label(persona)
+            if persona == self.default_persona:
+                label = f"✓ {label}"
+            row.append(
+                InlineKeyboardButton(
+                    label,
+                    callback_data=f"hive_persona:set:{persona}",
+                )
+            )
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        return InlineKeyboardMarkup(buttons)
+
+    async def _callback_status(self, update, context) -> None:
+        query = update.callback_query
+        user_id = update.effective_user.id if update.effective_user else None
+        authorised = self._authorised(user_id)
+        data = str(getattr(query, "data", "") or "")
+        audit_event(
+            "control_message",
+            "status_button_pressed",
+            component="transport.control_bot",
+            payload={"operator_id": user_id, "callback_data": data, "authorised": authorised},
+            level="info" if authorised else "warning",
+        )
+        if not authorised:
+            await query.answer("Unauthorised.", show_alert=True)
+            return
+        await query.answer()
+        try:
+            _prefix, action, raw_peer_id = data.split(":", 2)
+            peer_id = int(raw_peer_id)
+            if action != "show":
+                raise ValueError
+        except (ValueError, TypeError):
+            await query.edit_message_text("This status action is invalid.")
+            return
+
+        entry = self.userbot._sessions.get(peer_id)
+        if entry is None:
+            await query.edit_message_text(f"No active takeover on {peer_id}.")
+            return
+        await query.edit_message_text(
+            self.engine.summary(entry[0]),
+            reply_markup=self._stop_markup(peer_id),
+        )
+
+    async def _callback_persona(self, update, context) -> None:
+        query = update.callback_query
+        user_id = update.effective_user.id if update.effective_user else None
+        authorised = self._authorised(user_id)
+        data = str(getattr(query, "data", "") or "")
+        audit_event(
+            "control_message",
+            "persona_button_pressed",
+            component="transport.control_bot",
+            payload={"operator_id": user_id, "callback_data": data, "authorised": authorised},
+            level="info" if authorised else "warning",
+        )
+        if not authorised:
+            await query.answer("Unauthorised.", show_alert=True)
+            return
+        await query.answer()
+        try:
+            _prefix, action, persona = data.split(":", 2)
+        except (ValueError, TypeError):
+            await query.edit_message_text("This persona action is invalid.")
+            return
+
+        if action != "set" or persona not in VALID_PERSONAS:
+            await query.edit_message_text("This persona action is invalid.")
+            return
+
+        previous = self.default_persona
+        self.default_persona = persona
+        await query.edit_message_text(
+            f"✅ Default persona set to {self._persona_label(self.default_persona)}."
+        )
+        audit_event(
+            "control_message",
+            "default_persona_changed",
+            component="transport.control_bot",
+            payload={"previous_persona": previous, "persona": self.default_persona},
+        )
+
+    @staticmethod
     def _seal_confirmation_markup(peer_id: int):
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
@@ -355,6 +468,18 @@ class ControlBot:
         )
         self._app.add_handler(
             CallbackQueryHandler(
+                self._callback_status,
+                pattern=r"^hive_status:show:-?\d+$",
+            )
+        )
+        self._app.add_handler(
+            CallbackQueryHandler(
+                self._callback_persona,
+                pattern=r"^hive_persona:set:[a-z_]+$",
+            )
+        )
+        self._app.add_handler(
+            CallbackQueryHandler(
                 self._callback_seal,
                 pattern=r"^hive_seal:(?:request|confirm|cancel):-?\d+$",
             )
@@ -366,8 +491,8 @@ class ControlBot:
                 BotCommand("chats", "List recent incoming chats"),
                 BotCommand("takeovers", "List active takeovers and controls"),
                 BotCommand("takeover", "Start a takeover by peer ID"),
-                BotCommand("persona", "Set the default persona"),
-                BotCommand("status", "Show an active takeover"),
+                BotCommand("persona", "Choose the default persona"),
+                BotCommand("status", "Choose a takeover to inspect"),
                 BotCommand("stop", "Request stop-and-seal confirmation"),
                 BotCommand("help", "Show available commands"),
             ]
@@ -500,7 +625,8 @@ class ControlBot:
         if not context.args:
             await self._reply_text(
                 update,
-                f"Usage: /persona <name>. Choose from: {', '.join(sorted(VALID_PERSONAS))}"
+                "Choose the default persona for new takeovers:",
+                reply_markup=self._persona_picker_markup(),
             )
             return
         name = context.args[0]
@@ -515,6 +641,16 @@ class ControlBot:
 
     async def _cmd_status(self, update, context):  # pragma: no cover
         if not await self._guard(update):
+            return
+        if not context.args:
+            if not self.userbot._sessions:
+                await self._reply_text(update, "No active takeovers.")
+                return
+            await self._reply_text(
+                update,
+                "Choose a takeover to inspect:",
+                reply_markup=self._status_picker_markup(),
+            )
             return
         peer = await self._peer_arg(update, context, "Usage: /status <peer_id>")
         if peer is None:

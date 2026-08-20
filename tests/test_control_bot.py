@@ -142,11 +142,42 @@ def test_unauthorised_user_rejected():
     assert 555 not in bot.userbot._sessions
 
 
-def test_persona_missing_arg_replies_usage():
+def test_persona_without_args_shows_persona_buttons():
     bot = _bot()
     up = FakeUpdate()
+
     _run(bot._cmd_persona(up, FakeContext([])))
-    assert "Usage" in up.message.replies[-1]
+
+    assert "Choose the default persona" in up.message.replies[-1]
+    buttons = [
+        button
+        for row in up.message.reply_markups[-1].inline_keyboard
+        for button in row
+    ]
+    assert any(button.text == "✓ Confused Elderly" for button in buttons)
+    assert any(
+        button.callback_data == "hive_persona:set:small_business_owner"
+        for button in buttons
+    )
+
+
+def test_persona_button_changes_default_persona():
+    bot = _bot()
+    update = FakeCallbackUpdate("hive_persona:set:small_business_owner")
+
+    _run(bot._callback_persona(update, FakeContext([])))
+
+    assert bot.default_persona == "small_business_owner"
+    assert "Small Business Owner" in update.callback_query.edits[-1]
+
+
+def test_typed_persona_still_sets_default_for_compatibility():
+    bot = _bot()
+    up = FakeUpdate()
+
+    _run(bot._cmd_persona(up, FakeContext(["small_business_owner"])))
+
+    assert bot.default_persona == "small_business_owner"
 
 
 def test_start_and_help_reply_with_command_reference():
@@ -285,6 +316,46 @@ def test_takeovers_lists_active_sessions_with_stop_buttons():
     button = update.message.reply_markups[-1].inline_keyboard[0][0]
     assert button.text == "Stop & seal 601"
     assert button.callback_data == "hive_seal:request:601"
+
+
+def test_status_without_args_shows_active_takeover_buttons():
+    bot = _bot()
+    bot.userbot.begin_takeover(606, "confused_elderly")
+    update = FakeUpdate()
+
+    _run(bot._cmd_status(update, FakeContext([])))
+
+    assert update.message.replies[-1] == "Choose a takeover to inspect:"
+    button = update.message.reply_markups[-1].inline_keyboard[0][0]
+    assert button.callback_data == "hive_status:show:606"
+
+
+def test_status_button_opens_summary_and_stop_control():
+    bot = _bot()
+    bot.userbot.begin_takeover(607, "confused_elderly")
+    update = FakeCallbackUpdate("hive_status:show:607")
+
+    _run(bot._callback_status(update, FakeContext([])))
+
+    assert update.callback_query.edits[-1] == "summary"
+    button = update.callback_query.edit_markups[-1].inline_keyboard[0][0]
+    assert button.callback_data == "hive_seal:request:607"
+
+
+def test_interactive_status_and_persona_reject_unauthorised_users():
+    bot = _bot()
+    bot.userbot.begin_takeover(608, "confused_elderly")
+    status_update = FakeCallbackUpdate("hive_status:show:608", uid=999)
+    persona_update = FakeCallbackUpdate("hive_persona:set:confused_elderly", uid=999)
+
+    _run(bot._callback_status(status_update, FakeContext([])))
+    _run(bot._callback_persona(persona_update, FakeContext([])))
+
+    expected = [{"text": "Unauthorised.", "show_alert": True}]
+    assert status_update.callback_query.answers == expected
+    assert persona_update.callback_query.answers == expected
+    assert status_update.callback_query.edits == []
+    assert persona_update.callback_query.edits == []
 
 
 def test_stop_command_requires_confirmation_and_keeps_takeover_running():

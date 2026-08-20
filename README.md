@@ -230,8 +230,9 @@ Further messages update the same request instead of sending duplicate alerts;
 starting a takeover resolves it, and a later post-takeover message can create a
 new request.
 
-The control bot also exposes `/takeovers` and `/status <peer_id>` with an
-interactive **Stop & seal** action. A second confirmation is required before
+The control bot also exposes `/takeovers` and an interactive `/status` picker
+with a **Stop & seal** action. `/persona` similarly lets the operator choose an
+default persona with buttons. A second confirmation is required before
 HIVE stops replying; the same coordinator used by the panel then archives the
 chat, generates the signed report, and sends the PDF back through Telegram.
 Concurrent panel and bot seal attempts are rejected instead of producing two
@@ -313,8 +314,8 @@ Control bot commands:
 
 ```text
 /takeover <peer_id> [persona]
-/persona <name>
-/status <peer_id>
+/persona
+/status
 /stop <peer_id>
 ```
 

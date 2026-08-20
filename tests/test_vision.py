@@ -7,7 +7,7 @@ structured extraction finds nothing.
 
 from unittest import mock
 
-from hive.extraction.media import describe_image, extract_from_image
+from hive.extraction.media import analyze_image, describe_image, extract_from_image
 
 
 class FakeVision:
@@ -64,3 +64,39 @@ def test_unstructured_vision_description_does_not_become_raw_qr(tmp_path):
         hvis = extract_from_image(str(img), source_msg_id=9, vision_client=vc)
 
     assert hvis == []
+
+
+def test_live_image_analysis_prefers_local_ocr_for_structured_indicators(tmp_path):
+    img = tmp_path / "transfer.png"
+    img.write_bytes(b"image")
+    vc = FakeVision("should not be called")
+
+    with (
+        mock.patch("hive.extraction.media.decode_qr", return_value=[]),
+        mock.patch(
+            "hive.extraction.media.extract_text_local",
+            return_value="Maybank account 1234567890",
+        ),
+    ):
+        result = analyze_image(str(img), source_msg_id=22, vision_client=vc)
+
+    assert result.source == "local_ocr"
+    assert result.hvis[0].kind == "bank_account"
+    assert result.hvis[0].extractor == "ocr"
+    assert vc.calls == []
+
+
+def test_live_image_analysis_uses_vision_after_local_misses(tmp_path):
+    img = tmp_path / "receipt.png"
+    img.write_bytes(b"image")
+    vc = FakeVision("transfer to account 1234567890")
+
+    with (
+        mock.patch("hive.extraction.media.decode_qr", return_value=[]),
+        mock.patch("hive.extraction.media.extract_text_local", return_value=""),
+    ):
+        result = analyze_image(str(img), source_msg_id=23, vision_client=vc)
+
+    assert result.source == "vision"
+    assert result.hvis[0].extractor == "vision"
+    assert len(vc.calls) == 1

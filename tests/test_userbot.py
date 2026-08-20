@@ -88,6 +88,74 @@ def test_on_message_ignores_unknown_peer():
     assert 999 not in ub._sessions
 
 
+def test_media_analysis_overlaps_debounce_and_reaches_batch_processor(tmp_path):
+    from hive.state import HVI
+
+    class MediaEngine(FakeEngine):
+        def __init__(self):
+            super().__init__(handed_back=False)
+            self.seen = []
+
+        def analyze_media(self, message):
+            return {
+                "analysis": {
+                    "source_msg_id": message.msg_id,
+                    "source": "local_ocr",
+                    "description": "account 12345678",
+                },
+                "hvis": [HVI("bank_account", "12345678", message.msg_id, 0.8, "ocr")],
+            }
+
+        def process_messages(self, session, chain, messages):
+            self.seen.extend(messages)
+            return TurnOutput(text=None)
+
+    engine = MediaEngine()
+    ub = _transport(engine)
+    ub.begin_takeover(778, "naive_young_adult")
+    image = tmp_path / "receipt.jpg"
+    image.write_bytes(b"jpeg")
+
+    _run(
+        ub.on_message(
+            778,
+            "receipt",
+            4,
+            1.0,
+            media_kind="image",
+            media_path=str(image),
+            media_sha256="abc",
+        )
+    )
+
+    assert engine.seen[0].media_analysis["source"] == "local_ocr"
+    assert engine.seen[0].media_hvis[0].value == "12345678"
+
+
+def test_media_analysis_failure_does_not_block_batch_processing(tmp_path):
+    class FailingMediaEngine(FakeEngine):
+        def __init__(self):
+            super().__init__(handed_back=False)
+            self.processed = False
+
+        def analyze_media(self, message):
+            raise RuntimeError("bad image")
+
+        def process_messages(self, session, chain, messages):
+            self.processed = True
+            return TurnOutput(text=None)
+
+    engine = FailingMediaEngine()
+    ub = _transport(engine)
+    ub.begin_takeover(779, "naive_young_adult")
+    image = tmp_path / "broken.jpg"
+    image.write_bytes(b"broken")
+
+    _run(ub.on_message(779, "image", 5, 1.0, media_kind="image", media_path=str(image)))
+
+    assert engine.processed is True
+
+
 def test_media_metadata_preserves_image_and_original_document_names():
     image = SimpleNamespace(
         id=12,

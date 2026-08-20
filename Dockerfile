@@ -30,6 +30,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libzbar0 \
         libgl1 \
         libglib2.0-0 \
+        tesseract-ocr \
+        tesseract-ocr-eng \
+        tesseract-ocr-chi-sim \
         fonts-wqy-zenhei \
         ca-certificates \
         bash \

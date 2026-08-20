@@ -10,7 +10,7 @@ import time
 
 from hive.runtime import HiveEngine
 from hive.sandbox.runner import RawFindings
-from hive.state import Message
+from hive.state import HVI, Message
 from hive.vault.signer import generate_keypair, verify_signature
 from tests.fakes import fake_client
 
@@ -31,7 +31,11 @@ def _engine() -> HiveEngine:
     # Agent + soft-classifier share the fake client; classifier JSON is parsed
     # from the same canned reply, so give it scam-ish soft signals.
     client = fake_client('{"urgency": 0.9, "payment_request": 0.9, "investment_framing": 0.8}')
-    return HiveEngine(agent_client=client, sandbox_runner=MaliciousRunner(), enable_early_exit=False)
+    return HiveEngine(
+        agent_client=client,
+        sandbox_runner=MaliciousRunner(),
+        enable_early_exit=False,
+    )
 
 
 def test_full_scam_session(tmp_path):
@@ -85,8 +89,48 @@ def test_early_exit_hands_back_on_benign(tmp_path):
                      enable_early_exit=True, early_exit_min_turns=2)
     session, chain = eng.new_session(peer_id=7, persona="small_business_owner")
 
-    out1 = eng.process_turn(session, chain, Message("stranger", "hi is this the shop?", time.time(), 0))
+    out1 = eng.process_turn(
+        session,
+        chain,
+        Message("stranger", "hi is this the shop?", time.time(), 0),
+    )
     assert out1.text  # turn 1 still engages
-    out2 = eng.process_turn(session, chain, Message("stranger", "ok thanks see you", time.time(), 2))
+    out2 = eng.process_turn(
+        session,
+        chain,
+        Message("stranger", "ok thanks see you", time.time(), 2),
+    )
     assert out2.handed_back is True
     assert out2.text is None
+
+
+def test_media_intelligence_enters_verdict_with_exact_message_provenance():
+    eng = _engine()
+    session, chain = eng.new_session(peer_id=88, persona="confused_elderly")
+    message = Message(
+        "stranger",
+        "see this",
+        time.time(),
+        42,
+        media_kind="image",
+        media_analysis={
+            "source_msg_id": 42,
+            "source": "local_ocr",
+            "description": "Maybank account 1234567890",
+            "indicator_count": 1,
+        },
+        media_hvis=[HVI("bank_account", "1234567890", 42, 0.8, "ocr")],
+    )
+
+    eng.process_turn(session, chain, message)
+
+    assert session.hvis[0].value == "1234567890"
+    assert session.hvis[0].extractor == "ocr"
+    assert session.media_analysis[0]["source_msg_id"] == 42
+    contribution = next(
+        item
+        for item in session.signal_trail[-1]["contributions"]
+        if item["reason"] == "hvi:bank_account"
+    )
+    assert contribution["source_message_ids"] == [42]
+    assert contribution["extractor"] == "ocr"

@@ -38,7 +38,12 @@ def _build_messages(
     messages = [ChatMessage(role="system", content=system)]
     for m in session.messages[-_HISTORY_WINDOW:]:
         role = "user" if m.role == "stranger" else "assistant"
-        messages.append(ChatMessage(role=role, content=m.text))
+        content = m.text
+        if m.role == "stranger" and m.media_analysis:
+            description = str(m.media_analysis.get("description") or "").strip()
+            if description:
+                content += f"\n[Private image analysis: {description}]"
+        messages.append(ChatMessage(role=role, content=content))
     return messages
 
 

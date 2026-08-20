@@ -86,6 +86,7 @@ class UserbotTransport:
         self._inbound_last_at: dict[int, float] = {}
         self._inbound_check_at: dict[int, float] = {}
         self._inbound_events: dict[int, asyncio.Event] = {}
+        self._media_analysis_tasks: dict[int, dict[int, asyncio.Task]] = {}
 
     async def start(self) -> None:
         """Connect as the user and register the inbound handler."""
@@ -549,6 +550,7 @@ class UserbotTransport:
             media_path=media_path,
             media_sha256=media_sha256,
         )
+        self._schedule_media_analysis(peer_id, message)
         loop = asyncio.get_running_loop()
         now = loop.time()
         self._inbound_buffers.setdefault(peer_id, []).append(message)
@@ -651,6 +653,67 @@ class UserbotTransport:
             if self._inbound_tasks.get(peer_id) is current:
                 self._inbound_tasks.pop(peer_id, None)
 
+    def _schedule_media_analysis(self, peer_id: int, message: Message) -> None:
+        analyzer = getattr(self.engine, "analyze_media", None)
+        if not callable(analyzer) or message.media_kind != "image" or not message.media_path:
+            return
+        task = asyncio.create_task(asyncio.to_thread(analyzer, message))
+        self._media_analysis_tasks.setdefault(peer_id, {})[message.msg_id] = task
+
+    async def _resolve_media_analysis(
+        self,
+        peer_id: int,
+        batch: list[Message],
+        session,
+    ) -> None:
+        tasks = self._media_analysis_tasks.get(peer_id, {})
+        for message in batch:
+            task = tasks.pop(message.msg_id, None)
+            if task is None:
+                continue
+            try:
+                result = await task
+            except Exception as exc:  # noqa: BLE001 - media failure must not block a reply
+                log.exception(
+                    "userbot: media analysis failed peer=%s msg=%s",
+                    peer_id,
+                    message.msg_id,
+                )
+                audit_event(
+                    "media_intelligence",
+                    "media_analysis_failed",
+                    component="transport.userbot",
+                    payload={"msg_id": message.msg_id, "error": str(exc)},
+                    peer_id=peer_id,
+                    session_id=session.session_id,
+                    level="error",
+                )
+                continue
+            if result:
+                message.media_analysis = dict(result.get("analysis") or {})
+                message.media_hvis = list(result.get("hvis") or [])
+                audit_event(
+                    "media_intelligence",
+                    "media_analysis_completed",
+                    component="transport.userbot",
+                    payload={
+                        **message.media_analysis,
+                        "indicators": [
+                            {
+                                "kind": item.kind,
+                                "value": item.value,
+                                "confidence": item.confidence,
+                                "extractor": item.extractor,
+                            }
+                            for item in message.media_hvis
+                        ],
+                    },
+                    peer_id=peer_id,
+                    session_id=session.session_id,
+                )
+        if not tasks:
+            self._media_analysis_tasks.pop(peer_id, None)
+
     async def _process_inbound_batch(self, peer_id: int, batch: list[Message]) -> None:
         entry = self._sessions.get(peer_id)
         if entry is None:
@@ -658,6 +721,7 @@ class UserbotTransport:
         session, chain = entry
         if session.phase in {Phase.CLOSING, Phase.SEALED}:
             return
+        await self._resolve_media_analysis(peer_id, batch, session)
         loop = asyncio.get_running_loop()
         processing_started = loop.time()
         process_messages = getattr(self.engine, "process_messages", None)
@@ -937,6 +1001,9 @@ class UserbotTransport:
             current = None
         if task is not None and task is not current and not task.done():
             task.cancel()
+        for media_task in self._media_analysis_tasks.pop(peer_id, {}).values():
+            if not media_task.done():
+                media_task.cancel()
 
     async def run_forever(self) -> None:  # pragma: no cover
         if self._client is None:

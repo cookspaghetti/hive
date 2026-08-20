@@ -12,11 +12,20 @@ always-LLM vision approach (reference-mapping.md).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from hive.extraction.regex_rules import extract_regex
 from hive.logging_setup import get_logger
 from hive.state import HVI
 
 log = get_logger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class MediaIntelligence:
+    source: str
+    description: str
+    hvis: tuple[HVI, ...]
 
 
 def classify_payload(payload: str, source_msg_id: int) -> list[HVI]:
@@ -60,6 +69,31 @@ def decode_qr(image_path: str, source_msg_id: int) -> list[HVI]:
         hvis.extend(classify_payload(payload, source_msg_id))
     log.info("L3 media: decoded %s -> %d HVI(s)", image_path, len(hvis))
     return hvis
+
+
+def extract_text_local(image_path: str) -> str:
+    """OCR an image locally; an unavailable OCR runtime is a clean miss."""
+    try:
+        import cv2
+        import pytesseract
+
+        image = cv2.imread(image_path)
+        if image is None:
+            return ""
+        gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        available = set(pytesseract.get_languages(config=""))
+        languages = "+".join(item for item in ("eng", "chi_sim") if item in available)
+        return str(
+            pytesseract.image_to_string(
+                gray,
+                lang=languages or None,
+                config="--psm 6",
+            )
+            or ""
+        ).strip()
+    except Exception as exc:  # noqa: BLE001 - optional OCR must never block processing
+        log.warning("L3 media: local OCR unavailable for %s (%s)", image_path, exc)
+        return ""
 
 
 _VISION_PROMPT = (
@@ -116,3 +150,30 @@ def extract_from_image(image_path: str, source_msg_id: int, vision_client=None) 
     for item in hvis:
         item.extractor = "vision"
     return hvis
+
+
+def analyze_image(
+    image_path: str,
+    source_msg_id: int,
+    vision_client=None,
+) -> MediaIntelligence:
+    """Return one provenance-labelled local/vision analysis for a live image."""
+    qr_hvis = decode_qr(image_path, source_msg_id)
+    if qr_hvis:
+        return MediaIntelligence("local_qr", "QR payload decoded locally.", tuple(qr_hvis))
+
+    local_text = extract_text_local(image_path)
+    if local_text:
+        ocr_hvis = extract_regex(local_text, source_msg_id)
+        for item in ocr_hvis:
+            item.extractor = "ocr"
+        if ocr_hvis or vision_client is None:
+            return MediaIntelligence("local_ocr", local_text, tuple(ocr_hvis))
+
+    if vision_client is None:
+        return MediaIntelligence("none", local_text, ())
+    description = describe_image(image_path, vision_client)
+    vision_hvis = extract_regex(description, source_msg_id)
+    for item in vision_hvis:
+        item.extractor = "vision"
+    return MediaIntelligence("vision", description, tuple(vision_hvis))

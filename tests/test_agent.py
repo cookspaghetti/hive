@@ -2,7 +2,7 @@
 
 import time
 
-from hive.agent.graph_nodes import reason_and_reply
+from hive.agent.graph_nodes import _build_messages, reason_and_reply
 from hive.llm.client import ChatMessage, Tier
 from hive.llm.router import RouteInputs
 from hive.state import Message, SessionState
@@ -48,3 +48,23 @@ def test_persona_system_prompt_present_in_call():
     system_msg = backend.calls[0]["messages"][0]
     assert system_msg["role"] == "system"
     assert "never reveal you are an ai" in system_msg["content"].lower()
+
+
+def test_media_description_is_prompt_context_without_changing_transcript():
+    session = SessionState(peer_id=1, persona="confused_elderly")
+    message = Message(
+        role="stranger",
+        text="see this",
+        ts=time.time(),
+        msg_id=9,
+        media_kind="image",
+        media_analysis={"description": "Maybank account 1234567890"},
+    )
+    session.messages.append(message)
+
+    prompt = _build_messages(session, [])
+
+    assert prompt[-1].content == (
+        "see this\n[Private image analysis: Maybank account 1234567890]"
+    )
+    assert message.text == "see this"

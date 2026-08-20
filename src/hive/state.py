@@ -49,6 +49,8 @@ class Message:
     media_size: int | None = None
     media_path: str | None = None
     media_sha256: str | None = None
+    media_analysis: dict[str, Any] | None = None
+    media_hvis: list[HVI] = field(default_factory=list)
 
 
 @dataclass

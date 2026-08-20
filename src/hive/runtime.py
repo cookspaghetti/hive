@@ -57,6 +57,7 @@ class HiveEngine:
     agent_client: LLMClient
     sandbox_runner: BrowserRunner
     ner_backend: NerBackend | None = None
+    vision_client: object | None = None
     enable_early_exit: bool = True
     early_exit_min_turns: int = 3   # don't bail before we've seen enough
     max_turns: int = 60             # 0 disables; else terminate past this
@@ -103,6 +104,24 @@ class HiveEngine:
             payload={"existed": existed},
             peer_id=peer_id,
         )
+
+    def analyze_media(self, message: Message) -> dict[str, Any] | None:
+        """Analyse one captured image without mutating shared session state."""
+        if message.media_kind != "image" or not message.media_path:
+            return None
+        from hive.extraction.media import analyze_image
+
+        result = analyze_image(message.media_path, message.msg_id, self.vision_client)
+        return {
+            "analysis": {
+                "source_msg_id": message.msg_id,
+                "source": result.source,
+                "description": result.description,
+                "media_sha256": message.media_sha256,
+                "indicator_count": len(result.hvis),
+            },
+            "hvis": list(result.hvis),
+        }
 
     def new_session(self, peer_id: int, persona: str) -> tuple[SessionState, HashChain]:
         s = SessionState(peer_id=peer_id, persona=persona, phase=Phase.ARMED)
@@ -395,10 +414,11 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
 
     from hive.agent.memory import build_memory
     from hive.extraction.ner import get_default_backend
-    from hive.llm.client import build_client
+    from hive.llm.client import build_client, build_vision_client
     from hive.sandbox.runner import PlaywrightDockerRunner
 
     client = build_client(settings)
+    vision_client = build_vision_client(settings)
     sandbox_memory = os.getenv("HIVE_SANDBOX_MEMORY_LIMIT", "512m").strip() or None
     runner = PlaywrightDockerRunner(memory_limit=sandbox_memory)
     ner = get_default_backend() if load_ner else None
@@ -411,6 +431,7 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
         agent_client=client,
         sandbox_runner=runner,
         ner_backend=ner,
+        vision_client=vision_client,
         memory_factory=memory_factory,
         max_turns=getattr(settings, "max_turns", 60),
         max_session_minutes=getattr(settings, "max_session_minutes", 120),

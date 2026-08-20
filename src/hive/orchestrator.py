@@ -157,6 +157,16 @@ def build_turn_graph(engine: HiveEngine):
                 ner_backend=engine.ner_backend,
             )
         ]
+        hvis.extend(item for inbound in inbounds for item in inbound.media_hvis)
+        known_media = {
+            int(item.get("source_msg_id") or 0)
+            for item in session.media_analysis
+            if isinstance(item, dict)
+        }
+        for inbound in inbounds:
+            if inbound.media_analysis and inbound.msg_id not in known_media:
+                session.media_analysis.append(dict(inbound.media_analysis))
+                known_media.add(inbound.msg_id)
         accepted = merge_hvis(session.hvis, hvis)
         for h in accepted:
             chain.append({"event": "hvi", "kind": h.kind, "value": h.value}, ts=time.time())
@@ -171,6 +181,7 @@ def build_turn_graph(engine: HiveEngine):
                         "value": item.value,
                         "source_msg_id": item.source_msg_id,
                         "confidence": item.confidence,
+                        "extractor": item.extractor,
                     }
                     for item in hvis
                 ],

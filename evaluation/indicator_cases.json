@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "description": "Sanitized, synthetic regression cases for deterministic HVI extraction.",
+  "cases": [
+    {
+      "id": "en-maybank-account",
+      "language": "en",
+      "text": "Transfer it to Maybank account 1234567890.",
+      "expected": [{"kind": "bank_account", "value": "1234567890"}]
+    },
+    {
+      "id": "manglish-mbb-spaced-account",
+      "language": "manglish",
+      "text": "Can lah, send to 2572 8278 2992 MBB.",
+      "expected": [{"kind": "bank_account", "value": "257282782992"}]
+    },
+    {
+      "id": "zh-account-context",
+      "language": "zh",
+      "text": "请转到这个 account 8765-4321-0012，谢谢。",
+      "expected": [{"kind": "bank_account", "value": "876543210012"}]
+    },
+    {
+      "id": "en-malaysian-phone",
+      "language": "en",
+      "text": "Call me on 012-345 6789.",
+      "expected": [{"kind": "phone_my", "value": "012-345 6789"}]
+    },
+    {
+      "id": "en-bare-domain",
+      "language": "en",
+      "text": "Open secure-prize.example/login to continue.",
+      "expected": [{"kind": "url", "value": "https://secure-prize.example/login"}]
+    },
+    {
+      "id": "en-telegram-and-ethereum",
+      "language": "en",
+      "text": "Message @secure_helper or pay 0x52908400098527886E0F7030069857D2E4169EE7.",
+      "expected": [
+        {"kind": "telegram_id", "value": "@secure_helper"},
+        {"kind": "crypto_eth", "value": "0x52908400098527886E0F7030069857D2E4169EE7"}
+      ]
+    },
+    {
+      "id": "en-phone-label-only",
+      "language": "en",
+      "text": "Just send me your phone number.",
+      "expected": []
+    },
+    {
+      "id": "en-unscoped-order-number",
+      "language": "en",
+      "text": "Your order reference is 1234567890.",
+      "expected": []
+    },
+    {
+      "id": "en-version-and-email",
+      "language": "en",
+      "text": "Email support@example.com about version 1.44.0.",
+      "expected": []
+    },
+    {
+      "id": "zh-unscoped-number",
+      "language": "zh",
+      "text": "订单编号是 9988776655，不是银行账号。",
+      "expected": []
+    }
+  ]
+}

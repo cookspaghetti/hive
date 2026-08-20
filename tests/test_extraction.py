@@ -35,6 +35,7 @@ def test_bare_domain_extraction_ignores_email_addresses_and_decimal_versions():
     hvis = extract_regex("email scammer@example.com about version 1.44.0", 3)
 
     assert not any(item.kind == "url" for item in hvis)
+    assert not any(item.kind == "telegram_id" for item in hvis)
 
 
 def test_bank_account_only_with_keyword():

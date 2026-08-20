@@ -1,0 +1,105 @@
+"""Run deterministic intelligence extraction against the sanitized corpus."""
+
+from __future__ import annotations
+
+import argparse
+import json
+from collections import defaultdict
+from pathlib import Path
+from typing import Any
+
+from hive.extraction.engine import extract_hvis, hvi_key
+from hive.state import HVI
+
+DEFAULT_CORPUS = Path(__file__).resolve().parents[2] / "evaluation" / "indicator_cases.json"
+
+
+def _expected_key(item: dict[str, Any]) -> tuple[str, str]:
+    return hvi_key(
+        HVI(
+            kind=str(item["kind"]),
+            value=str(item["value"]),
+            source_msg_id=0,
+        )
+    )
+
+
+def _score(tp: int, fp: int, fn: int) -> dict[str, float | int]:
+    precision = tp / (tp + fp) if tp + fp else 1.0
+    recall = tp / (tp + fn) if tp + fn else 1.0
+    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
+    return {
+        "true_positives": tp,
+        "false_positives": fp,
+        "false_negatives": fn,
+        "precision": round(precision, 4),
+        "recall": round(recall, 4),
+        "f1": round(f1, 4),
+    }
+
+
+def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, Any]:
+    corpus_path = Path(path)
+    payload = json.loads(corpus_path.read_text(encoding="utf-8"))
+    cases = payload.get("cases")
+    if payload.get("schema_version") != 1 or not isinstance(cases, list):
+        raise ValueError("unsupported indicator corpus schema")
+
+    totals = {"tp": 0, "fp": 0, "fn": 0}
+    by_kind: dict[str, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
+    failures: list[dict[str, Any]] = []
+    for index, case in enumerate(cases, start=1):
+        expected = {_expected_key(item) for item in case.get("expected", [])}
+        actual = {hvi_key(item) for item in extract_hvis(str(case["text"]), index)}
+        matched = expected & actual
+        unexpected = actual - expected
+        missing = expected - actual
+        totals["tp"] += len(matched)
+        totals["fp"] += len(unexpected)
+        totals["fn"] += len(missing)
+        for kind, _value in matched:
+            by_kind[kind]["tp"] += 1
+        for kind, _value in unexpected:
+            by_kind[kind]["fp"] += 1
+        for kind, _value in missing:
+            by_kind[kind]["fn"] += 1
+        if unexpected or missing:
+            failures.append(
+                {
+                    "id": case["id"],
+                    "unexpected": sorted(unexpected),
+                    "missing": sorted(missing),
+                }
+            )
+
+    return {
+        "schema_version": payload["schema_version"],
+        "corpus": str(corpus_path),
+        "cases": len(cases),
+        "overall": _score(totals["tp"], totals["fp"], totals["fn"]),
+        "by_kind": {
+            kind: _score(values["tp"], values["fp"], values["fn"])
+            for kind, values in sorted(by_kind.items())
+        },
+        "failures": failures,
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--corpus", default=str(DEFAULT_CORPUS))
+    parser.add_argument("--min-precision", type=float, default=0.95)
+    parser.add_argument("--min-recall", type=float, default=0.95)
+    args = parser.parse_args()
+    result = evaluate_indicator_corpus(args.corpus)
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    overall = result["overall"]
+    if (
+        overall["precision"] < args.min_precision
+        or overall["recall"] < args.min_recall
+    ):
+        raise SystemExit(1)
+
+
+if __name__ == "__main__":
+    main()

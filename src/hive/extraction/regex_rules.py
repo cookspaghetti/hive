@@ -33,7 +33,7 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "url": _URL_RE,
     "crypto_btc": re.compile(r"\b(?:bc1|[13])[a-km-zA-HJ-NP-Z1-9]{25,39}\b"),
     "crypto_eth": re.compile(r"\b0x[0-9a-fA-F]{40}\b"),
-    "telegram_id": re.compile(r"@[A-Za-z0-9_]{5,32}"),
+    "telegram_id": re.compile(r"(?<![\w.+-])@[A-Za-z0-9_]{5,32}"),
     "phone_my": re.compile(r"\b(?:\+?60|0)1\d[-\s]?\d{3,4}[-\s]?\d{4}\b"),
 }
 

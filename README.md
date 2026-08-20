@@ -434,6 +434,13 @@ Run the full suite:
 uv run pytest -q
 ```
 
+Measure deterministic indicator precision and recall against the sanitized
+English, Mandarin, and Manglish regression corpus:
+
+```powershell
+task evaluate
+```
+
 Focused review-fix coverage:
 
 ```powershell

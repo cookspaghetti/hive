@@ -420,6 +420,9 @@ def create_app(
     migrate_history_ids = getattr(history, "migrate_legacy_ids", None)
     if migrate_history_ids is not None:
         migrate_history_ids()
+    migrate_analysis_metadata = getattr(history, "migrate_analysis_metadata", None)
+    if migrate_analysis_metadata is not None:
+        migrate_analysis_metadata()
     observations.event("runtime", "Control panel ready", "Local operator console initialized")
 
     @asynccontextmanager

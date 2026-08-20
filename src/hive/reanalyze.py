@@ -24,10 +24,20 @@ from hive.replay import replay_history_record
 from hive.runtime import build_engine
 
 
-def _archived_record(history, selector: str) -> dict[str, Any]:
+def _archived_records(history, selector: str) -> list[dict[str, Any]]:
+    if selector.lower() == "all":
+        records = [
+            record
+            for row in history.list()
+            if (record := history.get(str(row["id"]))) is not None
+            and not record.get("replay_of")
+        ]
+        if not records:
+            raise LookupError("no archived takeovers found")
+        return records
     direct = history.get(selector)
     if direct is not None:
-        return direct
+        return [direct]
     try:
         peer_id = int(selector)
     except ValueError as exc:
@@ -38,7 +48,7 @@ def _archived_record(history, selector: str) -> dict[str, Any]:
     record = history.get(str(matches[0]["id"]))
     if record is None:
         raise LookupError(f"archived takeover {matches[0]['id']} disappeared")
-    return record
+    return [record]
 
 
 def _attachments(values: list[str]) -> dict[int, Path]:
@@ -68,7 +78,7 @@ def _persist_media(session, attachments: dict[int, Path], media_root: Path) -> N
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("selector", help="history UUID, legacy ID, or peer ID")
+    parser.add_argument("selector", help="history UUID, legacy ID, peer ID, or 'all'")
     parser.add_argument(
         "--attach-image",
         action="append",
@@ -90,8 +100,10 @@ def run(argv: Sequence[str] | None = None) -> int:
     configure_audit(replay_audit_path, settings.database_url)
     configure_logging(settings.log_level)
     history = build_history_store(args.history_root, settings.database_url)
-    record = _archived_record(history, args.selector)
+    records = _archived_records(history, args.selector)
     attachments = _attachments(args.attach_image)
+    if attachments and len(records) != 1:
+        raise ValueError("attachments require one specific archived case")
     descriptions: dict[int, str] = {}
     if attachments and not args.no_vision:
         vision = build_vision_client(settings)
@@ -101,30 +113,31 @@ def run(argv: Sequence[str] | None = None) -> int:
         }
     isolated = settings.model_copy(update={"use_semantic_memory": False})
     engine = build_engine(isolated, load_ner=not args.no_ner)
-    replayed = replay_history_record(
-        record,
-        engine,
-        media_paths=attachments,
-        media_descriptions=descriptions,
-    )
-    _persist_media(replayed, attachments, Path(settings.media_path))
     migrated = (
         history.migrate_legacy_ids()
         if args.migrate_legacy_ids and hasattr(history, "migrate_legacy_ids")
         else {}
     )
-    analysis = analysis_run_record(
-        record,
-        replayed,
-        models=model_manifest(settings),
-    )
     analysis_store = build_analysis_run_store(
         args.history_root / "analysis_runs",
         settings.database_url,
     )
-    analysis_store.create(analysis)
-    print(
-        json.dumps(
+    outputs = []
+    for record in records:
+        replayed = replay_history_record(
+            record,
+            engine,
+            media_paths=attachments,
+            media_descriptions=descriptions,
+        )
+        _persist_media(replayed, attachments, Path(settings.media_path))
+        analysis = analysis_run_record(
+            record,
+            replayed,
+            models=model_manifest(settings),
+        )
+        analysis_store.create(analysis)
+        outputs.append(
             {
                 "history_id": record["id"],
                 "analysis_run_id": analysis["id"],
@@ -135,12 +148,11 @@ def run(argv: Sequence[str] | None = None) -> int:
                 "exchanges": replayed.exchange_count,
                 "indicators": analysis["hvi_items"],
                 "media_analysis": replayed.media_analysis,
-                "migrated_history_ids": migrated,
-            },
-            ensure_ascii=False,
-            indent=2,
+            }
         )
-    )
+    payload = outputs[0] if len(outputs) == 1 else {"count": len(outputs), "analyses": outputs}
+    payload["migrated_history_ids"] = migrated
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0
 
 

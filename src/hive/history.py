@@ -244,6 +244,47 @@ class TakeoverHistoryStore:
             )
         return migrated
 
+    def migrate_analysis_metadata(self) -> dict[str, str]:
+        """Backfill provenance on legacy records without changing transcripts."""
+        migrated: dict[str, str] = {}
+        if not self.root.is_dir():
+            return migrated
+        for path in list(self.root.glob("*.json")):
+            record = self._read(path)
+            history_id = str(record.get("id") or "") if record else ""
+            if (
+                record is None
+                or not _valid_history_id(history_id)
+                or isinstance(record.get("analysis"), dict)
+            ):
+                continue
+            analysis = original_analysis_metadata(
+                history_id,
+                list(record.get("messages") or []),
+                created_ts=float(record.get("ended_ts") or 0),
+                kind="legacy_reanalysis" if record.get("replay_of") else "original",
+            )
+            record["analysis"] = analysis
+            temporary = path.with_suffix(".json.tmp")
+            temporary.write_text(
+                json.dumps(record, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            temporary.replace(path)
+            migrated[history_id] = analysis["id"]
+        self._audit_analysis_migration(migrated, "history.local")
+        return migrated
+
+    @staticmethod
+    def _audit_analysis_migration(migrated: dict[str, str], component: str) -> None:
+        if migrated:
+            audit_event(
+                "analysis_run",
+                "legacy_analysis_metadata_migrated",
+                component=component,
+                payload={"mapping": migrated},
+            )
+
     @staticmethod
     def _read(path: Path) -> dict[str, Any] | None:
         try:
@@ -384,6 +425,32 @@ class PostgresTakeoverHistoryStore:
                 component="history.postgres",
                 payload={"mapping": migrated},
             )
+        return migrated
+
+    def migrate_analysis_metadata(self) -> dict[str, str]:
+        """Backfill provenance on legacy rows without changing transcripts."""
+        from psycopg.types.json import Jsonb
+
+        migrated: dict[str, str] = {}
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT id, record FROM takeover_history")
+            for history_id, raw_record in cursor.fetchall():
+                record = dict(raw_record)
+                if isinstance(record.get("analysis"), dict):
+                    continue
+                analysis = original_analysis_metadata(
+                    str(history_id),
+                    list(record.get("messages") or []),
+                    created_ts=float(record.get("ended_ts") or 0),
+                    kind="legacy_reanalysis" if record.get("replay_of") else "original",
+                )
+                record["analysis"] = analysis
+                cursor.execute(
+                    "UPDATE takeover_history SET record = %s WHERE id = %s",
+                    (Jsonb(record), history_id),
+                )
+                migrated[str(history_id)] = analysis["id"]
+        TakeoverHistoryStore._audit_analysis_migration(migrated, "history.postgres")
         return migrated
 
 

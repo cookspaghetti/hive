@@ -1,5 +1,6 @@
 """Archived takeover analysis replay tests."""
 
+from hive.reanalyze import _archived_records
 from hive.replay import replay_history_record
 from hive.runtime import HiveEngine
 from tests.fakes import fake_client
@@ -58,3 +59,32 @@ def test_replay_preserves_transcript_and_reruns_analysis():
     assert replayed.replay_of == "123_919"
     assert replayed.turn_count == 2
     assert replayed.signal_trail[-1]["contributions"][-1]["source_message_ids"] == [2]
+
+
+class FakeHistory:
+    def __init__(self):
+        self.records = {
+            "8514213f-a1eb-4986-a2dc-bd3fa196ea96": {
+                "id": "8514213f-a1eb-4986-a2dc-bd3fa196ea96",
+                "peer_id": 919,
+            },
+            "8d195b38-c1c3-4e00-ac1a-bcc5851ea2be": {
+                "id": "8d195b38-c1c3-4e00-ac1a-bcc5851ea2be",
+                "peer_id": 919,
+                "replay_of": "old",
+            },
+        }
+
+    def get(self, history_id):
+        return self.records.get(history_id)
+
+    def list(self):
+        return list(self.records.values())
+
+
+def test_batch_reanalysis_selects_original_cases_only():
+    selected = _archived_records(FakeHistory(), "all")
+
+    assert [record["id"] for record in selected] == [
+        "8514213f-a1eb-4986-a2dc-bd3fa196ea96"
+    ]

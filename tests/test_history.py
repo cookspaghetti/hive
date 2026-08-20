@@ -54,6 +54,30 @@ def test_history_store_migrates_legacy_ids_and_keeps_old_alias(tmp_path):
     assert not tmp_path.joinpath(f"{legacy_id}.json").exists()
 
 
+def test_history_store_backfills_analysis_without_changing_transcript(tmp_path):
+    history_id = "8514213f-a1eb-4986-a2dc-bd3fa196ea96"
+    messages = [{"role": "stranger", "text": "你好", "ts": 10, "msg_id": 1}]
+    record = {
+        "id": history_id,
+        "peer_id": 20,
+        "ended_ts": 40,
+        "messages": messages,
+    }
+    tmp_path.joinpath(f"{history_id}.json").write_text(
+        json.dumps(record, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    store = TakeoverHistoryStore(tmp_path)
+
+    migrated = store.migrate_analysis_metadata()
+
+    updated = store.get(history_id)
+    assert migrated[history_id] == updated["analysis"]["id"]
+    assert updated["analysis"]["kind"] == "original"
+    assert updated["messages"] == messages
+    assert store.migrate_analysis_metadata() == {}
+
+
 def test_history_store_imports_prepared_uuid_record(tmp_path):
     store = TakeoverHistoryStore(tmp_path)
     record = {

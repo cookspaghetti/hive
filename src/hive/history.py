@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Protocol
 from uuid import UUID, uuid4
 
+from hive.analysis_runs import original_analysis_metadata
 from hive.audit import audit_event
 from hive.logging_setup import get_logger
 from hive.state import SessionState
@@ -35,6 +36,7 @@ class HistoryStore(Protocol):
         evidence_path: str | Path | None = None,
         ended_ts: float | None = None,
         status: str = "sealed",
+        analysis_models: dict[str, str] | None = None,
     ) -> dict[str, Any]: ...
 
     def list(self) -> list[dict[str, Any]]: ...
@@ -50,10 +52,34 @@ def _record(
     evidence_path: str | Path | None,
     ended_ts: float | None,
     status: str,
+    analysis_models: dict[str, str] | None,
 ) -> dict[str, Any]:
     ended = time.time() if ended_ts is None else ended_ts
+    history_id = str(uuid4())
+    messages = [
+        {
+            "role": message.role,
+            "text": message.text,
+            "ts": message.ts,
+            "msg_id": message.msg_id,
+            "media_kind": message.media_kind,
+            "media_name": message.media_name,
+            "media_mime": message.media_mime,
+            "media_size": message.media_size,
+            "media_available": bool(message.media_path),
+            "media_sha256": message.media_sha256,
+        }
+        for message in session.messages
+    ]
+    analysis = original_analysis_metadata(
+        history_id,
+        messages,
+        created_ts=ended,
+        models=analysis_models,
+        kind="reanalysis" if session.replay_of else "original",
+    )
     return {
-        "id": str(uuid4()),
+        "id": history_id,
         "session_id": session.session_id,
         "peer_id": session.peer_id,
         "persona": session.persona,
@@ -65,21 +91,7 @@ def _record(
         "started_ts": session.started_ts,
         "ended_ts": ended,
         "duration_s": max(0, round(ended - session.started_ts)) if session.started_ts else None,
-        "messages": [
-            {
-                "role": message.role,
-                "text": message.text,
-                "ts": message.ts,
-                "msg_id": message.msg_id,
-                "media_kind": message.media_kind,
-                "media_name": message.media_name,
-                "media_mime": message.media_mime,
-                "media_size": message.media_size,
-                "media_available": bool(message.media_path),
-                "media_sha256": message.media_sha256,
-            }
-            for message in session.messages
-        ],
+        "messages": messages,
         "hvi_items": [
             {
                 "kind": item.kind,
@@ -94,6 +106,7 @@ def _record(
         "signal_trail": session.signal_trail,
         "replay_of": session.replay_of,
         "media_analysis": session.media_analysis,
+        "analysis": analysis,
         "evidence_filename": Path(evidence_path).name if evidence_path else None,
     }
 
@@ -116,7 +129,11 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
             "duration_s",
             "evidence_filename",
         )
-    } | {"message_count": len(record.get("messages", []))}
+    } | {
+        "message_count": len(record.get("messages", [])),
+        "analysis_run_id": (record.get("analysis") or {}).get("id"),
+        "analysis_schema_version": (record.get("analysis") or {}).get("schema_version"),
+    }
 
 
 class TakeoverHistoryStore:
@@ -132,12 +149,14 @@ class TakeoverHistoryStore:
         evidence_path: str | Path | None = None,
         ended_ts: float | None = None,
         status: str = "sealed",
+        analysis_models: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         record = _record(
             session,
             evidence_path=evidence_path,
             ended_ts=ended_ts,
             status=status,
+            analysis_models=analysis_models,
         )
         self.root.mkdir(parents=True, exist_ok=True)
         path = self.root / f"{record['id']}.json"
@@ -269,6 +288,7 @@ class PostgresTakeoverHistoryStore:
         evidence_path: str | Path | None = None,
         ended_ts: float | None = None,
         status: str = "sealed",
+        analysis_models: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         from psycopg.types.json import Jsonb
 
@@ -277,6 +297,7 @@ class PostgresTakeoverHistoryStore:
             evidence_path=evidence_path,
             ended_ts=ended_ts,
             status=status,
+            analysis_models=analysis_models,
         )
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(

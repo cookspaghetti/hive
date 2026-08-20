@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from hive.analysis_runs import model_manifest
 from hive.audit import audit_event
 from hive.history import HistoryStore
 from hive.vault.paths import new_bundle_path
@@ -87,7 +88,11 @@ class TakeoverCoordinator:
                         operator_name=getattr(self.settings, "operator_name", ""),
                     )
                 )
-                record = self.history.archive(session, evidence_path=sealed_path)
+                record = self.history.archive(
+                    session,
+                    evidence_path=sealed_path,
+                    analysis_models=model_manifest(self.settings),
+                )
             except Exception as exc:
                 session.phase = previous_phase
                 audit_event(

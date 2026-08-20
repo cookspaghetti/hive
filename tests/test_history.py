@@ -31,6 +31,12 @@ def test_history_store_persists_and_lists_newest_first(tmp_path):
     assert store.get(archived["id"]) == archived
     assert UUID(archived["id"]).version == 4
     assert archived["hvi_items"][0]["source_msg_id"] == 2
+    assert UUID(archived["analysis"]["id"]).version == 4
+    assert archived["analysis"]["history_id"] == archived["id"]
+    assert archived["analysis"]["kind"] == "original"
+    assert archived["analysis"]["schema_version"] == 1
+    assert len(archived["analysis"]["transcript_sha256"]) == 64
+    assert rows[0]["analysis_run_id"] == archived["analysis"]["id"]
 
 
 def test_history_store_migrates_legacy_ids_and_keeps_old_alias(tmp_path):

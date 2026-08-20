@@ -107,13 +107,23 @@ def test_parse_scores_handles_garbage():
 
 def test_structured_assessment_keeps_only_valid_message_evidence():
     assessment = _parse_assessment(
-        """{"urgency":{"score":0.8,"message_ids":[7,999]},
+        """{"urgency":{"score":0.8,"message_ids":["7",999,true,"invalid"]},
         "payment_request":{"score":0.9,"message_ids":[999]}}""",
         {7},
     )
 
     assert assessment.scores["urgency"] == 0.8
     assert assessment.evidence["urgency"] == [7]
+    assert assessment.scores["payment_request"] == 0.0
+
+
+def test_live_assessment_rejects_ungrounded_legacy_numeric_scores():
+    assessment = _parse_assessment(
+        '{"urgency":0.8,"payment_request":0.9}',
+        {7},
+    )
+
+    assert assessment.scores["urgency"] == 0.0
     assert assessment.scores["payment_request"] == 0.0
 
 
@@ -127,3 +137,121 @@ def test_classify_soft_with_fake_client():
     assessment = classify_soft(s, client)
     assert assessment.scores["urgency"] == 0.8
     assert assessment.evidence["urgency"] == [0]
+
+
+def test_classifier_rejects_real_but_semantically_wrong_evidence():
+    s = _session()
+    s.messages.extend(
+        [
+            Message(role="stranger", text="petasan", ts=time.time(), msg_id=10),
+            Message(role="stranger", text="this my agent", ts=time.time(), msg_id=11),
+        ]
+    )
+    client = fake_client(
+        '{"payment_request":{"score":0.9,"message_ids":[10,11]},'
+        '"authority_impersonation":{"score":0.8,"message_ids":[11]}}'
+    )
+
+    assessment = classify_soft(s, client)
+
+    assert assessment.scores["payment_request"] == 0.0
+    assert assessment.evidence["payment_request"] == []
+    assert assessment.scores["authority_impersonation"] == 0.0
+    assert assessment.evidence["authority_impersonation"] == []
+
+
+def test_classifier_keeps_only_messages_that_directly_support_signal():
+    s = _session()
+    s.messages.extend(
+        [
+            Message(role="stranger", text="Bro", ts=time.time(), msg_id=20),
+            Message(role="stranger", text="quick, send me the money", ts=time.time(), msg_id=21),
+        ]
+    )
+    client = fake_client(
+        '{"urgency":{"score":0.9,"message_ids":[20,21]},'
+        '"payment_request":{"score":0.95,"message_ids":[20,21]}}'
+    )
+
+    assessment = classify_soft(s, client)
+
+    assert assessment.scores["urgency"] == 0.9
+    assert assessment.evidence["urgency"] == [21]
+    assert assessment.scores["payment_request"] == 0.95
+    assert assessment.evidence["payment_request"] == [21]
+
+
+def test_classifier_does_not_treat_an_ordinary_today_as_urgency():
+    s = _session()
+    s.messages.append(
+        Message(role="stranger", text="how are you today?", ts=time.time(), msg_id=22)
+    )
+
+    assessment = classify_soft(
+        s,
+        fake_client('{"urgency":{"score":0.8,"message_ids":[22]}}'),
+    )
+
+    assert assessment.scores["urgency"] == 0.0
+
+
+def test_classifier_accepts_explicit_short_payment_instruction():
+    s = _session()
+    s.messages.append(Message(role="stranger", text="pay now", ts=time.time(), msg_id=23))
+
+    assessment = classify_soft(
+        s,
+        fake_client('{"payment_request":{"score":0.9,"message_ids":[23]}}'),
+    )
+
+    assert assessment.scores["payment_request"] == 0.9
+    assert assessment.evidence["payment_request"] == [23]
+
+
+def test_classifier_preserves_grounded_mandarin_signals():
+    s = _session()
+    s.messages.append(
+        Message(role="stranger", text="马上转账，投资回报可以翻倍", ts=time.time(), msg_id=30)
+    )
+    client = fake_client(
+        '{"urgency":{"score":0.8,"message_ids":[30]},'
+        '"investment_framing":{"score":0.9,"message_ids":[30]},'
+        '"payment_request":{"score":0.85,"message_ids":[30]}}'
+    )
+
+    assessment = classify_soft(s, client)
+
+    assert assessment.scores["urgency"] == 0.8
+    assert assessment.scores["investment_framing"] == 0.9
+    assert assessment.scores["payment_request"] == 0.85
+
+
+def test_inconsistency_requires_a_comparison_and_change_marker():
+    one = _session()
+    one.messages.append(
+        Message(role="stranger", text="trust me bro", ts=time.time(), msg_id=40)
+    )
+    rejected = classify_soft(
+        one,
+        fake_client('{"inconsistency":{"score":0.9,"message_ids":[40]}}'),
+    )
+    assert rejected.scores["inconsistency"] == 0.0
+
+    pair = _session()
+    pair.messages.extend(
+        [
+            Message(role="stranger", text="register on the website", ts=time.time(), msg_id=41),
+            Message(
+                role="stranger",
+                text="nope, instead send me the money",
+                ts=time.time(),
+                msg_id=42,
+            ),
+        ]
+    )
+    accepted = classify_soft(
+        pair,
+        fake_client('{"inconsistency":{"score":0.8,"message_ids":[41,42]}}'),
+    )
+    assert accepted.scores["inconsistency"] == 0.8
+    assert accepted.evidence["inconsistency"] == [41, 42]

@@ -19,7 +19,7 @@ class FakeNer:
         return []
 
 
-def test_replay_preserves_transcript_and_reruns_analysis():
+def test_replay_preserves_transcript_and_reruns_grounded_analysis():
     record = {
         "id": "123_919",
         "peer_id": 919,
@@ -58,7 +58,9 @@ def test_replay_preserves_transcript_and_reruns_analysis():
     assert [(item.kind, item.value) for item in replayed.hvis] == [("person_name", "John")]
     assert replayed.replay_of == "123_919"
     assert replayed.turn_count == 2
-    assert replayed.signal_trail[-1]["contributions"][-1]["source_message_ids"] == [2]
+    contributions = replayed.signal_trail[-1]["contributions"]
+    assert all(item["reason"] != "soft:payment_request" for item in contributions)
+    assert contributions[-1]["source_message_ids"] == [1]
 
 
 class FakeHistory:

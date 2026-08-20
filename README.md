@@ -445,6 +445,9 @@ With the Compose stack running, `task services:verify` creates transient test
 records in PostgreSQL and an isolated Qdrant collection, verifies exact and
 semantic retrieval, and removes all test data before exiting.
 
+Run the same deterministic lint, test, extraction-accuracy, panel-syntax, and
+Compose checks enforced in GitHub Actions with `task ci`.
+
 Focused review-fix coverage:
 
 ```powershell

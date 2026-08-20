@@ -77,6 +77,15 @@ tasks:
       - task: typecheck
       - task: test
 
+  ci:
+    desc: Run the deterministic CI gate locally
+    cmds:
+      - task: lint
+      - task: test
+      - task: evaluate
+      - node --check src/hive/webpanel/resources/panel.js
+      - docker compose config --quiet
+
   docker:build:
     desc: Build the disposable forensic sandbox image
     cmds:

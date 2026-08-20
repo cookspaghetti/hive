@@ -258,6 +258,8 @@ def test_intelligence_workspace_can_open_archived_runs(client):
     assert '<optgroup label="Active sessions">' in script
     assert '<optgroup label="Previous runs">' in script
     assert "async function openIntelligenceHistory(historyId)" in script
+    assert "async function openHistory(historyId)" in script
+    assert script.count('analyses.find((item) => item.kind === "reanalysis")') == 2
     assert "openIntelligenceHistory(identifier)" in script
     assert 'id="intelligenceAnalysis"' in page
     assert 'id="reanalyzeHistory"' in page

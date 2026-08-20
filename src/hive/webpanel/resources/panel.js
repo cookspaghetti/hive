@@ -476,9 +476,15 @@
 
   async function openHistory(historyId) {
     try {
-      const session = await api(`/api/history/${encodeURIComponent(historyId)}`);
+      const analyses = await api(`/api/history/${encodeURIComponent(historyId)}/analyses`);
+      const selected = analyses.find((item) => item.kind === "reanalysis") || analyses[0];
+      const session = selected
+        ? await api(`/api/history/${encodeURIComponent(historyId)}/analyses/${encodeURIComponent(selected.id)}`)
+        : await api(`/api/history/${encodeURIComponent(historyId)}`);
       state.selectedPeer = null;
       state.selectedHistoryId = historyId;
+      state.selectedAnalysisId = selected?.id || null;
+      state.analysisRuns = analyses;
       state.selectedSession = session;
       renderInspector(session, true, true);
       openInspectorDialog();

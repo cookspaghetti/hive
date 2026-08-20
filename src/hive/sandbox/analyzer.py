@@ -71,6 +71,7 @@ def analyze_url(url: str, runner: BrowserRunner) -> dict:
         "screenshot_path": findings.screenshot_path,
         "title": findings.title,
         "has_password_field": findings.has_password_field,
+        "blocked_requests": findings.blocked_requests,
         "verdict_signal": signal,
         "cloaking_suspected": cloaking,
         "error": findings.error,

@@ -5,9 +5,9 @@ launches a fresh, isolated, non-privileged Docker container running headless
 Playwright, then destroys it. The runner is injected into `analyze_url` so the
 analysis logic is testable offline with a fake.
 
-Egress containment is best-effort at the docker level (dedicated bridge, no host
-mounts, dropped caps); full LAN/host denial additionally requires host firewall
-rules — see EGRESS_FIREWALL_HINT.
+Egress containment combines a dedicated Docker bridge with host-side and
+in-browser destination validation. Host firewall rules remain recommended as a
+defence-in-depth boundary — see EGRESS_FIREWALL_HINT.
 
 Reference: OpenClaw Playwright/CDP sandbox; Hermes egress-isolation
 (reference-mapping.md L4).
@@ -15,7 +15,9 @@ Reference: OpenClaw Playwright/CDP sandbox; Hermes egress-isolation
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import socket
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,8 +31,8 @@ from hive.logging_setup import get_logger
 #            -d 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 -j DROP
 # This is required for the "deny host/LAN" guarantee; docker flags alone cannot.
 EGRESS_FIREWALL_HINT = (
-    "Add a DOCKER-USER iptables DROP rule for RFC1918 destinations from the "
-    "hive-sandbox-net subnet to enforce LAN/host isolation."
+    "Add a DOCKER-USER firewall rule denying non-public destinations from the "
+    "hive-sandbox-net subnet as defence in depth."
 )
 
 log = get_logger(__name__)
@@ -47,6 +49,7 @@ class RawFindings:
     title: str = ""
     has_password_field: bool = False
     body_len: int = 0
+    blocked_requests: list[str] = field(default_factory=list)
     error: str = ""
 
 
@@ -54,19 +57,97 @@ class BrowserRunner(Protocol):
     def run(self, url: str) -> RawFindings: ...
 
 
+def validate_public_url(url: str) -> list[str]:
+    """Resolve an HTTP target and reject every non-global destination address."""
+    from urllib.parse import urlsplit
+
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("sandbox target must be an absolute HTTP(S) URL")
+    hostname = parsed.hostname.rstrip(".").lower()
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
+        raise ValueError(f"sandbox blocked local hostname: {hostname}")
+    try:
+        literal = ipaddress.ip_address(hostname)
+        addresses = [literal]
+    except ValueError:
+        try:
+            resolved = socket.getaddrinfo(hostname, parsed.port or 443, type=socket.SOCK_STREAM)
+        except socket.gaierror as exc:
+            raise ValueError(f"sandbox could not resolve hostname: {hostname}") from exc
+        addresses = list({ipaddress.ip_address(item[4][0]) for item in resolved})
+    blocked = sorted(str(address) for address in addresses if not address.is_global)
+    if blocked:
+        raise ValueError(
+            f"sandbox blocked non-public destination for {hostname}: {', '.join(blocked)}"
+        )
+    return sorted(str(address) for address in addresses)
+
+
 # The in-container Playwright script (kept as data; executed inside the
 # disposable container, never in the host process).
 _PLAYWRIGHT_SCRIPT = r"""
 const { chromium } = require('playwright');
+const dns = require('node:dns').promises;
+const net = require('node:net');
+
+function isPrivateIp(raw) {
+  let ip = String(raw || '').toLowerCase().split('%')[0].replace(/^\[|\]$/g, '');
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (net.isIPv4(ip)) {
+    const p = ip.split('.').map(Number);
+    return p[0] === 0 || p[0] === 10 || p[0] === 127 || p[0] >= 224 ||
+      (p[0] === 100 && p[1] >= 64 && p[1] <= 127) ||
+      (p[0] === 169 && p[1] === 254) ||
+      (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
+      (p[0] === 192 && p[1] === 168) ||
+      (p[0] === 198 && (p[1] === 18 || p[1] === 19));
+  }
+  if (net.isIPv6(ip)) {
+    return ip === '::' || ip === '::1' || ip.startsWith('fc') ||
+      ip.startsWith('fd') || /^fe[89ab]/.test(ip) || ip.startsWith('ff');
+  }
+  return true;
+}
+
+async function ensurePublic(raw) {
+  const parsed = new URL(raw);
+  if (!['http:', 'https:'].includes(parsed.protocol)) return;
+  const host = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
+  if (host === 'localhost' || host.endsWith('.localhost') ||
+      host.endsWith('.local') || host.endsWith('.internal')) {
+    throw new Error(`blocked local hostname: ${host}`);
+  }
+  const addresses = net.isIP(host) ? [{ address: host }] :
+    await dns.lookup(host, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(item => isPrivateIp(item.address))) {
+    throw new Error(`blocked non-public destination: ${host}`);
+  }
+}
+
 (async () => {
   const url = process.argv[1];
   const chain = [];
+  const blocked = [];
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage();
+  const context = await browser.newContext({ serviceWorkers: 'block', acceptDownloads: false });
+  await context.route('**/*', async route => {
+    const target = route.request().url();
+    try {
+      await ensurePublic(target);
+      await route.continue();
+    } catch (error) {
+      blocked.push(target);
+      await route.abort('blockedbyclient');
+    }
+  });
+  const page = await context.newPage();
   page.on('response', r => {
     if ([301,302,303,307,308].includes(r.status())) chain.push(r.url());
   });
   try {
+    try { await ensurePublic(url); }
+    catch (error) { blocked.push(url); throw error; }
     const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
     await page.waitForTimeout(750);
     const hasPw = await page.$('input[type=password]') !== null;
@@ -78,9 +159,10 @@ const { chromium } = require('playwright');
       final_url: page.url(), redirect_chain: chain,
       dest_ip: server ? server.ipAddress : '',
       title: await page.title(), has_password_field: hasPw, body_len: body.length,
+      blocked_requests: blocked,
     }));
   } catch (e) {
-    console.log(JSON.stringify({ error: String(e) }));
+    console.log(JSON.stringify({ error: String(e), blocked_requests: blocked }));
   } finally { await browser.close(); }
 })();
 """
@@ -97,13 +179,9 @@ class PlaywrightDockerRunner:
       --memory/--pids              contain runaway pages
       no host bind mounts except the /out screenshot dir
 
-    IMPORTANT — egress scope: docker flags alone give the container a private
-    bridge but do NOT by themselves block reaching the host's LAN/RFC1918
-    ranges (the default bridge masquerades outbound traffic). True LAN/host
-    denial requires host firewall rules on the dedicated network's subnet.
-    `ensure_network()` creates the network; `EGRESS_FIREWALL_HINT` documents the
-    iptables rules the operator must add. We therefore claim *containment*, not
-    full network lockdown, and say so honestly in the report.
+    Host-side preflight and per-request browser routing reject non-public IPs,
+    including redirects and page subresources. `EGRESS_FIREWALL_HINT` documents
+    the additional network-level boundary recommended for hostile content.
     """
 
     def __init__(
@@ -151,10 +229,14 @@ class PlaywrightDockerRunner:
 
     def run(self, url: str) -> RawFindings:
         try:
+            validate_public_url(url)
             self.ensure_network(self.network)
             proc = subprocess.run(
                 self._docker_cmd(url), capture_output=True, text=True, timeout=45
             )
+        except ValueError as exc:
+            log.warning("L4 sandbox: destination rejected: %s", exc)
+            return RawFindings(error=str(exc), blocked_requests=[url])
         except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError) as exc:
             log.error("L4 sandbox: container run failed: %s", exc)
             return RawFindings(error=str(exc))
@@ -168,7 +250,10 @@ class PlaywrightDockerRunner:
             detail = proc.stderr.strip() or proc.stdout.strip() or "empty output"
             return RawFindings(error=f"unparseable output: {detail[:1000]}")
         if "error" in data:
-            return RawFindings(error=data["error"])
+            return RawFindings(
+                error=data["error"],
+                blocked_requests=list(data.get("blocked_requests") or []),
+            )
         return RawFindings(
             final_url=data.get("final_url", ""),
             redirect_chain=data.get("redirect_chain", []),
@@ -177,4 +262,5 @@ class PlaywrightDockerRunner:
             title=data.get("title", ""),
             has_password_field=bool(data.get("has_password_field")),
             body_len=int(data.get("body_len", 0)),
+            blocked_requests=list(data.get("blocked_requests") or []),
         )

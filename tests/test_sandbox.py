@@ -76,5 +76,12 @@ def test_result_shape_is_sandbox_entry():
     f = RawFindings(final_url="http://x.example/", body_len=8000, title="Hi", dest_ip="1.2.3.4")
     r = analyze_url("http://x.example/", FakeRunner(f))
     # keys the Verdict Engine / Evidence Vault rely on
-    for key in ("url", "verdict_signal", "redirect_chain", "dest_ip", "screenshot_path"):
+    for key in (
+        "url",
+        "verdict_signal",
+        "redirect_chain",
+        "dest_ip",
+        "screenshot_path",
+        "blocked_requests",
+    ):
         assert key in r

@@ -9,7 +9,13 @@ the command construction and mock subprocess for ensure_network.
 import subprocess
 from unittest import mock
 
-from hive.sandbox.runner import _PLAYWRIGHT_SCRIPT, PlaywrightDockerRunner
+import pytest
+
+from hive.sandbox.runner import (
+    _PLAYWRIGHT_SCRIPT,
+    PlaywrightDockerRunner,
+    validate_public_url,
+)
 
 
 def test_docker_cmd_uses_dedicated_network_not_default():
@@ -58,6 +64,25 @@ def test_playwright_script_reads_node_eval_argument_and_avoids_networkidle():
     assert "process.argv[2]" not in _PLAYWRIGHT_SCRIPT
     assert "domcontentloaded" in _PLAYWRIGHT_SCRIPT
     assert "networkidle" not in _PLAYWRIGHT_SCRIPT
+    assert "context.route" in _PLAYWRIGHT_SCRIPT
+    assert "dns.lookup" in _PLAYWRIGHT_SCRIPT
+    assert "blocked_requests" in _PLAYWRIGHT_SCRIPT
+
+
+def test_public_url_validation_rejects_local_and_private_targets():
+    for url in (
+        "http://localhost/admin",
+        "http://127.0.0.1/",
+        "http://10.1.2.3/",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://[::1]/",
+    ):
+        with pytest.raises(ValueError, match="blocked"):
+            validate_public_url(url)
+
+
+def test_public_url_validation_accepts_global_literal():
+    assert validate_public_url("https://1.1.1.1/") == ["1.1.1.1"]
 
 
 def test_ensure_network_creates_when_missing():
@@ -78,7 +103,9 @@ def test_ensure_network_noop_when_present():
 
 def test_run_ensures_network_before_docker_run():
     runner = PlaywrightDockerRunner(network="custom-net")
-    with mock.patch.object(runner, "ensure_network") as ensure, mock.patch("subprocess.run") as run:
+    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
+        runner, "ensure_network"
+    ) as ensure, mock.patch("subprocess.run") as run:
         run.return_value = mock.Mock(
             stdout='{"final_url":"http://x/","redirect_chain":[],"body_len":1000}\n',
             stderr="",
@@ -92,7 +119,7 @@ def test_run_ensures_network_before_docker_run():
 
 def test_run_returns_error_when_network_setup_fails():
     runner = PlaywrightDockerRunner(network="custom-net")
-    with mock.patch.object(
+    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
         runner,
         "ensure_network",
         side_effect=subprocess.CalledProcessError(1, ["docker", "network", "create"]),
@@ -104,7 +131,9 @@ def test_run_returns_error_when_network_setup_fails():
 
 def test_run_reports_nonzero_container_exit_with_stderr():
     runner = PlaywrightDockerRunner()
-    with mock.patch.object(runner, "ensure_network"), mock.patch("subprocess.run") as run:
+    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
+        runner, "ensure_network"
+    ), mock.patch("subprocess.run") as run:
         run.return_value = mock.Mock(stdout="", stderr="cgroup failed", returncode=125)
 
         result = runner.run("http://x/")

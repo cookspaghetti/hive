@@ -416,14 +416,18 @@ but later container rebuilds and recreations reuse them. A normal
 - a single bind mount for `/out` screenshots.
 
 The runner creates the dedicated Docker network automatically if it is missing.
+Before launch it resolves the target and rejects non-public addresses. Inside
+the disposable browser, every navigation, redirect, and subresource request is
+resolved again and private, loopback, link-local, and internal-name targets are
+blocked. Blocked attempts remain visible in the sandbox result.
 Compose cannot apply a child memory cgroup reliably inside Docker Desktop's
 nested daemon, so the four-service stack disables that child flag and applies a
 4 GB memory limit to the outer backend container instead. Set
 `HIVE_SANDBOX_MEMORY_LIMIT` only when the inner daemon supports nested memory
 cgroups.
-Docker bridge isolation is not a complete LAN/host egress firewall by itself.
-For stronger host/LAN denial, add `DOCKER-USER` firewall rules for the sandbox
-network subnet, as described by `EGRESS_FIREWALL_HINT` in
+Application-level request filtering is not a substitute for a kernel boundary
+against a browser exploit. For defence in depth, add `DOCKER-USER` firewall
+rules for the sandbox network subnet, as described by `EGRESS_FIREWALL_HINT` in
 `src/hive/sandbox/runner.py`.
 
 ## Testing

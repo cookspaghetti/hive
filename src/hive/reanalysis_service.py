@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from hive.analysis_runs import AnalysisRunStore, analysis_run_record, model_manifest
 from hive.audit import audit_event
+from hive.case_intelligence import CaseIntelligenceStore, build_case_profile
 from hive.replay import replay_history_record
 
 ReanalysisRunner = Callable[[dict[str, Any], Any, Any], dict[str, Any]]
@@ -28,9 +29,11 @@ class ReanalysisService:
         store: AnalysisRunStore,
         *,
         runner: ReanalysisRunner = run_reanalysis,
+        case_intelligence: CaseIntelligenceStore | None = None,
     ) -> None:
         self.store = store
         self.runner = runner
+        self.case_intelligence = case_intelligence
         self._jobs: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
@@ -91,6 +94,22 @@ class ReanalysisService:
                 level="error",
             )
             return
+        if self.case_intelligence is not None:
+            try:
+                self.case_intelligence.index(build_case_profile(record, analysis))
+            except Exception as exc:  # noqa: BLE001 - retain completed immutable analysis
+                audit_event(
+                    "case_intelligence",
+                    "reanalysis_case_index_failed",
+                    component="reanalysis.service",
+                    payload={
+                        "history_id": record["id"],
+                        "analysis_run_id": analysis["id"],
+                        "error": str(exc),
+                    },
+                    peer_id=int(record["peer_id"]),
+                    level="error",
+                )
         self._update(
             job_id,
             status="completed",

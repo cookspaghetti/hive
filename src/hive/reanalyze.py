@@ -15,6 +15,7 @@ from hive.analysis_runs import (
     model_manifest,
 )
 from hive.audit import configure_audit
+from hive.case_intelligence import build_case_intelligence_store, build_case_profile
 from hive.config import load_settings
 from hive.extraction.media import describe_image
 from hive.history import build_history_store
@@ -122,6 +123,10 @@ def run(argv: Sequence[str] | None = None) -> int:
         args.history_root / "analysis_runs",
         settings.database_url,
     )
+    case_store = build_case_intelligence_store(
+        args.history_root.parent / "cases",
+        settings.database_url,
+    )
     outputs = []
     for record in records:
         replayed = replay_history_record(
@@ -137,6 +142,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             models=model_manifest(settings),
         )
         analysis_store.create(analysis)
+        case_store.index(build_case_profile(record, analysis))
         outputs.append(
             {
                 "history_id": record["id"],

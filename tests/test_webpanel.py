@@ -379,6 +379,7 @@ def test_stop_seals_and_removes(client):
 
     detail = client.get(f"/api/history/{history[0]['id']}", headers=_h()).json()
     assert detail["messages"][0]["text"] == "transfer to Maybank 123"
+    assert (client._root / "evidence" / "cases" / f"{history[0]['id']}.json").is_file()
 
 
 def test_stop_failure_keeps_takeover_active_and_unarchived(client):
@@ -433,6 +434,11 @@ def test_archived_case_keeps_original_and_new_analysis_runs(client):
     assert selected["verdict"] == "likely_scam"
     assert selected["score"] == 0.91
     assert selected["hvi_items"][0]["value"] == "87654321"
+    case_profile = (
+        client._root / "evidence" / "cases" / f"{history_id}.json"
+    ).read_text(encoding="utf-8")
+    assert status["analysis_run_id"] in case_profile
+    assert "87654321" in case_profile
 
 
 def test_detail_404_when_missing(client):

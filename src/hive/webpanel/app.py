@@ -24,6 +24,10 @@ from hive.analysis_runs import (
     build_analysis_run_store,
 )
 from hive.audit import AuditLedger, get_audit_ledger
+from hive.case_intelligence import (
+    CaseIntelligenceStore,
+    build_case_intelligence_store,
+)
 from hive.config import load_settings
 from hive.history import HistoryStore, build_history_store
 from hive.logging_setup import get_logger
@@ -371,6 +375,7 @@ def create_app(
     login_manager: TelethonLoginManager | None = None,
     history_store: HistoryStore | None = None,
     analysis_run_store: AnalysisRunStore | None = None,
+    case_intelligence_store: CaseIntelligenceStore | None = None,
     reanalysis_runner: ReanalysisRunner | None = None,
     audit_ledger: AuditLedger | None = None,
 ) -> FastAPI:
@@ -400,8 +405,13 @@ def create_app(
         project_root / "evidence" / "history" / "analysis_runs",
         getattr(configured, "database_url", ""),
     )
+    case_intelligence = case_intelligence_store or build_case_intelligence_store(
+        project_root / "evidence" / "cases",
+        getattr(configured, "database_url", ""),
+    )
     reanalysis = ReanalysisService(
         analysis_runs,
+        case_intelligence=case_intelligence,
         **({"runner": reanalysis_runner} if reanalysis_runner is not None else {}),
     )
     fallback_takeovers = (
@@ -411,6 +421,7 @@ def create_app(
             configured,
             history,
             evidence_root=project_root / "evidence",
+            case_intelligence=case_intelligence,
         )
         if isinstance(runtime, _LegacyRuntime)
         else None

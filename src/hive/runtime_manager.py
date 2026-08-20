@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from hive.case_intelligence import build_case_intelligence_store
 from hive.config import Settings, load_settings
 from hive.history import build_history_store
 from hive.logging_setup import get_logger
@@ -253,6 +254,10 @@ class HiveRuntimeManager:
                         getattr(settings, "database_url", ""),
                     ),
                     evidence_root=self.root / "evidence",
+                    case_intelligence=build_case_intelligence_store(
+                        self.root / "evidence" / "cases",
+                        getattr(settings, "database_url", ""),
+                    ),
                 )
                 control = self._control_factory(
                     settings,

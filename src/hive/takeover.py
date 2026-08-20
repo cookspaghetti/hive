@@ -9,6 +9,7 @@ from typing import Any
 
 from hive.analysis_runs import model_manifest
 from hive.audit import audit_event
+from hive.case_intelligence import CaseIntelligenceStore, build_case_profile
 from hive.history import HistoryStore
 from hive.vault.paths import new_bundle_path
 
@@ -45,12 +46,14 @@ class TakeoverCoordinator:
         history: HistoryStore,
         *,
         evidence_root: str | Path,
+        case_intelligence: CaseIntelligenceStore | None = None,
     ) -> None:
         self.engine = engine
         self.userbot = userbot
         self.settings = settings
         self.history = history
         self.evidence_root = Path(evidence_root)
+        self.case_intelligence = case_intelligence
         self._guard = threading.Lock()
         self._sealing: set[int] = set()
 
@@ -93,6 +96,7 @@ class TakeoverCoordinator:
                     evidence_path=sealed_path,
                     analysis_models=model_manifest(self.settings),
                 )
+                self._index_case(record)
             except Exception as exc:
                 session.phase = previous_phase
                 audit_event(
@@ -129,3 +133,19 @@ class TakeoverCoordinator:
         finally:
             with self._guard:
                 self._sealing.discard(peer_id)
+
+    def _index_case(self, record: dict[str, Any]) -> None:
+        if self.case_intelligence is None:
+            return
+        try:
+            self.case_intelligence.index(build_case_profile(record))
+        except Exception as exc:  # noqa: BLE001 - enrichment must not invalidate sealed evidence
+            audit_event(
+                "case_intelligence",
+                "sealed_case_index_failed",
+                component="takeover.coordinator",
+                payload={"case_id": record.get("id"), "error": str(exc)},
+                peer_id=int(record["peer_id"]),
+                session_id=str(record.get("session_id") or "") or None,
+                level="error",
+            )

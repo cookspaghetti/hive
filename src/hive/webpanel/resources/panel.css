@@ -223,6 +223,10 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .inline-message.success { color: var(--success); }
 
 .inline-select { display: grid; gap: 5px; min-width: min(330px, 100%); }
+.intelligence-controls { display: grid; grid-template-columns: repeat(2, minmax(180px, 1fr)); gap: 8px; width: min(620px, 100%); }
+.intelligence-controls .inline-select { min-width: 0; }
+.intelligence-controls .button { align-self: end; justify-self: start; }
+.intelligence-controls .inline-message { align-self: center; margin: 0; }
 .intelligence-summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; margin-bottom: 14px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius); background: var(--border); }
 .intelligence-summary > div { padding: 13px 15px; background: var(--surface); }
 .intelligence-summary span { display: block; color: var(--subtle); font-size: .7rem; }
@@ -313,6 +317,7 @@ dialog::backdrop { background: rgba(4, 6, 8, .74); }
   .metric-strip > div:nth-child(2n) { border-right: 0; }
   .metric-strip > div:last-child { grid-column: 1 / -1; border-bottom: 0; }
   .intelligence-summary { grid-template-columns: repeat(2, 1fr); }
+  .intelligence-controls { grid-template-columns: 1fr; }
   .two-column-forms { grid-template-columns: 1fr; }
   .telegram-status { grid-template-columns: 1fr; }
 }

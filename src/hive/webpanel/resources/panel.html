@@ -144,7 +144,7 @@
         </section>
 
         <section class="page" data-page="intelligence" aria-labelledby="intelligenceTitle">
-          <div class="page-heading"><div><p class="context-line">Investigation</p><h1 id="intelligenceTitle">Intelligence workspace</h1><p>Extracted indicators and disposable-browser findings from active and previous takeover runs.</p></div><label class="inline-select"><span>Run</span><select id="intelligenceSession"></select></label></div>
+          <div class="page-heading"><div><p class="context-line">Investigation</p><h1 id="intelligenceTitle">Intelligence workspace</h1><p>Extracted indicators and disposable-browser findings from active and previous takeover runs.</p></div><div class="intelligence-controls"><label class="inline-select"><span>Case</span><select id="intelligenceSession"></select></label><label class="inline-select"><span>Analysis</span><select id="intelligenceAnalysis" disabled><option>Live analysis</option></select></label><button class="button secondary compact" id="reanalyzeHistory" type="button" hidden>Reanalyse case</button><span class="inline-message" id="reanalysisStatus" role="status"></span></div></div>
           <div class="intelligence-summary" id="intelligenceSummary"></div>
           <div class="intelligence-grid">
             <article class="surface data-surface"><div class="surface-heading"><div><h2>High-value indicators</h2><p>Copyable values linked to their source messages.</p></div></div><div class="table-scroll"><table><thead><tr><th>Type</th><th>Value</th><th>Confidence</th><th>Source</th></tr></thead><tbody id="hviRows"></tbody></table></div></article>

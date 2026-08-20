@@ -64,6 +64,8 @@
     selectedPeer: null,
     selectedSession: null,
     selectedHistoryId: null,
+    selectedAnalysisId: null,
+    analysisRuns: [],
     activity: [],
     logs: [],
     activityHiddenBefore: 0,
@@ -463,6 +465,8 @@
       const session = await api(`/api/sessions/${peerId}`);
       state.selectedPeer = peerId;
       state.selectedHistoryId = null;
+      state.selectedAnalysisId = null;
+      state.analysisRuns = [];
       state.selectedSession = session;
       renderInspector(session, true, false);
       if (state.route === "takeovers") openInspectorDialog();
@@ -483,12 +487,61 @@
 
   async function openIntelligenceHistory(historyId) {
     try {
-      const session = await api(`/api/history/${encodeURIComponent(historyId)}`);
+      const analyses = await api(`/api/history/${encodeURIComponent(historyId)}/analyses`);
+      const selected = analyses.find((item) => item.kind === "reanalysis") || analyses[0];
+      const session = selected
+        ? await api(`/api/history/${encodeURIComponent(historyId)}/analyses/${encodeURIComponent(selected.id)}`)
+        : await api(`/api/history/${encodeURIComponent(historyId)}`);
       state.selectedPeer = null;
       state.selectedHistoryId = historyId;
+      state.selectedAnalysisId = selected?.id || null;
+      state.analysisRuns = analyses;
       state.selectedSession = session;
       renderIntelligence(session, true);
     } catch (error) { toast(error.message, "error"); }
+  }
+
+  async function selectIntelligenceAnalysis(runId) {
+    if (!state.selectedHistoryId) return;
+    try {
+      const session = await api(`/api/history/${encodeURIComponent(state.selectedHistoryId)}/analyses/${encodeURIComponent(runId)}`);
+      state.selectedAnalysisId = runId;
+      state.selectedSession = session;
+      renderIntelligence(session, true);
+    } catch (error) { toast(error.message, "error"); }
+  }
+
+  async function reanalyzeHistory() {
+    if (!state.selectedHistoryId) return;
+    const confirmed = await confirmAction("Reanalyse this archived case?", "HIVE will preserve the transcript and original analysis, then add a new versioned intelligence run.", "Start reanalysis");
+    if (!confirmed) return;
+    const button = $("#reanalyzeHistory");
+    const status = $("#reanalysisStatus");
+    button.disabled = true;
+    status.className = "inline-message";
+    status.textContent = "Reanalysis queued…";
+    try {
+      const job = await api(`/api/history/${encodeURIComponent(state.selectedHistoryId)}/reanalyze`, { method: "POST", body: "{}" });
+      for (let attempt = 0; attempt < 600; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const current = await api(`/api/reanalysis/${encodeURIComponent(job.id)}`);
+        status.textContent = current.status === "running" ? "Reanalysing transcript…" : "Reanalysis queued…";
+        if (current.status === "failed") throw new Error(current.error || "Reanalysis failed.");
+        if (current.status === "completed") {
+          status.className = "inline-message success";
+          status.textContent = "New analysis ready.";
+          await openIntelligenceHistory(state.selectedHistoryId);
+          if (current.analysis_run_id) await selectIntelligenceAnalysis(current.analysis_run_id);
+          return;
+        }
+      }
+      throw new Error("Reanalysis is still running. Check the case again shortly.");
+    } catch (error) {
+      status.className = "inline-message error";
+      status.textContent = error.message;
+    } finally {
+      button.disabled = false;
+    }
   }
 
   async function refreshSelectedSession() {
@@ -548,6 +601,9 @@
       $("#intelligenceSummary").innerHTML = emptyState("No run selected", "Start and seal a takeover to retain its intelligence findings.");
       $("#hviRows").innerHTML = tableEmpty(4, "No indicators", "No takeover run is available.");
       $("#sandboxList").innerHTML = emptyState("No sandbox results", "No takeover run is available.");
+      $("#intelligenceAnalysis").innerHTML = "<option>No analysis runs</option>";
+      $("#intelligenceAnalysis").disabled = true;
+      $("#reanalyzeHistory").hidden = true;
       return;
     }
     select.disabled = false;
@@ -576,14 +632,37 @@
 
   function renderIntelligence(session, archived = false) {
     $("#intelligenceSession").value = archived ? `history:${state.selectedHistoryId}` : `active:${session.peer_id}`;
+    const analysisSelect = $("#intelligenceAnalysis");
+    const reanalyzeButton = $("#reanalyzeHistory");
+    if (archived) {
+      const latestReanalysis = state.analysisRuns.find((item) => item.kind === "reanalysis")?.id;
+      analysisSelect.innerHTML = state.analysisRuns.map((item) => {
+        const prefix = item.kind === "original" ? "Original" : item.id === latestReanalysis ? "Latest reanalysis" : "Reanalysis";
+        return `<option value="${escapeHtml(item.id)}">${escapeHtml(prefix)} · ${escapeHtml(formatDate(item.created_ts))}</option>`;
+      }).join("") || "<option>Legacy analysis</option>";
+      analysisSelect.disabled = !state.analysisRuns.length;
+      if (state.selectedAnalysisId) analysisSelect.value = state.selectedAnalysisId;
+      reanalyzeButton.hidden = false;
+    } else {
+      analysisSelect.innerHTML = "<option>Live analysis</option>";
+      analysisSelect.disabled = true;
+      reanalyzeButton.hidden = true;
+      $("#reanalysisStatus").textContent = "";
+    }
+    const selectedAnalysis = session.selected_analysis;
+    const runLabel = archived
+      ? selectedAnalysis
+        ? `${selectedAnalysis.kind === "original" ? "Original" : "Reanalysis"} · Schema v${selectedAnalysis.schema_version}`
+        : `Archived · ${formatDate(session.ended_ts)}`
+      : "Active · Live updating";
     $("#intelligenceSummary").innerHTML = [
       ["Peer", session.peer_id],
       ["Verdict", titleCase(session.verdict)],
       ["Confidence", `${Math.round(Number(session.score || 0) * 100)}%`],
       ["Duration", formatDuration(session.duration_s)],
-      ["Run", archived ? `Archived · ${formatDate(session.ended_ts)}` : "Active · Live updating"],
+      ["Run", runLabel],
     ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
-    $("#hviRows").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<tr><td>${escapeHtml(titleCase(item.kind))}</td><td class="mono">${escapeHtml(item.value)}</td><td>${Math.round(Number(item.confidence || 0) * 100)}%</td><td>${archived ? "Archived transcript" : "Active transcript"}</td></tr>`).join("") : tableEmpty(4, "No high-value indicators", archived ? "No indicators were retained for this run." : "The extraction pipeline has not found a supported value.");
+    $("#hviRows").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<tr><td>${escapeHtml(titleCase(item.kind))}</td><td class="mono">${escapeHtml(item.value)}</td><td>${Math.round(Number(item.confidence || 0) * 100)}%</td><td>${item.source_msg_id != null ? `Message ${Number(item.source_msg_id)}` : archived ? "Archived transcript" : "Active transcript"}</td></tr>`).join("") : tableEmpty(4, "No high-value indicators", archived ? "No indicators were retained for this run." : "The extraction pipeline has not found a supported value.");
     $("#sandboxList").innerHTML = session.sandbox_results?.length ? session.sandbox_results.map(renderSandboxResult).join("") : emptyState("No sandbox analysis", "A sandbox run starts when a URL or bare domain is found in an incoming message.");
   }
 
@@ -858,6 +937,8 @@
       if (kind === "active") openSession(Number(identifier));
       if (kind === "history") openIntelligenceHistory(identifier);
     });
+    $("#intelligenceAnalysis").addEventListener("change", (event) => selectIntelligenceAnalysis(event.target.value));
+    $("#reanalyzeHistory").addEventListener("click", reanalyzeHistory);
     $("#activitySearch").addEventListener("input", renderActivityPage);
     $("#activityScope").addEventListener("change", () => loadActivity().catch((error) => toast(error.message, "error")));
     $("#activitySeverity").addEventListener("change", renderActivityPage);

@@ -258,6 +258,14 @@ def test_intelligence_workspace_can_open_archived_runs(client):
     assert '<optgroup label="Previous runs">' in script
     assert "async function openIntelligenceHistory(historyId)" in script
     assert "openIntelligenceHistory(identifier)" in script
+    assert 'id="intelligenceAnalysis"' in page
+    assert 'id="reanalyzeHistory"' in page
+    assert "async function selectIntelligenceAnalysis(runId)" in script
+    assert "async function reanalyzeHistory()" in script
+    assert "/analyses/${encodeURIComponent(selected.id)}" in script
+    assert "/reanalyze`" in script
+    assert "Latest reanalysis" in script
+    assert "Schema v${selectedAnalysis.schema_version}" in script
     assert 'archived ? "Archived transcript" : "Active transcript"' in script
     assert "function renderSandboxResult(item)" in script
     assert "A sandbox run starts when a URL or bare domain is found" in script

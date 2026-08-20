@@ -92,6 +92,30 @@ def test_history_store_imports_prepared_uuid_record(tmp_path):
     assert store.get(record["id"]) == record
 
 
+def test_history_list_hides_reanalysis_replay_but_keeps_direct_lookup(tmp_path):
+    store = TakeoverHistoryStore(tmp_path)
+    original = {
+        "id": "8514213f-a1eb-4986-a2dc-bd3fa196ea96",
+        "peer_id": 919,
+        "ended_ts": 40,
+        "messages": [{"role": "stranger", "text": "original"}],
+        "analysis": {"kind": "original"},
+    }
+    replay = {
+        "id": "8d195b38-c1c3-4e00-ac1a-bcc5851ea2be",
+        "peer_id": 919,
+        "ended_ts": 40,
+        "messages": [{"role": "stranger", "text": "replay"}],
+        "replay_of": "legacy-id",
+        "analysis": {"kind": "legacy_reanalysis"},
+    }
+    store.import_record(original)
+    store.import_record(replay)
+
+    assert [row["id"] for row in store.list()] == [original["id"]]
+    assert store.get(replay["id"]) == replay
+
+
 def test_history_store_ignores_invalid_and_corrupt_records(tmp_path):
     store = TakeoverHistoryStore(tmp_path)
     tmp_path.joinpath("broken.json").write_text("not-json", encoding="utf-8")

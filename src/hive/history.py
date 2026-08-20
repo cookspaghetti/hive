@@ -137,6 +137,11 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _is_replay_artifact(record: dict[str, Any]) -> bool:
+    analysis_kind = str((record.get("analysis") or {}).get("kind") or "")
+    return bool(record.get("replay_of")) or analysis_kind == "legacy_reanalysis"
+
+
 class TakeoverHistoryStore:
     """Persist one JSON record per completed takeover."""
 
@@ -183,7 +188,7 @@ class TakeoverHistoryStore:
             return rows
         for path in self.root.glob("*.json"):
             record = self._read(path)
-            if record is None:
+            if record is None or _is_replay_artifact(record):
                 continue
             rows.append(_summary(record))
         return sorted(rows, key=lambda row: float(row.get("ended_ts") or 0), reverse=True)
@@ -362,7 +367,11 @@ class PostgresTakeoverHistoryStore:
     def list(self) -> list[dict[str, Any]]:
         with self._connect() as connection, connection.cursor() as cursor:
             cursor.execute("SELECT record FROM takeover_history ORDER BY ended_ts DESC")
-            return [_summary(row[0]) for row in cursor.fetchall()]
+            return [
+                _summary(row[0])
+                for row in cursor.fetchall()
+                if not _is_replay_artifact(row[0])
+            ]
 
     def import_record(self, record: dict[str, Any]) -> dict[str, Any]:
         from psycopg.types.json import Jsonb

@@ -39,6 +39,11 @@ tasks:
     cmds:
       - uv run pytest tests/test_sandbox_runner.py tests/test_userbot.py tests/test_prompt_defense.py tests/test_control_bot.py tests/test_webpanel.py -q
 
+  audit:backup:
+    desc: Create and verify an immutable audit-ledger snapshot
+    cmds:
+      - uv run python -m hive.audit_backup {{.CLI_ARGS}}
+
   lint:
     desc: Lint with ruff
     cmds:

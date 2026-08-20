@@ -178,6 +178,11 @@ integrations can retrieve exact records from `GET /api/audit`, filter with
 `HIVE_AUDIT_PATH` can relocate the journal; auditing is mandatory and has no
 runtime off switch.
 
+Create a verified, immutable snapshot with `task audit:backup`. Each backup is
+hash-chain checked and accompanied by a manifest containing its source identity,
+event count, terminal event hash, and file checksum. Backups are never pruned by
+this command.
+
 This ledger deliberately contains third-party messages and model context. Keep
 the evidence directory and PostgreSQL backups access-controlled. Diagnostic log
 messages redact recognizable credentials, while conversational records remain

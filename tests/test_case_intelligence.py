@@ -76,6 +76,14 @@ def test_case_profile_uses_only_valid_network_indicators():
     assert "person_name" not in profile["embedding_text"]
 
 
+def test_case_profile_rejects_short_legacy_numeric_false_positives():
+    profile = build_case_profile(
+        _history("8514213f-a1eb-4986-a2dc-bd3fa196ea96", "123")
+    )
+
+    assert profile["indicators"] == []
+
+
 def test_indicator_normalization_uses_domain_and_canonical_digits():
     assert normalize_indicator("url", "https://www.Example.com/pay?id=2") == "example.com"
     assert normalize_indicator("phone", "+60 12-345 6789") == "60123456789"

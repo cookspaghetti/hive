@@ -233,6 +233,22 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .intelligence-summary strong { font-variant-numeric: tabular-nums; }
 .intelligence-grid, .model-layout, .security-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, .9fr); gap: 14px; align-items: start; }
 .media-intelligence { grid-column: 1 / -1; }
+.related-case-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 10px; }
+.related-case { padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-small); background: var(--surface-raised); }
+.related-case .surface-heading { margin-bottom: 8px; }
+.related-case-reasons { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0; }
+.related-case-reasons span { padding: 3px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: .65rem; }
+.relationship-graph { margin-bottom: 10px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-small); background: #0b0e12; }
+.relationship-graph:empty { display: none; }
+.relationship-graph svg { display: block; width: 100%; height: min(320px, 38vw); min-height: 220px; }
+.relationship-edge { stroke-width: 2; }
+.relationship-edge.exact { stroke: var(--danger); }
+.relationship-edge.candidate { stroke: var(--info); stroke-dasharray: 6 5; }
+.relationship-node circle { fill: var(--surface-raised); stroke: var(--border-strong); stroke-width: 2; }
+.relationship-node.current circle { fill: color-mix(in srgb, var(--accent) 14%, var(--surface-raised)); stroke: var(--accent); }
+.relationship-node text { fill: var(--text); font-size: 11px; text-anchor: middle; }
+.relationship-node.related { cursor: pointer; }
+.relationship-node.related:hover circle { stroke: var(--accent); }
 .hash { max-width: 210px; overflow: hidden; color: var(--muted); font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
 .timeline.full { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 0 18px; }
 .timeline-item { display: grid; grid-template-columns: 90px 120px 1fr; gap: 16px; align-items: start; }

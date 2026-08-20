@@ -270,8 +270,17 @@ def test_intelligence_workspace_can_open_archived_runs(client):
     assert 'archived ? "Archived transcript" : "Active transcript"' in script
     assert "function renderSandboxResult(item)" in script
     assert "function renderMediaAnalysis(item)" in script
+    assert "function renderRelatedCase(item)" in script
+    assert "function renderRelationshipGraph(items, peerId)" in script
     assert 'id="mediaAnalysisList"' in page
+    assert 'id="relatedCasesList"' in page
+    assert 'id="relationshipGraph"' in page
     assert "Local QR/OCR and fallback vision findings" in page
+    assert "Verified shared identifiers are distinct" in page
+    assert "/related`" in script
+    assert "Candidate similarity" in script
+    assert "Verified identifier link" in script
+    assert "Case relationship graph" in script
     assert "A sandbox run starts when a URL or bare domain is found" in script
 
 
@@ -439,6 +448,26 @@ def test_archived_case_keeps_original_and_new_analysis_runs(client):
     ).read_text(encoding="utf-8")
     assert status["analysis_run_id"] in case_profile
     assert "87654321" in case_profile
+
+
+def test_related_case_api_explains_exact_identifier_link(client):
+    first_session = client._userbot._sessions[100][0]
+    first_session.hvis[0].value = "12345678"
+    first = client.post("/api/sessions/100/stop", headers=_h()).json()["history_id"]
+    client._userbot.begin_takeover(200, "overseas_worker")
+    second_session = client._userbot._sessions[200][0]
+    second_session.messages.append(Message("stranger", "pay this account", time.time(), 8))
+    second_session.hvis.append(HVI("bank_account", "12345678", 8, 0.8, "regex"))
+    second = client.post("/api/sessions/200/stop", headers=_h()).json()["history_id"]
+
+    related = client.get(f"/api/history/{first}/related", headers=_h()).json()
+
+    assert related[0]["related_history_id"] == second
+    assert related[0]["relationship"] == "shared_identifier"
+    assert related[0]["score"] == 0.95
+    assert related[0]["reasons"][0]["value"] == "12345678"
+    assert related[0]["reasons"][0]["current_source_message_ids"] == [0]
+    assert related[0]["reasons"][0]["related_source_message_ids"] == [8]
 
 
 def test_detail_404_when_missing(client):

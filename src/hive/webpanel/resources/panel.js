@@ -487,7 +487,10 @@
 
   async function openIntelligenceHistory(historyId) {
     try {
-      const analyses = await api(`/api/history/${encodeURIComponent(historyId)}/analyses`);
+      const [analyses, relatedCases] = await Promise.all([
+        api(`/api/history/${encodeURIComponent(historyId)}/analyses`),
+        api(`/api/history/${encodeURIComponent(historyId)}/related`),
+      ]);
       const selected = analyses.find((item) => item.kind === "reanalysis") || analyses[0];
       const session = selected
         ? await api(`/api/history/${encodeURIComponent(historyId)}/analyses/${encodeURIComponent(selected.id)}`)
@@ -497,6 +500,7 @@
       state.selectedAnalysisId = selected?.id || null;
       state.analysisRuns = analyses;
       state.selectedSession = session;
+      state.selectedSession.related_cases = relatedCases;
       renderIntelligence(session, true);
     } catch (error) { toast(error.message, "error"); }
   }
@@ -505,6 +509,7 @@
     if (!state.selectedHistoryId) return;
     try {
       const session = await api(`/api/history/${encodeURIComponent(state.selectedHistoryId)}/analyses/${encodeURIComponent(runId)}`);
+      session.related_cases = state.selectedSession?.related_cases || [];
       state.selectedAnalysisId = runId;
       state.selectedSession = session;
       renderIntelligence(session, true);
@@ -602,6 +607,8 @@
       $("#hviRows").innerHTML = tableEmpty(4, "No indicators", "No takeover run is available.");
       $("#sandboxList").innerHTML = emptyState("No sandbox results", "No takeover run is available.");
       $("#mediaAnalysisList").innerHTML = emptyState("No media findings", "No takeover run is available.");
+      $("#relatedCasesList").innerHTML = emptyState("No related cases", "No takeover run is available.");
+      $("#relationshipGraph").innerHTML = "";
       $("#intelligenceAnalysis").innerHTML = "<option>No analysis runs</option>";
       $("#intelligenceAnalysis").disabled = true;
       $("#reanalyzeHistory").hidden = true;
@@ -666,6 +673,40 @@
     $("#hviRows").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<tr><td>${escapeHtml(titleCase(item.kind))}</td><td class="mono">${escapeHtml(item.value)}</td><td>${Math.round(Number(item.confidence || 0) * 100)}%</td><td>${item.source_msg_id != null ? `Message ${Number(item.source_msg_id)}` : archived ? "Archived transcript" : "Active transcript"}</td></tr>`).join("") : tableEmpty(4, "No high-value indicators", archived ? "No indicators were retained for this run." : "The extraction pipeline has not found a supported value.");
     $("#sandboxList").innerHTML = session.sandbox_results?.length ? session.sandbox_results.map(renderSandboxResult).join("") : emptyState("No sandbox analysis", "A sandbox run starts when a URL or bare domain is found in an incoming message.");
     $("#mediaAnalysisList").innerHTML = session.media_analysis?.length ? session.media_analysis.map(renderMediaAnalysis).join("") : emptyState("No media intelligence", "Captured images are checked locally for QR codes and text before optional vision analysis.");
+    $("#relatedCasesList").innerHTML = session.related_cases?.length ? session.related_cases.map(renderRelatedCase).join("") : emptyState("No related cases", "No verified identifier overlap or sufficiently similar historical script was found.");
+    $("#relationshipGraph").innerHTML = renderRelationshipGraph(session.related_cases || [], session.peer_id);
+  }
+
+  function renderRelationshipGraph(items, peerId) {
+    if (!items.length) return "";
+    const rows = items.slice(0, 8);
+    const width = 720;
+    const height = 300;
+    const cx = width / 2;
+    const cy = height / 2;
+    const radius = Math.min(width, height) * 0.34;
+    const positioned = rows.map((item, index) => {
+      const angle = -Math.PI / 2 + (Math.PI * 2 * index) / rows.length;
+      return { item, x: cx + Math.cos(angle) * radius * 1.75, y: cy + Math.sin(angle) * radius };
+    });
+    const edges = positioned.map(({ item, x, y }) => `<line class="relationship-edge ${item.relationship === "shared_identifier" ? "exact" : "candidate"}" x1="${cx}" y1="${cy}" x2="${x}" y2="${y}"><title>${escapeHtml(item.relationship === "shared_identifier" ? "Verified shared identifier" : "Candidate script similarity")} · ${Math.round(Number(item.score || 0) * 100)}%</title></line>`).join("");
+    const nodes = positioned.map(({ item, x, y }) => {
+      const historyId = item.related_history_id || item.related_case_id;
+      return `<g class="relationship-node related" transform="translate(${x} ${y})" data-intelligence-history-id="${escapeHtml(historyId)}"><circle r="31"></circle><text y="-2">Peer</text><text y="13">${escapeHtml(item.peer_id ?? "?")}</text><title>Open related case</title></g>`;
+    }).join("");
+    return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Case relationship graph"><g>${edges}</g><g class="relationship-node current" transform="translate(${cx} ${cy})"><circle r="38"></circle><text y="-2">Current</text><text y="14">Peer ${escapeHtml(peerId)}</text></g>${nodes}</svg>`;
+  }
+
+  function renderRelatedCase(item) {
+    const exact = item.relationship === "shared_identifier";
+    const label = exact ? "Verified identifier link" : "Candidate similarity";
+    const reasons = (item.reasons || []).map((reason) => {
+      const value = exact && reason.value ? ` · ${reason.value}` : "";
+      return `<span>${escapeHtml(titleCase(reason.kind))}${escapeHtml(value)}</span>`;
+    }).join("");
+    const methods = (item.methods || []).map((method) => method.label || titleCase(method.key)).join(", ");
+    const historyId = item.related_history_id || item.related_case_id;
+    return `<div class="related-case"><div class="surface-heading"><div><strong>Peer ${escapeHtml(item.peer_id ?? "unknown")}</strong><p>${escapeHtml(methods || "No method label retained")}</p></div><span class="status-chip ${exact ? "likely_scam" : "neutral"}">${escapeHtml(label)}</span></div><div class="related-case-reasons">${reasons}</div><div class="signal-detail-row"><span>Match confidence</span><strong>${Math.round(Number(item.score || 0) * 100)}%</strong></div>${item.semantic_score != null ? `<div class="signal-detail-row"><span>Semantic candidate</span><strong>${Math.round(Number(item.semantic_score) * 100)}%</strong></div>` : ""}<button class="table-button" type="button" data-intelligence-history-id="${escapeHtml(historyId)}">Open case</button></div>`;
   }
 
   function renderMediaAnalysis(item) {
@@ -969,11 +1010,13 @@
       const takeover = event.target.closest("[data-takeover-peer]")?.dataset.takeoverPeer;
       const peer = event.target.closest("[data-open-peer]")?.dataset.openPeer;
       const historyId = event.target.closest("[data-history-id]")?.dataset.historyId;
+      const intelligenceHistoryId = event.target.closest("[data-intelligence-history-id]")?.dataset.intelligenceHistoryId;
       const downloadButton = event.target.closest("[data-download-evidence]");
       if (route) navigate(route);
       if (takeover) beginTakeover(Number(takeover));
       if (peer) { if (state.route === "overview") navigate("takeovers"); openSession(Number(peer)); }
       if (historyId) openHistory(historyId);
+      if (intelligenceHistoryId) { navigate("intelligence"); openIntelligenceHistory(intelligenceHistoryId); }
       if (downloadButton) downloadEvidence(downloadButton.dataset.downloadEvidence, downloadButton.dataset.evidenceFilename);
     });
     document.addEventListener("keydown", (event) => {

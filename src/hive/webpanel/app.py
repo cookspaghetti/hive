@@ -27,6 +27,7 @@ from hive.audit import AuditLedger, get_audit_ledger
 from hive.case_intelligence import (
     CaseIntelligenceStore,
     build_case_intelligence_store,
+    build_case_profile,
 )
 from hive.config import load_settings
 from hive.history import HistoryStore, build_history_store
@@ -444,6 +445,18 @@ def create_app(
     migrate_analysis_metadata = getattr(history, "migrate_analysis_metadata", None)
     if migrate_analysis_metadata is not None:
         migrate_analysis_metadata()
+    for summary in history.list():
+        record = history.get(str(summary["id"]))
+        if record is None or record.get("replay_of"):
+            continue
+        embedded = record.get("analysis") or {}
+        existing = case_intelligence.get(str(record["id"]))
+        if existing and existing.get("analysis_run_id") == embedded.get("id"):
+            continue
+        try:
+            case_intelligence.index(build_case_profile(record))
+        except Exception:
+            log.exception("case intelligence: startup backfill failed case=%s", record["id"])
     observations.event("runtime", "Control panel ready", "Local operator console initialized")
 
     @asynccontextmanager
@@ -703,6 +716,30 @@ def create_app(
         embedded = _embedded_analysis(record)
         return ([embedded] if embedded else []) + analysis_runs.list(str(record["id"]))
 
+    def enrich_case_matches(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        enriched = []
+        for row in rows:
+            related = case_intelligence.get(str(row.get("related_case_id") or "")) or {}
+            enriched.append(
+                {
+                    **row,
+                    "related_history_id": related.get("history_id") or row.get("related_case_id"),
+                    "peer_id": related.get("peer_id"),
+                    "verdict": related.get("verdict"),
+                    "case_score": related.get("score"),
+                    "created_ts": related.get("created_ts"),
+                    "methods": related.get("methods") or [],
+                }
+            )
+        return enriched
+
+    @app.get("/api/history/{history_id}/related", dependencies=[Depends(auth)])
+    def related_takeover_cases(history_id: str) -> list[dict[str, Any]]:
+        record = history.get(history_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="takeover history not found")
+        return enrich_case_matches(case_intelligence.related(str(record["id"])))
+
     @app.get(
         "/api/history/{history_id}/analyses/{run_id}",
         dependencies=[Depends(auth)],
@@ -931,7 +968,9 @@ def create_app(
         entry = current_userbot._sessions.get(peer_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="no active takeover")
-        return _session_detail(peer_id, entry[0])
+        detail = _session_detail(peer_id, entry[0])
+        detail["related_cases"] = enrich_case_matches(entry[0].related_cases)
+        return detail
 
     @app.post("/api/takeover", dependencies=[Depends(auth)])
     def takeover(payload: Annotated[dict, Body()]) -> dict:

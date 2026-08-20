@@ -46,6 +46,22 @@ def normalize_indicator(kind: str, value: str) -> str:
     return value.lower()
 
 
+def _valid_network_indicator(kind: str, normalized: str) -> bool:
+    if kind == "bank_account":
+        return 8 <= len(normalized) <= 20
+    if kind == "phone":
+        return 8 <= len(normalized) <= 15
+    if kind == "url":
+        return "." in normalized and len(normalized) <= 253
+    if kind == "crypto":
+        return 20 <= len(normalized) <= 128
+    if kind == "telegram_id":
+        return 5 <= len(normalized) <= 32
+    if kind == "email":
+        return "@" in normalized and len(normalized) <= 254
+    return False
+
+
 def _analysis_outputs(
     history_record: dict[str, Any],
     analysis: dict[str, Any] | None,
@@ -65,7 +81,11 @@ def build_case_profile(
         kind = str(item.get("kind") or "")
         confidence = float(item.get("confidence") or 0)
         normalized = normalize_indicator(kind, str(item.get("value") or ""))
-        if kind not in _EXACT_KINDS or confidence < 0.6 or not normalized:
+        if (
+            kind not in _EXACT_KINDS
+            or confidence < 0.6
+            or not _valid_network_indicator(kind, normalized)
+        ):
             continue
         candidate = {
             "kind": kind,
@@ -235,12 +255,25 @@ def exact_relationships(
         for item in other.get("indicators") or []:
             key = (item["kind"], item["normalized_value"])
             if key in current:
+                current_items = current[key]
                 reasons.append(
                     {
                         "kind": item["kind"],
                         "value": item["value"],
                         "normalized_value": item["normalized_value"],
                         "match": "exact_identifier",
+                        "current_source_message_ids": sorted(
+                            {
+                                value["source_msg_id"]
+                                for value in current_items
+                                if value.get("source_msg_id") is not None
+                            }
+                        ),
+                        "related_source_message_ids": (
+                            [item["source_msg_id"]]
+                            if item.get("source_msg_id") is not None
+                            else []
+                        ),
                     }
                 )
         if not reasons:

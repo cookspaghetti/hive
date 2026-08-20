@@ -460,6 +460,35 @@ def build_bundle(
     else:
         story.append(Paragraph("No high-value indicators were extracted.", styles["body"]))
 
+    _section(story, "Media intelligence", styles)
+    if session.media_analysis:
+        for index, analysis in enumerate(session.media_analysis, start=1):
+            source = str(analysis.get("source") or "unknown").replace("_", " ").upper()
+            finding = (
+                f"<b>Media finding {index}: {_xml(source)}</b><br/>"
+                f"Source message: {_xml(analysis.get('source_msg_id', 'unknown'))}<br/>"
+                f"Indicators extracted: {_xml(analysis.get('indicator_count', 0))}<br/>"
+                f"Description / local text: {_xml(analysis.get('description', ''))}"
+            )
+            story.append(
+                Table(
+                    [[Paragraph(finding, styles["body"])]],
+                    colWidths=[doc.width],
+                    style=TableStyle(
+                        [
+                            ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(_BRAND_LINE)),
+                            ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                            ("TOPPADDING", (0, 0), (-1, -1), 7),
+                            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                        ]
+                    ),
+                )
+            )
+            story.append(Spacer(1, 3 * mm))
+    else:
+        story.append(Paragraph("No media analyses were recorded.", styles["body"]))
+
     _section(story, "Sandbox findings", styles)
     if session.sandbox_results:
         for index, result in enumerate(session.sandbox_results, start=1):

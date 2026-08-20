@@ -227,6 +227,7 @@ def test_session_detail(client):
     assert d["hvi_items"][0]["value"] == "123"
     assert d["hvi_items"][0]["source_msg_id"] == 0
     assert d["messages"][0]["role"] == "stranger"
+    assert d["media_analysis"] == []
 
 
 def test_session_detail_exposes_messages_added_after_initial_request(client):
@@ -268,6 +269,9 @@ def test_intelligence_workspace_can_open_archived_runs(client):
     assert "Schema v${selectedAnalysis.schema_version}" in script
     assert 'archived ? "Archived transcript" : "Active transcript"' in script
     assert "function renderSandboxResult(item)" in script
+    assert "function renderMediaAnalysis(item)" in script
+    assert 'id="mediaAnalysisList"' in page
+    assert "Local QR/OCR and fallback vision findings" in page
     assert "A sandbox run starts when a URL or bare domain is found" in script
 
 

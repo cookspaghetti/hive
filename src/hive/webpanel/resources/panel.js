@@ -601,6 +601,7 @@
       $("#intelligenceSummary").innerHTML = emptyState("No run selected", "Start and seal a takeover to retain its intelligence findings.");
       $("#hviRows").innerHTML = tableEmpty(4, "No indicators", "No takeover run is available.");
       $("#sandboxList").innerHTML = emptyState("No sandbox results", "No takeover run is available.");
+      $("#mediaAnalysisList").innerHTML = emptyState("No media findings", "No takeover run is available.");
       $("#intelligenceAnalysis").innerHTML = "<option>No analysis runs</option>";
       $("#intelligenceAnalysis").disabled = true;
       $("#reanalyzeHistory").hidden = true;
@@ -664,6 +665,14 @@
     ].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
     $("#hviRows").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<tr><td>${escapeHtml(titleCase(item.kind))}</td><td class="mono">${escapeHtml(item.value)}</td><td>${Math.round(Number(item.confidence || 0) * 100)}%</td><td>${item.source_msg_id != null ? `Message ${Number(item.source_msg_id)}` : archived ? "Archived transcript" : "Active transcript"}</td></tr>`).join("") : tableEmpty(4, "No high-value indicators", archived ? "No indicators were retained for this run." : "The extraction pipeline has not found a supported value.");
     $("#sandboxList").innerHTML = session.sandbox_results?.length ? session.sandbox_results.map(renderSandboxResult).join("") : emptyState("No sandbox analysis", "A sandbox run starts when a URL or bare domain is found in an incoming message.");
+    $("#mediaAnalysisList").innerHTML = session.media_analysis?.length ? session.media_analysis.map(renderMediaAnalysis).join("") : emptyState("No media intelligence", "Captured images are checked locally for QR codes and text before optional vision analysis.");
+  }
+
+  function renderMediaAnalysis(item) {
+    const source = titleCase(item.source || "unknown");
+    const message = item.source_msg_id != null ? `Message ${Number(item.source_msg_id)}` : "Unknown message";
+    const indicators = item.indicator_count == null ? "" : `${Number(item.indicator_count)} indicator${Number(item.indicator_count) === 1 ? "" : "s"}`;
+    return `<div class="sandbox-item"><div class="surface-heading"><div><strong>${escapeHtml(message)}</strong><p>${escapeHtml(item.description || "No readable content was found.")}</p></div><span class="status-chip neutral">${escapeHtml(source)}</span></div><div class="signal-details">${indicators ? `<div class="signal-detail-row"><span>Extracted</span><strong>${escapeHtml(indicators)}</strong></div>` : ""}${item.media_sha256 ? `<div class="signal-detail-row"><span>Media SHA-256</span><strong class="hash">${escapeHtml(item.media_sha256)}</strong></div>` : ""}</div></div>`;
   }
 
   function renderSandboxResult(item) {

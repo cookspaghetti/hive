@@ -243,7 +243,11 @@ images are shown inline; videos, audio, and other documents retain their
 original filename and an authenticated download link. Captured attachments are
 kept under `HIVE_MEDIA_PATH`, bounded by `HIVE_MEDIA_MAX_BYTES` per file, and
 signal assessments are rendered as labelled scores and evidence instead of raw
-JSON.
+JSON. During an active takeover, image analysis overlaps the normal phone-check
+delay: HIVE tries local QR decoding and English/Mandarin OCR first, then uses the
+configured vision model only when local structured extraction cannot explain
+the image. Findings remain linked to the source message and media hash; failures
+are audited without blocking a reply.
 
 For headless or terminal-only setup, copy `.env.example` to `.env`, fill in
 the required values, then run `task bootstrap` for the interactive Telethon
@@ -426,7 +430,8 @@ uv run pytest tests/test_sandbox_runner.py tests/test_userbot.py tests/test_prom
   offline test suite.
 - GLiNER model loading can be slow on first use while its weights populate the
   persistent `hive_model_cache` volume.
-- `describe_image()` is still a placeholder for future vision fallback work.
+- Cloud vision availability depends on the configured model; QR decoding and
+  English/Mandarin OCR remain local and continue to work when vision is unavailable.
 - In-session memory uses an offline keyword-recall backend by default; the
   semantic mem0 + Qdrant backend (`HIVE_USE_SEMANTIC_MEMORY`) is opt-in and not
   exercised by the offline test suite.

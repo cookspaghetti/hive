@@ -56,6 +56,14 @@ def _populated_session() -> tuple[SessionState, HashChain]:
     s.sandbox_results = [{"url": "http://x.co", "final_url": "http://phish.ru",
                           "verdict_signal": "malicious", "dest_ip": "1.2.3.4",
                           "cloaking_suspected": False}]
+    s.media_analysis = [
+        {
+            "source_msg_id": 2,
+            "source": "local_ocr",
+            "description": "收款人是王小明",
+            "indicator_count": 1,
+        }
+    ]
     chain = HashChain()
     chain.append({"event": "msg", "text": "transfer to Maybank 1234567890"}, ts=1.0)
     chain.append({"event": "hvi", "value": "1234567890"}, ts=2.0)

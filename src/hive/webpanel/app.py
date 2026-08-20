@@ -133,6 +133,7 @@ def _session_detail(peer_id, session) -> dict:
         for h in session.hvis
     ]
     detail["sandbox_results"] = session.sandbox_results
+    detail["media_analysis"] = session.media_analysis
     detail["signal_trail"] = session.signal_trail[-20:]
     return detail
 

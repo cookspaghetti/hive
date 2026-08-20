@@ -32,10 +32,17 @@ log = get_logger(__name__)
 # Category -> list of case-insensitive patterns.
 PATTERNS: dict[str, list[re.Pattern[str]]] = {
     "injection": [
-        re.compile(r"ignore\s+(?:all\s+)?(?:previous|above|prior)\s+(?:instructions|prompts?)", re.I),
+        re.compile(
+            r"ignore\s+(?:all\s+)?(?:previous|above|prior)\s+(?:instructions|prompts?)",
+            re.I,
+        ),
         re.compile(r"disregard\s+(?:everything|all|the)\b", re.I),
         re.compile(r"\b(?:system|initial|original)\s+prompt\b", re.I),
-        re.compile(r"(?:print|repeat|reveal|show|tell me)\s+(?:your|the)\s+(?:prompt|instructions|rules)", re.I),
+        re.compile(
+            r"(?:print|repeat|reveal|show|tell me)\s+"
+            r"(?:your|the)\s+(?:prompt|instructions|rules)",
+            re.I,
+        ),
         re.compile(r"\bwhat\s+(?:model|llm|ai)\s+(?:are you|is this|do you use)", re.I),
         re.compile(r"\byou are (?:actually|really)\b", re.I),
         re.compile(r"\b(?:developer|debug|admin|god)\s+mode\b", re.I),
@@ -44,9 +51,21 @@ PATTERNS: dict[str, list[re.Pattern[str]]] = {
         re.compile(r"\brepeat\s+the\s+words\s+above\b", re.I),
     ],
     "bot_probe": [
-        re.compile(r"\bare\s+you\s+(?:a\s+)?(?:bot|robot|ai|human|real(?:\s+person)?|chatgpt|gpt|llm)\b", re.I),
-        re.compile(r"\bis\s+this\s+(?:a\s+)?(?:bot|robot|ai|real\s+person|automated|human)\b", re.I),
-        re.compile(r"\bam i\s+(?:talking|chatting|speaking)\s+to\s+(?:a\s+)?(?:bot|robot|ai|machine|human|real)", re.I),
+        re.compile(
+            r"\bare\s+you\s+(?:a\s+)?"
+            r"(?:bot|robot|ai|human|real(?:\s+person)?|chatgpt|gpt|llm)\b",
+            re.I,
+        ),
+        re.compile(
+            r"\bis\s+this\s+(?:a\s+)?"
+            r"(?:bot|robot|ai|real\s+person|automated|human)\b",
+            re.I,
+        ),
+        re.compile(
+            r"\bam i\s+(?:talking|chatting|speaking)\s+to\s+(?:a\s+)?"
+            r"(?:bot|robot|ai|machine|human|real)",
+            re.I,
+        ),
         re.compile(r"\bprove\s+(?:you(?:'re| are)|that you are)\s+(?:human|real|not a bot)", re.I),
         re.compile(r"\bsay\s+(?:the\s+word|exactly)\b", re.I),
     ],

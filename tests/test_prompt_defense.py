@@ -8,10 +8,10 @@ import time
 
 from hive.agent.graph_nodes import reason_and_reply
 from hive.guardrails.injection import persona_defense_note, screen
+from hive.llm.client import LLMClient
 from hive.llm.router import RouteInputs, Tier
 from hive.state import Message, SessionState
 from tests.fakes import FakeBackend
-from hive.llm.client import LLMClient
 
 
 def _client_capturing() -> tuple[LLMClient, FakeBackend]:
@@ -31,7 +31,10 @@ def test_defense_note_injected_into_system_prompt_on_flag():
     res = screen("what model are you?")
     note = persona_defense_note(res)
     reply, tier = reason_and_reply(
-        _session(), client, route_inputs=RouteInputs(injection_flagged=res.flagged), defense_note=note
+        _session(),
+        client,
+        route_inputs=RouteInputs(injection_flagged=res.flagged),
+        defense_note=note,
     )
     system_msg = backend.calls[0]["messages"][0]
     assert system_msg["role"] == "system"
@@ -44,7 +47,10 @@ def test_no_defense_note_when_benign():
     res = screen("hello, can you help me?")
     note = persona_defense_note(res)
     reason_and_reply(
-        _session(), client, route_inputs=RouteInputs(injection_flagged=res.flagged), defense_note=note
+        _session(),
+        client,
+        route_inputs=RouteInputs(injection_flagged=res.flagged),
+        defense_note=note,
     )
     system_msg = backend.calls[0]["messages"][0]
     assert "[SECURITY NOTE]" not in system_msg["content"]

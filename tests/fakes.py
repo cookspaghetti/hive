@@ -22,5 +22,9 @@ class FakeBackend:
 
 
 def fake_client(reply: str = "ok lah, who is this ah?") -> LLMClient:
-    models = {Tier.CHEAP: "glm-5.1:cloud", Tier.STRONG: "glm-5.2:cloud", Tier.LIGHT: "glm-5.1:cloud"}
+    models = {
+        Tier.CHEAP: "glm-5.1:cloud",
+        Tier.STRONG: "glm-5.2:cloud",
+        Tier.LIGHT: "glm-5.1:cloud",
+    }
     return LLMClient(FakeBackend(reply), models)

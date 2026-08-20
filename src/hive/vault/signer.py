@@ -45,7 +45,11 @@ def _pss_and_hash():
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
 
-    return padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH), hashes.SHA256()
+    pss = padding.PSS(
+        mgf=padding.MGF1(hashes.SHA256()),
+        salt_length=padding.PSS.MAX_LENGTH,
+    )
+    return pss, hashes.SHA256()
 
 
 def sign_bytes(data: bytes, key_path: str) -> bytes:

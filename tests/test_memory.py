@@ -3,13 +3,12 @@
 import time
 
 from hive.agent.memory import KeywordMemory, NullMemory
+from hive.llm.client import LLMClient
+from hive.llm.router import Tier
 from hive.runtime import HiveEngine
 from hive.sandbox.runner import RawFindings
 from hive.state import Message
 from tests.fakes import FakeBackend
-from hive.llm.client import LLMClient
-from hive.llm.router import Tier
-
 
 # --- KeywordMemory unit behaviour ---
 
@@ -58,9 +57,17 @@ def test_engine_feeds_recall_into_reason_prompt():
     session, chain = eng.new_session(peer_id=555, persona="confused_elderly")
 
     # Turn 1: scammer discloses a Telegram handle.
-    eng.process_turn(session, chain, Message("stranger", "contact me at @scammerboss on telegram", time.time(), 0))
+    eng.process_turn(
+        session,
+        chain,
+        Message("stranger", "contact me at @scammerboss on telegram", time.time(), 0),
+    )
     # Turn 2: a later message that shares the 'telegram' keyword should recall it.
-    eng.process_turn(session, chain, Message("stranger", "did you add me on telegram yet?", time.time(), 2))
+    eng.process_turn(
+        session,
+        chain,
+        Message("stranger", "did you add me on telegram yet?", time.time(), 2),
+    )
 
     # The system prompt of the LAST reason call should contain the recalled detail.
     system_prompt = backend.calls[-1]["messages"][0]["content"]

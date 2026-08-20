@@ -12,14 +12,14 @@ improves extraction/evasion.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from hive.logging_setup import get_logger
 
 log = get_logger(__name__)
 
 
-class Tier(str, Enum):
+class Tier(StrEnum):
     CHEAP = "cheap"    # ordinary persona chatter (most turns)
     STRONG = "strong"  # cover-critical / payoff turns
     LIGHT = "light"    # verdict soft-signal classification

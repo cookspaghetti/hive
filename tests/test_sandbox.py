@@ -31,7 +31,12 @@ def test_credential_page_after_cross_domain_is_malicious():
 
 
 def test_password_field_same_domain_is_suspicious():
-    f = RawFindings(final_url="http://site.example/login", has_password_field=True, body_len=3000, title="Login")
+    f = RawFindings(
+        final_url="http://site.example/login",
+        has_password_field=True,
+        body_len=3000,
+        title="Login",
+    )
     r = analyze_url("http://site.example/home", FakeRunner(f))
     assert r["verdict_signal"] == "suspicious"
 

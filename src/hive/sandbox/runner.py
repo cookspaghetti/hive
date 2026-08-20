@@ -19,6 +19,7 @@ import ipaddress
 import json
 import socket
 import subprocess
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -191,12 +192,14 @@ class PlaywrightDockerRunner:
         network: str = "hive-sandbox-net",
         dns: str = "1.1.1.1",
         memory_limit: str | None = "512m",
+        run_timeout_s: int = 90,
     ) -> None:
         self.image = image
         self.out_dir = out_dir
         self.network = network
         self.dns = dns
         self.memory_limit = memory_limit
+        self.run_timeout_s = run_timeout_s
         Path(self.out_dir).mkdir(parents=True, exist_ok=True)
 
     @staticmethod
@@ -209,12 +212,14 @@ class PlaywrightDockerRunner:
             subprocess.run(["docker", "network", "create", "--driver", "bridge", name], check=True)
             log.info("L4 sandbox: created network %s", name)
 
-    def _docker_cmd(self, url: str) -> list[str]:
+    def _docker_cmd(self, url: str, container_name: str = "") -> list[str]:
         resource_limits = ["--pids-limit", "128"]
         if self.memory_limit:
             resource_limits = ["--memory", self.memory_limit, *resource_limits]
+        identity = ["--name", container_name] if container_name else []
         return [
             "docker", "run", "--rm",
+            *identity,
             "--network", self.network,
             "--read-only",
             "--tmpfs", "/tmp:rw,size=256m",
@@ -228,16 +233,33 @@ class PlaywrightDockerRunner:
         ]
 
     def run(self, url: str) -> RawFindings:
+        container_name = f"hive-sandbox-{uuid.uuid4().hex[:12]}"
         try:
             validate_public_url(url)
             self.ensure_network(self.network)
             proc = subprocess.run(
-                self._docker_cmd(url), capture_output=True, text=True, timeout=45
+                self._docker_cmd(url, container_name),
+                capture_output=True,
+                text=True,
+                timeout=self.run_timeout_s,
             )
         except ValueError as exc:
             log.warning("L4 sandbox: destination rejected: %s", exc)
             return RawFindings(error=str(exc), blocked_requests=[url])
-        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.CalledProcessError) as exc:
+        except subprocess.TimeoutExpired:
+            try:
+                subprocess.run(
+                    ["docker", "rm", "-f", container_name],
+                    capture_output=True,
+                    timeout=20,
+                    check=False,
+                )
+            except (subprocess.TimeoutExpired, FileNotFoundError):
+                log.error("L4 sandbox: timed-out container cleanup did not finish")
+            error = f"sandbox timed out after {self.run_timeout_s}s"
+            log.error("L4 sandbox: %s", error)
+            return RawFindings(error=error)
+        except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             log.error("L4 sandbox: container run failed: %s", exc)
             return RawFindings(error=str(exc))
         if proc.returncode != 0:

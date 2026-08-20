@@ -420,6 +420,9 @@ Before launch it resolves the target and rejects non-public addresses. Inside
 the disposable browser, every navigation, redirect, and subresource request is
 resolved again and private, loopback, link-local, and internal-name targets are
 blocked. Blocked attempts remain visible in the sandbox result.
+The nested daemon uses the portable `vfs` driver, whose cold container startup
+is slower than ordinary Docker; sandbox runs therefore have a 90-second outer
+deadline and force-remove their named container on timeout.
 Compose cannot apply a child memory cgroup reliably inside Docker Desktop's
 nested daemon, so the four-service stack disables that child flag and applies a
 4 GB memory limit to the outer backend container instead. Set

@@ -40,8 +40,11 @@ def test_docker_cmd_writable_tmpfs_under_readonly():
 
 
 def test_docker_cmd_hardening_flags_present():
-    cmd = PlaywrightDockerRunner()._docker_cmd("http://x.example/")
+    cmd = PlaywrightDockerRunner()._docker_cmd(
+        "http://x.example/", "hive-sandbox-test"
+    )
     assert "--rm" in cmd
+    assert cmd[cmd.index("--name") + 1] == "hive-sandbox-test"
     assert "ALL" in cmd  # --cap-drop ALL
     assert "no-new-privileges" in cmd
 
@@ -140,3 +143,19 @@ def test_run_reports_nonzero_container_exit_with_stderr():
 
     assert "container exited 125" in result.error
     assert "cgroup failed" in result.error
+
+
+def test_run_removes_named_container_after_timeout():
+    runner = PlaywrightDockerRunner(run_timeout_s=12)
+    timeout = subprocess.TimeoutExpired(["docker", "run"], 12)
+    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
+        runner, "ensure_network"
+    ), mock.patch("subprocess.run") as run:
+        run.side_effect = [timeout, mock.Mock(returncode=0)]
+
+        result = runner.run("http://x.example/")
+
+    assert result.error == "sandbox timed out after 12s"
+    cleanup = run.call_args_list[1].args[0]
+    assert cleanup[:3] == ["docker", "rm", "-f"]
+    assert cleanup[3].startswith("hive-sandbox-")

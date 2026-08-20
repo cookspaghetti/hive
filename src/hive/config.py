@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     database_url: str = ""
     # L2 memory: False = offline KeywordMemory; True = semantic mem0+Qdrant
     use_semantic_memory: bool = False
+    # Cross-case candidate retrieval. PostgreSQL/local exact edges work regardless.
+    use_case_similarity: bool = False
+    case_similarity_threshold: float = 0.72
+    case_embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
     # Web control panel (always available; persistent token is optional).
     panel_token: str = ""

@@ -126,6 +126,10 @@ def run(argv: Sequence[str] | None = None) -> int:
     case_store = build_case_intelligence_store(
         args.history_root.parent / "cases",
         settings.database_url,
+        qdrant_url=settings.qdrant_url,
+        enable_semantic=settings.use_case_similarity,
+        similarity_threshold=settings.case_similarity_threshold,
+        embedding_model=settings.case_embedding_model,
     )
     outputs = []
     for record in records:

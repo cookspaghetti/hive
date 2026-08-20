@@ -11,6 +11,7 @@ from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from hive.audit import audit_event
+from hive.state import SessionState
 
 _EXACT_KINDS = frozenset(
     {"bank_account", "phone", "url", "crypto", "telegram_id", "email"}
@@ -134,6 +135,90 @@ def build_case_profile(
     }
 
 
+def build_live_case_profile(session: SessionState) -> dict[str, Any]:
+    messages = [
+        {
+            "role": message.role,
+            "text": message.text,
+            "ts": message.ts,
+            "msg_id": message.msg_id,
+            "media_sha256": message.media_sha256,
+        }
+        for message in session.messages
+    ]
+    record = {
+        "id": f"live:{session.session_id}",
+        "peer_id": session.peer_id,
+        "started_ts": session.started_ts,
+        "ended_ts": time.time(),
+        "messages": messages,
+        "verdict": session.verdict,
+        "score": session.verdict_score,
+        "hvi_items": [
+            {
+                "kind": item.kind,
+                "value": item.value,
+                "confidence": item.confidence,
+                "source_msg_id": item.source_msg_id,
+                "extractor": item.extractor,
+            }
+            for item in session.hvis
+        ],
+        "signal_trail": session.signal_trail,
+        "sandbox_results": session.sandbox_results,
+        "analysis": {
+            "id": f"live:{session.session_id}",
+            "schema_version": 1,
+            "created_ts": time.time(),
+            "transcript_sha256": "live",
+        },
+    }
+    return build_case_profile(record)
+
+
+def build_probe_context(
+    session: SessionState,
+    store: CaseIntelligenceStore,
+    *,
+    limit: int = 3,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Retrieve candidates and reduce them to safe, non-attributive probing hints."""
+    profile = build_live_case_profile(session)
+    matches = store.match(profile, limit)
+    if not matches:
+        return "", []
+    current_kinds = {item["kind"] for item in profile.get("indicators") or []}
+    missing: set[str] = set()
+    match_lines = []
+    for match in matches:
+        related = store.get(str(match["related_case_id"])) or {}
+        missing.update(
+            item["kind"]
+            for item in related.get("indicators") or []
+            if item["kind"] not in current_kinds
+        )
+        if match.get("relationship") == "shared_identifier":
+            kinds = sorted({item["kind"] for item in match.get("reasons") or []})
+            match_lines.append(
+                f"exact shared {', '.join(kind.replace('_', ' ') for kind in kinds)}"
+            )
+        else:
+            match_lines.append("similar script/behavior candidate only")
+    targets = ", ".join(kind.replace("_", " ") for kind in sorted(missing))
+    context = (
+        "Private historical-pattern guidance. Never mention prior cases, matching, "
+        "databases, or investigation. Similarity alone is not proof of common ownership. "
+        f"Candidate signals: {'; '.join(match_lines)}. "
+        + (
+            f"Useful missing identifier types: {targets}. Ask naturally for at most one "
+            "when it fits the conversation."
+            if targets
+            else "Continue naturally without forcing another identifier request."
+        )
+    )
+    return context, matches
+
+
 def exact_relationships(
     case_id: str,
     profile: dict[str, Any],
@@ -184,6 +269,8 @@ class CaseIntelligenceStore(Protocol):
 
     def related(self, case_id: str) -> list[dict[str, Any]]: ...
 
+    def match(self, profile: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]: ...
+
 
 class LocalCaseIntelligenceStore:
     def __init__(self, root: str | Path) -> None:
@@ -221,6 +308,16 @@ class LocalCaseIntelligenceStore:
             if (value := self.get(path.stem)) is not None
         ]
         return exact_relationships(case_id, profile, others)
+
+    def match(self, profile: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+        if not self.root.is_dir():
+            return []
+        others = [
+            value
+            for path in self.root.glob("*.json")
+            if (value := self.get(path.stem)) is not None
+        ]
+        return exact_relationships(str(profile["case_id"]), profile, others)[:limit]
 
 
 class PostgresCaseIntelligenceStore:
@@ -382,6 +479,18 @@ class PostgresCaseIntelligenceStore:
                 for case_a, case_b, relationship, score, reasons in cursor.fetchall()
             ]
 
+    def match(self, profile: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT profile FROM hive_cases WHERE case_id <> %s",
+                (profile["case_id"],),
+            )
+            return exact_relationships(
+                str(profile["case_id"]),
+                profile,
+                [row[0] for row in cursor.fetchall()],
+            )[:limit]
+
 
 def _audit_index(profile: dict[str, Any], component: str) -> None:
     audit_event(
@@ -401,7 +510,24 @@ def _audit_index(profile: dict[str, Any], component: str) -> None:
 def build_case_intelligence_store(
     root: str | Path,
     database_url: str = "",
+    *,
+    qdrant_url: str = "",
+    enable_semantic: bool = False,
+    similarity_threshold: float = 0.72,
+    embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
 ) -> CaseIntelligenceStore:
-    if database_url:
-        return PostgresCaseIntelligenceStore(database_url)
-    return LocalCaseIntelligenceStore(root)
+    relational: CaseIntelligenceStore = (
+        PostgresCaseIntelligenceStore(database_url)
+        if database_url
+        else LocalCaseIntelligenceStore(root)
+    )
+    if not enable_semantic or not qdrant_url:
+        return relational
+    from hive.case_vectors import HybridCaseIntelligenceStore, QdrantCaseVectorIndex
+
+    vectors = QdrantCaseVectorIndex(
+        qdrant_url,
+        similarity_threshold=similarity_threshold,
+        embedding_model=embedding_model,
+    )
+    return HybridCaseIntelligenceStore(relational, vectors)

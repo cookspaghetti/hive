@@ -189,6 +189,7 @@ def _history_with_analysis(
         "sandbox_results",
         "signal_trail",
         "media_analysis",
+        "related_cases",
     ):
         if field in analysis:
             detail[field] = analysis[field]
@@ -408,6 +409,14 @@ def create_app(
     case_intelligence = case_intelligence_store or build_case_intelligence_store(
         project_root / "evidence" / "cases",
         getattr(configured, "database_url", ""),
+        qdrant_url=getattr(configured, "qdrant_url", ""),
+        enable_semantic=getattr(configured, "use_case_similarity", False),
+        similarity_threshold=getattr(configured, "case_similarity_threshold", 0.72),
+        embedding_model=getattr(
+            configured,
+            "case_embedding_model",
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        ),
     )
     reanalysis = ReanalysisService(
         analysis_runs,

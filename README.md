@@ -261,21 +261,31 @@ still provisions Qdrant as its own service, but the backend only uses it when
 docker compose up -d qdrant
 ```
 
-### Planned: cross-case semantic intelligence
+### Cross-case semantic intelligence
 
-Qdrant should evolve from persona conversation recall into a sealed-case
-pattern index. On seal, HIVE will embed the external party's script, scam
-method, verified indicators, payment flow, and sandbox findings. During a new
-takeover, semantic retrieval can surface similar historical cases and suggest
-which missing identifiers to elicit next.
+Sealing writes a canonical case profile containing the external party's
+script, scam method, validated indicators, payment flow, and sandbox findings.
+PostgreSQL is authoritative for profiles and exact shared-identifier edges.
+Enable the separate Qdrant `hive_cases` candidate index with:
 
-Semantic similarity is candidate retrieval, not proof of common ownership.
+```text
+HIVE_USE_CASE_SIMILARITY=true
+```
+
+The first semantic index operation downloads the configured local multilingual
+FastEmbed model into the persistent `hive_fastembed_cache` volume. During a new
+takeover, retrieval starts only after meaningful scam evidence exists. HIVE can
+use matching patterns to choose one missing identifier type to ask for, but its
+prompt explicitly forbids mentioning prior cases or the investigation.
+
+Semantic similarity is labelled candidate retrieval, not proof of common ownership.
 Network attribution must distinguish exact shared identifiers (accounts,
 wallets, domains, phone numbers, or Telegram handles), multiple corroborating
 features, and script-only similarity. PostgreSQL remains authoritative for
 cases and relationship edges; Qdrant finds candidates; the evidence bundle and
 audit ledger retain provenance. Only corrected, validated extraction results
-should enter this index, and the panel should explain why each case matched.
+enter relationship edges and the index. Person-name similarity never creates a
+network edge.
 
 Build the forensic sandbox image:
 
@@ -376,8 +386,9 @@ image inside it, then runs `python -m hive`. Nginx proxies `/api/*` and
 `hive_postgres` volume.
 
 GLiNER/Hugging Face model files are stored in the persistent
-`hive_model_cache` Docker volume. The first `task run` still downloads the
-weights, but later container rebuilds and recreations reuse them. A normal
+`hive_model_cache` Docker volume, while cross-case embeddings use
+`hive_fastembed_cache`. The first use still downloads the relevant weights,
+but later container rebuilds and recreations reuse them. A normal
 `task stack:down` preserves the model and PostgreSQL volumes;
 `docker compose down --volumes` removes them.
 
@@ -435,6 +446,8 @@ uv run pytest tests/test_sandbox_runner.py tests/test_userbot.py tests/test_prom
 - In-session memory uses an offline keyword-recall backend by default; the
   semantic mem0 + Qdrant backend (`HIVE_USE_SEMANTIC_MEMORY`) is opt-in and not
   exercised by the offline test suite.
+- Cross-case semantic candidates are opt-in with `HIVE_USE_CASE_SIMILARITY`;
+  exact shared-identifier relationships remain active without vector retrieval.
 - The Section 90A certificate text and signature tooling support evidence
   packaging; legal admissibility still depends on operator process, custody,
   and local legal requirements.

@@ -106,6 +106,7 @@ def _record(
         "signal_trail": session.signal_trail,
         "replay_of": session.replay_of,
         "media_analysis": session.media_analysis,
+        "related_cases": session.related_cases,
         "analysis": analysis,
         "evidence_filename": Path(evidence_path).name if evidence_path else None,
     }

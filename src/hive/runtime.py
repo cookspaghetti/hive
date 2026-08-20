@@ -58,6 +58,7 @@ class HiveEngine:
     sandbox_runner: BrowserRunner
     ner_backend: NerBackend | None = None
     vision_client: object | None = None
+    case_intelligence: object | None = None
     enable_early_exit: bool = True
     early_exit_min_turns: int = 3   # don't bail before we've seen enough
     max_turns: int = 60             # 0 disables; else terminate past this
@@ -413,12 +414,25 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
     import os
 
     from hive.agent.memory import build_memory
+    from hive.case_intelligence import build_case_intelligence_store
     from hive.extraction.ner import get_default_backend
     from hive.llm.client import build_client, build_vision_client
     from hive.sandbox.runner import PlaywrightDockerRunner
 
     client = build_client(settings)
     vision_client = build_vision_client(settings)
+    case_intelligence = build_case_intelligence_store(
+        "evidence/cases",
+        getattr(settings, "database_url", ""),
+        qdrant_url=getattr(settings, "qdrant_url", ""),
+        enable_semantic=getattr(settings, "use_case_similarity", False),
+        similarity_threshold=getattr(settings, "case_similarity_threshold", 0.72),
+        embedding_model=getattr(
+            settings,
+            "case_embedding_model",
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        ),
+    )
     sandbox_memory = os.getenv("HIVE_SANDBOX_MEMORY_LIMIT", "512m").strip() or None
     runner = PlaywrightDockerRunner(memory_limit=sandbox_memory)
     ner = get_default_backend() if load_ner else None
@@ -432,6 +446,7 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
         sandbox_runner=runner,
         ner_backend=ner,
         vision_client=vision_client,
+        case_intelligence=case_intelligence,
         memory_factory=memory_factory,
         max_turns=getattr(settings, "max_turns", 60),
         max_session_minutes=getattr(settings, "max_session_minutes", 120),

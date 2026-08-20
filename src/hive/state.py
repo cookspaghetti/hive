@@ -72,6 +72,10 @@ class SessionState:
     signal_trail: list[dict[str, Any]] = field(default_factory=list)  # explainable verdict log
     replay_of: str | None = None
     media_analysis: list[dict[str, Any]] = field(default_factory=list)
+    related_cases: list[dict[str, Any]] = field(default_factory=list)
+    case_probe_context: str = ""
+    case_retrieved_at_turn: int = 0
+    case_indicator_count_at_retrieval: int = 0
 
 
 class GraphState(TypedDict, total=False):

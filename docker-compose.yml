@@ -36,6 +36,7 @@ services:
     volumes:
       - hive_dind:/var/lib/docker
       - hive_models:/root/.cache/huggingface
+      - hive_fastembed:/root/.cache/fastembed
       - ./.env:/app/.env
       - ./secrets:/app/secrets
       - ./evidence:/app/evidence
@@ -68,4 +69,6 @@ volumes:
   hive_dind:
   hive_models:
     name: hive_model_cache
+  hive_fastembed:
+    name: hive_fastembed_cache
   hive_postgres:

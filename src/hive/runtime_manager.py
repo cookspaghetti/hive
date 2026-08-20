@@ -218,11 +218,16 @@ class HiveRuntimeManager:
                 await self._sync_stage(
                     "llm", "probing endpoint and configured models", self._llm_probe, settings
                 )
-                if settings.use_semantic_memory:
+                if settings.use_semantic_memory or settings.use_case_similarity:
                     await self._sync_stage(
                         "qdrant", "probing readiness endpoint", self._qdrant_probe, settings
                     )
-                    self._set_component("memory", "ready", "semantic mem0 + Qdrant")
+                    memory_detail = (
+                        "semantic mem0 + Qdrant"
+                        if settings.use_semantic_memory
+                        else "offline conversation memory + Qdrant case similarity"
+                    )
+                    self._set_component("memory", "ready", memory_detail)
                 else:
                     self._set_component("qdrant", "disabled", "semantic memory is disabled")
                     self._set_component("memory", "ready", "offline keyword memory")
@@ -257,6 +262,10 @@ class HiveRuntimeManager:
                     case_intelligence=build_case_intelligence_store(
                         self.root / "evidence" / "cases",
                         getattr(settings, "database_url", ""),
+                        qdrant_url=settings.qdrant_url,
+                        enable_semantic=settings.use_case_similarity,
+                        similarity_threshold=settings.case_similarity_threshold,
+                        embedding_model=settings.case_embedding_model,
                     ),
                 )
                 control = self._control_factory(

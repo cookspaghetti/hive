@@ -24,7 +24,10 @@ _HISTORY_WINDOW = 12
 
 
 def _build_messages(
-    session: SessionState, recall: list[str], defense_note: str = ""
+    session: SessionState,
+    recall: list[str],
+    defense_note: str = "",
+    case_context: str = "",
 ) -> list[ChatMessage]:
     persona = get_persona(session.persona)
     system = persona.system_prompt
@@ -34,6 +37,8 @@ def _build_messages(
         # S7: appended when an injection / bot-probe was detected, to keep the
         # agent in character instead of complying.
         system += defense_note
+    if case_context:
+        system += f"\n\n{case_context}"
 
     messages = [ChatMessage(role="system", content=system)]
     for m in session.messages[-_HISTORY_WINDOW:]:
@@ -54,6 +59,7 @@ def reason_and_reply(
     recall: list[str] | None = None,
     route_inputs: RouteInputs | None = None,
     defense_note: str = "",
+    case_context: str = "",
 ) -> tuple[str, Tier]:
     """Return (raw_reply_text, tier_used) for the current turn.
 
@@ -64,7 +70,7 @@ def reason_and_reply(
     """
     recall = recall or []
     tier = route(route_inputs or RouteInputs())
-    messages = _build_messages(session, recall, defense_note)
+    messages = _build_messages(session, recall, defense_note, case_context)
 
     log.info(
         "reason: persona=%s tier=%s history=%d recall=%d",

@@ -128,6 +128,7 @@ def analysis_run_record(
         "sandbox_results": list(session.sandbox_results),
         "signal_trail": list(session.signal_trail),
         "media_analysis": list(session.media_analysis),
+        "related_cases": list(session.related_cases),
     }
 
 

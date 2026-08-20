@@ -14,6 +14,7 @@ def test_compose_declares_the_four_service_boundaries():
     assert '"127.0.0.1:6333:6333"' not in compose
     assert "HIVE_DATABASE_URL:" in compose
     assert "HIVE_QDRANT_URL: http://qdrant:6333" in compose
+    assert "hive_fastembed:/root/.cache/fastembed" in compose
 
 
 def test_frontend_image_serves_assets_and_proxies_backend_apis():

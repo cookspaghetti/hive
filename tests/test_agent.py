@@ -68,3 +68,18 @@ def test_media_description_is_prompt_context_without_changing_transcript():
         "see this\n[Private image analysis: Maybank account 1234567890]"
     )
     assert message.text == "see this"
+
+
+def test_case_guidance_is_private_system_context():
+    prompt = _build_messages(
+        _session(),
+        [],
+        case_context=(
+            "Private historical-pattern guidance. Never mention prior cases. "
+            "Useful missing identifier types: phone."
+        ),
+    )
+
+    assert "Never mention prior cases" in prompt[0].content
+    assert "Useful missing identifier types: phone" in prompt[0].content
+    assert "prior cases" not in prompt[-1].content

@@ -264,6 +264,7 @@ def build_turn_graph(engine: HiveEngine):
 
     def n_reason(state: TurnState) -> TurnState:
         from hive.agent.graph_nodes import reason_and_reply
+        from hive.case_intelligence import build_probe_context
 
         session = state["session"]
         inbound = state["inbound"]
@@ -279,12 +280,36 @@ def build_turn_graph(engine: HiveEngine):
         )
         route_inputs = RouteInputs(injection_flagged=state.get("screen_flagged", False))
         defense = persona_defense_note(screen(inbound.text)) if state.get("screen_flagged") else ""
+        should_retrieve_cases = bool(
+            engine.case_intelligence
+            and session.verdict_score >= 0.55
+            and (
+                not session.related_cases
+                or session.turn_count - session.case_retrieved_at_turn >= 3
+                or len(session.hvis) > session.case_indicator_count_at_retrieval
+            )
+        )
+        if should_retrieve_cases:
+            context, matches = build_probe_context(session, engine.case_intelligence)
+            session.case_probe_context = context
+            session.related_cases = matches
+            session.case_retrieved_at_turn = session.turn_count
+            session.case_indicator_count_at_retrieval = len(session.hvis)
+            audit_event(
+                "semantic_case_retrieval",
+                "case_guidance_prepared",
+                component="orchestrator.reason",
+                payload={"matches": matches, "context": context},
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+            )
         reply, tier = reason_and_reply(
             session,
             engine.agent_client,
             recall=recall,
             route_inputs=route_inputs,
             defense_note=defense,
+            case_context=session.case_probe_context,
         )
         return {"reply": reply, "tier": tier.value, "recall": recall}
 

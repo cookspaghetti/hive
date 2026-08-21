@@ -3,11 +3,30 @@
 from hive.reanalyze import _archived_records
 from hive.replay import replay_history_record
 from hive.runtime import HiveEngine
+from hive.sandbox.runner import RawFindings
 from tests.fakes import fake_client
 
 
 class FakeSandbox:
     pass
+
+
+class RecordingSandbox:
+    def __init__(self):
+        self.urls = []
+
+    def run(self, url):
+        self.urls.append(url)
+        return RawFindings(
+            final_url="https://destination.example/report",
+            redirect_chain=[url, "https://destination.example/report"],
+            dest_ip="203.0.113.10",
+            title="Investigation target",
+            body_len=5000,
+            http_status=200,
+            fetcher="test",
+            access_state="reached",
+        )
 
 
 class FakeNer:
@@ -98,6 +117,51 @@ def test_replay_recovers_cross_message_agent_alias():
     assert [(item.kind, item.value, item.source_msg_id) for item in replayed.hvis] == [
         ("person_name", "petasan", 21)
     ]
+
+
+def test_replay_reruns_each_distinct_url_once():
+    record = {
+        "id": "urls_919",
+        "peer_id": 919,
+        "signal_trail": [{"turn": 1}, {"turn": 2}, {"turn": 3}],
+        "messages": [
+            {
+                "role": "stranger",
+                "text": "Open https://short.example/a",
+                "ts": 11,
+                "msg_id": 1,
+            },
+            {
+                "role": "stranger",
+                "text": "Again https://short.example/a",
+                "ts": 12,
+                "msg_id": 2,
+            },
+            {
+                "role": "stranger",
+                "text": "Or visit another.example/path",
+                "ts": 13,
+                "msg_id": 3,
+            },
+        ],
+    }
+    classifier = '{"urgency":{"score":0.0,"message_ids":[]}}'
+    sandbox = RecordingSandbox()
+    engine = HiveEngine(
+        agent_client=fake_client(classifier),
+        sandbox_runner=sandbox,
+        ner_backend=FakeNer(),
+        enable_early_exit=False,
+    )
+
+    replayed = replay_history_record(record, engine)
+
+    assert sandbox.urls == [
+        "https://short.example/a",
+        "https://another.example/path",
+    ]
+    assert [result["url"] for result in replayed.sandbox_results] == sandbox.urls
+    assert all(result["access_state"] == "reached" for result in replayed.sandbox_results)
 
 
 class FakeHistory:

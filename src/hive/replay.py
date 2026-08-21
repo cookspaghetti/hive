@@ -1,7 +1,8 @@
 """Deterministic re-analysis of an archived takeover transcript.
 
-Replay preserves every recorded message and reruns extraction plus verdict
-classification. It deliberately does not generate replacement agent replies.
+Replay preserves every recorded message and reruns extraction, URL sandboxing,
+and verdict classification. It deliberately does not generate replacement
+agent replies.
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from hive.audit import audit_event
 from hive.extraction.engine import extract_contextual_hvis, extract_hvis, merge_hvis
 from hive.extraction.regex_rules import extract_regex
 from hive.runtime import HiveEngine
+from hive.sandbox.analyzer import analyze_url
 from hive.state import Message, Phase, SessionState
 from hive.verdict.classifier import classify_soft
 from hive.verdict.engine import update_verdict
@@ -63,6 +65,7 @@ def replay_history_record(
         replay_of=str(record.get("id") or "") or None,
     )
     batch: list[Message] = []
+    sandboxed_urls: set[str] = set()
     analyzed_turns = 0
     turn_boundaries = {
         int(item["turn"])
@@ -98,7 +101,22 @@ def replay_history_record(
                 hvis.extend(visual_hvis)
             batch_hvis.extend(hvis)
         batch_hvis.extend(extract_contextual_hvis(session.messages, batch_message_ids))
-        merge_hvis(session.hvis, batch_hvis)
+        accepted = merge_hvis(session.hvis, batch_hvis)
+        for item in accepted:
+            if item.kind != "url" or item.value in sandboxed_urls:
+                continue
+            result = analyze_url(item.value, engine.sandbox_runner)
+            session.sandbox_results.append(result)
+            sandboxed_urls.add(item.value)
+            audit_event(
+                "sandbox",
+                "url_analysis_failed" if result.get("error") else "url_analysis_completed",
+                component="replay.sandbox",
+                payload=result,
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+                level="error" if result.get("error") else "info",
+            )
         session.turn_count += len(batch)
         analyzed_turns = session.turn_count
         session.exchange_count += 1

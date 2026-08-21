@@ -312,6 +312,15 @@ def test_takeover_inspector_is_a_live_media_aware_dialog(client):
     assert "body:has(.session-dialog[open]) { overflow: hidden; }" in css
 
 
+def test_panel_wraps_long_audit_details_and_sandbox_urls(client):
+    css = client.get("/panel.css").text
+
+    assert ".surface-heading > div { min-width: 0; }" in css
+    assert ".surface-heading strong, .surface-heading p { overflow-wrap: anywhere; }" in css
+    assert ".timeline-item > div { min-width: 0; }" in css
+    assert ".timeline-item p { margin: 2px 0 0; overflow-wrap: anywhere;" in css
+
+
 def test_session_media_is_served_only_with_panel_authentication(client):
     session = client._userbot._sessions[100][0]
     media_dir = client._root / "evidence" / "media" / session.session_id

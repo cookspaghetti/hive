@@ -66,6 +66,43 @@ def test_clean_page():
     assert r["cloaking_suspected"] is False
 
 
+def test_unsolved_challenge_is_inconclusive_not_clean():
+    f = RawFindings(
+        final_url="https://short.example/x",
+        body_len=8000,
+        title="Just a moment...",
+        http_status=200,
+        fetcher="scrapling_stealthy",
+        access_state="challenge",
+        challenge_detected=True,
+        challenge_provider="cloudflare",
+        error="sandbox timed out after 90s",
+    )
+    r = analyze_url("https://short.example/x", FakeRunner(f))
+
+    assert r["verdict_signal"] == "inconclusive"
+    assert r["access_state"] == "challenge"
+    assert r["challenge_detected"] is True
+    assert r["challenge_provider"] == "cloudflare"
+    assert r["fetcher"] == "scrapling_stealthy"
+    assert r["error"] == "sandbox timed out after 90s"
+
+
+def test_blocked_http_response_is_inconclusive_not_clean():
+    f = RawFindings(
+        final_url="https://protected.example/",
+        body_len=4000,
+        title="Forbidden",
+        http_status=403,
+        fetcher="scrapling_stealthy",
+        access_state="blocked",
+    )
+    r = analyze_url("https://protected.example/", FakeRunner(f))
+
+    assert r["verdict_signal"] == "inconclusive"
+    assert r["access_state"] == "blocked"
+
+
 def test_runner_error_propagates():
     r = analyze_url("http://x.example/", FakeRunner(RawFindings(error="timeout")))
     assert r["verdict_signal"] == "error"

@@ -30,6 +30,8 @@ def _same_registrable_domain(a: str, b: str) -> bool:
 
 def _derive(url: str, f: RawFindings) -> tuple[str, bool]:
     """Return (verdict_signal, cloaking_suspected)."""
+    if f.challenge_detected or f.access_state in {"challenge", "blocked"}:
+        return "inconclusive", False
     if f.error:
         return "error", False
 
@@ -73,6 +75,11 @@ def analyze_url(url: str, runner: BrowserRunner) -> dict:
         "title": findings.title,
         "has_password_field": findings.has_password_field,
         "blocked_requests": findings.blocked_requests,
+        "http_status": findings.http_status,
+        "fetcher": findings.fetcher,
+        "access_state": findings.access_state,
+        "challenge_detected": findings.challenge_detected,
+        "challenge_provider": findings.challenge_provider,
         "verdict_signal": signal,
         "cloaking_suspected": cloaking,
         "error": findings.error,

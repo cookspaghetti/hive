@@ -497,6 +497,9 @@ def build_bundle(
                 f"Submitted URL: {_xml(result.get('url', ''))}<br/>"
                 f"Final URL: {_xml(result.get('final_url', ''))}<br/>"
                 f"Destination IP: {_xml(result.get('dest_ip', ''))}<br/>"
+                f"Access state: {_xml(result.get('access_state', 'unknown'))}<br/>"
+                f"Fetcher: {_xml(result.get('fetcher', 'unknown'))}<br/>"
+                f"Challenge: {_xml(result.get('challenge_provider', 'none'))}<br/>"
                 f"Cloaking suspected: {_xml(result.get('cloaking_suspected', False))}"
             )
             card = Table([[Paragraph(finding, styles["body"])]], colWidths=[doc.width])

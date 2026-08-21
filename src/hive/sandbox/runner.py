@@ -1,9 +1,9 @@
-"""Disposable browser runners for the Forensic Sandbox (fyp.txt L4).
+"""Disposable Scrapling browser runner for the Forensic Sandbox (fyp.txt L4).
 
 A runner navigates a suspect URL and returns raw findings. The real runner
-launches a fresh, isolated, non-privileged Docker container running headless
-Playwright, then destroys it. The runner is injected into `analyze_url` so the
-analysis logic is testable offline with a fake.
+launches a fresh, isolated, non-privileged Docker container running Scrapling's
+stealth browser, then destroys it. The runner is injected into `analyze_url` so
+the analysis logic is testable offline with a fake.
 
 Egress containment combines a dedicated Docker bridge with host-side and
 in-browser destination validation. Host firewall rules remain recommended as a
@@ -22,7 +22,7 @@ import subprocess
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 from hive.logging_setup import get_logger
 
@@ -52,6 +52,11 @@ class RawFindings:
     has_password_field: bool = False
     body_len: int = 0
     blocked_requests: list[str] = field(default_factory=list)
+    http_status: int = 0
+    fetcher: str = ""
+    access_state: str = ""
+    challenge_detected: bool = False
+    challenge_provider: str = ""
     error: str = ""
 
 
@@ -86,94 +91,179 @@ def validate_public_url(url: str) -> list[str]:
     return sorted(str(address) for address in addresses)
 
 
-# The in-container Playwright script (kept as data; executed inside the
-# disposable container, never in the host process).
-_PLAYWRIGHT_SCRIPT = r"""
-const { chromium } = require('playwright');
-const dns = require('node:dns').promises;
-const net = require('node:net');
+# The in-container Scrapling program is kept as data and executed only inside a
+# disposable container. `page_setup` installs request filtering before the
+# first navigation, preserving HIVE's redirect/subresource SSRF controls.
+_SCRAPLING_SCRIPT = r"""
+import ipaddress
+import json
+import socket
+import sys
+from pathlib import Path
+from urllib.parse import urlsplit
 
-function isPrivateIp(raw) {
-  let ip = String(raw || '').toLowerCase().split('%')[0].replace(/^\[|\]$/g, '');
-  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
-  if (net.isIPv4(ip)) {
-    const p = ip.split('.').map(Number);
-    return p[0] === 0 || p[0] === 10 || p[0] === 127 || p[0] >= 224 ||
-      (p[0] === 100 && p[1] >= 64 && p[1] <= 127) ||
-      (p[0] === 169 && p[1] === 254) ||
-      (p[0] === 172 && p[1] >= 16 && p[1] <= 31) ||
-      (p[0] === 192 && p[1] === 168) ||
-      (p[0] === 198 && (p[1] === 18 || p[1] === 19));
-  }
-  if (net.isIPv6(ip)) {
-    return ip === '::' || ip === '::1' || ip.startsWith('fc') ||
-      ip.startsWith('fd') || /^fe[89ab]/.test(ip) || ip.startsWith('ff');
-  }
-  return true;
-}
+from scrapling.fetchers import StealthyFetcher
 
-async function ensurePublic(raw) {
-  const parsed = new URL(raw);
-  if (!['http:', 'https:'].includes(parsed.protocol)) return;
-  const host = parsed.hostname.replace(/^\[|\]$/g, '').replace(/\.$/, '').toLowerCase();
-  if (host === 'localhost' || host.endsWith('.localhost') ||
-      host.endsWith('.local') || host.endsWith('.internal')) {
-    throw new Error(`blocked local hostname: ${host}`);
-  }
-  const addresses = net.isIP(host) ? [{ address: host }] :
-    await dns.lookup(host, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some(item => isPrivateIp(item.address))) {
-    throw new Error(`blocked non-public destination: ${host}`);
-  }
-}
+url = sys.argv[1]
+blocked = []
+chain = []
+observed = {}
+redirect_statuses = {301, 302, 303, 307, 308}
 
-(async () => {
-  const url = process.argv[1];
-  const chain = [];
-  const blocked = [];
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ serviceWorkers: 'block', acceptDownloads: false });
-  await context.route('**/*', async route => {
-    const target = route.request().url();
-    try {
-      await ensurePublic(target);
-      await route.continue();
-    } catch (error) {
-      blocked.push(target);
-      await route.abort('blockedbyclient');
+
+def ensure_public(raw):
+    parsed = urlsplit(raw)
+    if parsed.scheme.lower() not in {"http", "https"}:
+        return
+    hostname = (parsed.hostname or "").rstrip(".").lower()
+    if not hostname:
+        raise ValueError("missing hostname")
+    if hostname == "localhost" or hostname.endswith((".localhost", ".local", ".internal")):
+        raise ValueError(f"blocked local hostname: {hostname}")
+    try:
+        addresses = [ipaddress.ip_address(hostname)]
+    except ValueError:
+        resolved = socket.getaddrinfo(
+            hostname,
+            parsed.port or (443 if parsed.scheme.lower() == "https" else 80),
+            type=socket.SOCK_STREAM,
+        )
+        addresses = list({ipaddress.ip_address(item[4][0]) for item in resolved})
+    if not addresses or any(not address.is_global for address in addresses):
+        raise ValueError(f"blocked non-public destination: {hostname}")
+
+
+def page_setup(page):
+    def guard(route):
+        target = route.request.url
+        try:
+            ensure_public(target)
+        except Exception:
+            blocked.append(target)
+            route.abort(error_code="blockedbyclient")
+        else:
+            route.continue_()
+
+    def record_response(response):
+        try:
+            if response.status in redirect_statuses:
+                chain.append(response.url)
+            if response.request.is_navigation_request():
+                server = response.server_addr() or {}
+                observed["dest_ip"] = server.get("ipAddress", "")
+        except Exception:
+            pass
+
+    page.route("**/*", guard)
+    page.on("response", record_response)
+    page.on("domcontentloaded", lambda: inspect_page(page))
+
+
+def persist_progress():
+    progress = {
+        **observed,
+        "redirect_chain": chain,
+        "blocked_requests": list(dict.fromkeys(blocked)),
+        "fetcher": "scrapling_stealthy",
     }
-  });
-  const page = await context.newPage();
-  page.on('response', r => {
-    if ([301,302,303,307,308].includes(r.status())) chain.push(r.url());
-  });
-  try {
-    try { await ensurePublic(url); }
-    catch (error) { blocked.push(url); throw error; }
-    const resp = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 15000 });
-    await page.waitForTimeout(750);
-    const hasPw = await page.$('input[type=password]') !== null;
-    const body = await page.content();
-    let screenshotError = '';
-    try { await page.screenshot({ path: '/out/shot.png', fullPage: true }); }
-    catch (error) { screenshotError = String(error); }
-    const server = resp && typeof resp.serverAddr === 'function'
-      ? await resp.serverAddr().catch(() => null) : null;
-    console.log(JSON.stringify({
-      final_url: page.url(), redirect_chain: chain,
-      dest_ip: server ? server.ipAddress : '',
-      title: await page.title(), has_password_field: hasPw, body_len: body.length,
-      blocked_requests: blocked, screenshot_error: screenshotError,
-    }));
-  } catch (e) {
-    console.log(JSON.stringify({ error: String(e), blocked_requests: blocked }));
-  } finally { await browser.close(); }
-})();
+    temporary = Path("/out/progress.json.tmp")
+    temporary.write_text(json.dumps(progress, ensure_ascii=False), encoding="utf-8")
+    temporary.replace("/out/progress.json")
+
+
+def inspect_page(page):
+    title = page.title()
+    body = page.content()
+    try:
+        visible_text = page.locator("body").inner_text(timeout=2000)
+    except Exception:
+        visible_text = ""
+    haystack = f"{title}\n{visible_text}\n{body[:20000]}".casefold()
+    title_challenge = any(
+        marker in title.casefold()
+        for marker in (
+            "just a moment",
+            "attention required",
+            "checking your browser",
+            "security verification",
+            "verify you are human",
+        )
+    )
+    cloudflare_challenge = "cloudflare" in haystack and any(
+        marker in haystack
+        for marker in (
+            "performing security verification",
+            "verifying you are human",
+            "verify you are not a bot",
+            "checking your browser",
+            "cf-chl-",
+            "__cf_chl_",
+            "cf-turnstile",
+        )
+    )
+    challenge = title_challenge or cloudflare_challenge
+    observed.update(
+        final_url=page.url,
+        title=title,
+        has_password_field=page.query_selector("input[type=password]") is not None,
+        body_len=len(body),
+        screenshot_error="",
+        challenge_detected=challenge,
+        challenge_provider=(
+            "cloudflare" if cloudflare_challenge else ("unknown" if challenge else "")
+        ),
+        access_state="challenge" if challenge else "reached",
+    )
+    persist_progress()
+    try:
+        page.screenshot(path="/out/shot.png", full_page=True)
+    except Exception as exc:
+        observed["screenshot_error"] = str(exc)
+    persist_progress()
+
+
+try:
+    ensure_public(url)
+    response = StealthyFetcher.fetch(
+        url,
+        headless=True,
+        solve_cloudflare=True,
+        timeout=60000,
+        wait=750,
+        network_idle=False,
+        google_search=False,
+        block_webrtc=True,
+        retries=1,
+        page_setup=page_setup,
+        page_action=inspect_page,
+    )
+    for prior in response.history:
+        prior_url = str(getattr(prior, "url", ""))
+        if prior_url and prior_url not in chain:
+            chain.append(prior_url)
+    observed.setdefault("final_url", str(response.url))
+    observed.setdefault("body_len", len(response.body))
+    observed["http_status"] = int(response.status or 0)
+    if observed["http_status"] in {401, 403, 407, 429, 503} and not observed.get(
+        "challenge_detected"
+    ):
+        observed["access_state"] = "blocked"
+    observed["redirect_chain"] = chain
+    observed["blocked_requests"] = list(dict.fromkeys(blocked))
+    observed["fetcher"] = "scrapling_stealthy"
+    print(json.dumps(observed, ensure_ascii=False))
+except Exception as exc:
+    print(json.dumps({
+        "error": str(exc),
+        "blocked_requests": list(dict.fromkeys(blocked)),
+        "fetcher": "scrapling_stealthy",
+        "access_state": "error",
+    }, ensure_ascii=False))
 """
 
 
-class PlaywrightDockerRunner:
-    """Runs the Playwright script in a disposable, isolated container.
+class ScraplingDockerRunner:
+    """Runs Scrapling's stealth fetcher in a disposable, isolated container.
 
     Hardening actually applied by the docker flags below (fyp.txt L4):
       --rm                         container destroyed on exit
@@ -237,8 +327,28 @@ class PlaywrightDockerRunner:
             *resource_limits,
             "--dns", self.dns,
             "-v", f"{output_dir or self.out_dir}:/out",
-            self.image, "node", "-e", _PLAYWRIGHT_SCRIPT, url,
+            self.image, "python", "-c", _SCRAPLING_SCRIPT, url,
         ]
+
+    @staticmethod
+    def _findings_from_data(data: dict[str, Any], output_dir: Path) -> RawFindings:
+        return RawFindings(
+            final_url=str(data.get("final_url") or ""),
+            redirect_chain=list(data.get("redirect_chain") or []),
+            dest_ip=str(data.get("dest_ip") or ""),
+            screenshot_path=str(output_dir / "shot.png"),
+            screenshot_error=str(data.get("screenshot_error") or ""),
+            title=str(data.get("title") or ""),
+            has_password_field=bool(data.get("has_password_field")),
+            body_len=int(data.get("body_len") or 0),
+            blocked_requests=list(data.get("blocked_requests") or []),
+            http_status=int(data.get("http_status") or 0),
+            fetcher=str(data.get("fetcher") or "scrapling_stealthy"),
+            access_state=str(data.get("access_state") or "error"),
+            challenge_detected=bool(data.get("challenge_detected")),
+            challenge_provider=str(data.get("challenge_provider") or ""),
+            error=str(data.get("error") or ""),
+        )
 
     def run(self, url: str) -> RawFindings:
         container_name = f"hive-sandbox-{uuid.uuid4().hex[:12]}"
@@ -269,6 +379,14 @@ class PlaywrightDockerRunner:
                 log.error("L4 sandbox: timed-out container cleanup did not finish")
             error = f"sandbox timed out after {self.run_timeout_s}s"
             log.error("L4 sandbox: %s", error)
+            progress_path = output_dir / "progress.json"
+            try:
+                progress = json.loads(progress_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                progress = None
+            if isinstance(progress, dict):
+                progress["error"] = error
+                return self._findings_from_data(progress, output_dir)
             return RawFindings(error=error)
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             log.error("L4 sandbox: container run failed: %s", exc)
@@ -282,19 +400,8 @@ class PlaywrightDockerRunner:
         except (ValueError, IndexError):
             detail = proc.stderr.strip() or proc.stdout.strip() or "empty output"
             return RawFindings(error=f"unparseable output: {detail[:1000]}")
-        if "error" in data:
-            return RawFindings(
-                error=data["error"],
-                blocked_requests=list(data.get("blocked_requests") or []),
-            )
-        return RawFindings(
-            final_url=data.get("final_url", ""),
-            redirect_chain=data.get("redirect_chain", []),
-            dest_ip=data.get("dest_ip", ""),
-            screenshot_path=str(output_dir / "shot.png"),
-            screenshot_error=str(data.get("screenshot_error") or ""),
-            title=data.get("title", ""),
-            has_password_field=bool(data.get("has_password_field")),
-            body_len=int(data.get("body_len", 0)),
-            blocked_requests=list(data.get("blocked_requests") or []),
-        )
+        return self._findings_from_data(data, output_dir)
+
+
+# Compatibility for callers that imported the original runner name.
+PlaywrightDockerRunner = ScraplingDockerRunner

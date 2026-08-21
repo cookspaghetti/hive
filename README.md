@@ -405,7 +405,7 @@ but later container rebuilds and recreations reuse them. A normal
 
 ## Sandbox Notes
 
-`PlaywrightDockerRunner` launches one short-lived Docker container per URL with:
+`ScraplingDockerRunner` launches one short-lived Docker container per URL with:
 
 - a dedicated Docker bridge network,
 - read-only root filesystem,
@@ -420,6 +420,10 @@ Before launch it resolves the target and rejects non-public addresses. Inside
 the disposable browser, every navigation, redirect, and subresource request is
 resolved again and private, loopback, link-local, and internal-name targets are
 blocked. Blocked attempts remain visible in the sandbox result.
+The browser uses Scrapling's pinned stealth fetcher with Cloudflare challenge
+handling enabled. If an interstitial remains after that attempt, HIVE records
+the access as `challenge` with an `inconclusive` sandbox signal; challenge pages
+are never treated as proof that the destination is clean.
 The nested daemon uses the portable `vfs` driver, whose cold container startup
 is slower than ordinary Docker; sandbox runs therefore have a 90-second outer
 deadline and force-remove their named container on timeout.

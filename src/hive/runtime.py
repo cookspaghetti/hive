@@ -417,7 +417,7 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
     from hive.case_intelligence import build_case_intelligence_store
     from hive.extraction.ner import get_default_backend
     from hive.llm.client import build_client, build_vision_client
-    from hive.sandbox.runner import PlaywrightDockerRunner
+    from hive.sandbox.runner import ScraplingDockerRunner
 
     client = build_client(settings)
     vision_client = build_vision_client(settings)
@@ -434,7 +434,7 @@ def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
         ),
     )
     sandbox_memory = os.getenv("HIVE_SANDBOX_MEMORY_LIMIT", "512m").strip() or None
-    runner = PlaywrightDockerRunner(memory_limit=sandbox_memory)
+    runner = ScraplingDockerRunner(memory_limit=sandbox_memory)
     ner = get_default_backend() if load_ner else None
     memory_factory = lambda pid: build_memory(pid, settings)  # noqa: E731
     log.info(

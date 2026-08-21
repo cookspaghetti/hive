@@ -725,6 +725,10 @@
   function renderSandboxResult(item) {
     const signal = item.verdict_signal || (item.error ? "error" : "unknown");
     const facts = [
+      ["Access", item.access_state ? titleCase(item.access_state) : ""],
+      ["Fetcher", item.fetcher],
+      ["HTTP status", item.http_status || ""],
+      ["Challenge", item.challenge_detected ? titleCase(item.challenge_provider || "Detected") : ""],
       ["Final URL", item.final_url],
       ["Destination IP", item.dest_ip],
       ["Page title", item.title],

@@ -108,12 +108,12 @@ tasks:
       - docker run --rm --privileged -e HIVE_VERIFY_ONLY=1 {{.APP_IMAGE}}
 
   docker:smoke:
-    desc: Verify Playwright resolves inside the sandbox image
+    desc: Verify Scrapling's stealth fetcher resolves inside the sandbox image
     deps: [docker:build]
     cmds:
       - >-
         docker run --rm {{.SANDBOX_IMAGE}}
-        node -e "console.log(require('playwright').chromium ? 'playwright ok' : 'missing')"
+        python -c "from scrapling.fetchers import StealthyFetcher; print('scrapling ok')"
 
   qdrant:up:
     desc: Start the optional Qdrant service (only needed for semantic memory)

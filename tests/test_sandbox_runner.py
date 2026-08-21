@@ -72,6 +72,8 @@ def test_scrapling_script_enables_stealth_and_preserves_request_guards():
     assert "socket.getaddrinfo" in _SCRAPLING_SCRIPT
     assert "blocked_requests" in _SCRAPLING_SCRIPT
     assert 'access_state="challenge"' in _SCRAPLING_SCRIPT
+    assert "request.frame == page.main_frame" in _SCRAPLING_SCRIPT
+    assert 'full_page=False' in _SCRAPLING_SCRIPT
 
 
 def test_public_url_validation_rejects_local_and_private_targets():

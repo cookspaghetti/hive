@@ -108,6 +108,7 @@ url = sys.argv[1]
 blocked = []
 chain = []
 observed = {}
+navigation_ips = {}
 redirect_statuses = {301, 302, 303, 307, 308}
 
 
@@ -146,11 +147,15 @@ def page_setup(page):
 
     def record_response(response):
         try:
-            if response.status in redirect_statuses:
+            request = response.request
+            main_navigation = (
+                request.is_navigation_request() and request.frame == page.main_frame
+            )
+            if main_navigation and response.status in redirect_statuses:
                 chain.append(response.url)
-            if response.request.is_navigation_request():
+            if main_navigation:
                 server = response.server_addr() or {}
-                observed["dest_ip"] = server.get("ipAddress", "")
+                navigation_ips[response.url] = server.get("ipAddress", "")
         except Exception:
             pass
 
@@ -204,6 +209,7 @@ def inspect_page(page):
     challenge = title_challenge or cloudflare_challenge
     observed.update(
         final_url=page.url,
+        dest_ip=navigation_ips.get(page.url, ""),
         title=title,
         has_password_field=page.query_selector("input[type=password]") is not None,
         body_len=len(body),
@@ -217,8 +223,13 @@ def inspect_page(page):
     persist_progress()
     try:
         page.screenshot(path="/out/shot.png", full_page=True)
-    except Exception as exc:
-        observed["screenshot_error"] = str(exc)
+    except Exception as full_page_exc:
+        try:
+            page.screenshot(path="/out/shot.png", full_page=False)
+        except Exception as viewport_exc:
+            observed["screenshot_error"] = (
+                f"full-page: {full_page_exc}; viewport: {viewport_exc}"
+            )
     persist_progress()
 
 

@@ -267,7 +267,12 @@ Work that cannot be completed without operator/supervisor involvement remains:
     target and passed manifest, checksum, source-identity, hash-chain, count, and
     terminal-hash checks without modifying live stores. Whole-system recovery
     across PostgreSQL, Qdrant, evidence files, and secrets remains future work.
-17. Add operator-facing evidence verification and key-rotation documentation.
+17. **Operator-facing verification and key lifecycle are closed at prototype scope.**
+    Portable packages include offline verification instructions and embedded
+    public keys. Security now shows the active SHA-256 public-key fingerprint
+    and supports audited, non-overwriting rotation only while the agent is
+    stopped. HSM/KMS custody, revocation, scheduled rotation, legal hold, and
+    secure retirement remain future hardening.
 18. Run a manual accessibility and responsive-interface test in addition to the existing structural accessibility work.
 19. Capture stable final screenshots only after feature freeze.
 20. Ensure README, architecture diagrams, configuration examples, and the report all describe the same final feature set.

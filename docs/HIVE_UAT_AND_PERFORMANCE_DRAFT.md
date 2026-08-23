@@ -37,7 +37,7 @@ legal review, or an external Telegram conversation has already taken place.
 
 | Area | Current verification | Result / evidence |
 | --- | --- | --- |
-| Code quality and regression | Ruff, Python tests, JavaScript syntax, Compose configuration | Pass: 342 tests passed, one intentionally skipped; one deprecation warning |
+| Code quality and regression | Ruff, Python tests, JavaScript syntax, Compose configuration | Pass: 348 tests passed, one intentionally skipped; one deprecation warning |
 | HVI extraction | 64-case versioned synthetic corpus | Precision 0.9821, recall 0.9821, F1 0.9821; the retained failure is one Manglish person-name boundary case |
 | English and Mandarin extraction | Corpus results by language | Pass: F1 1.0 for English and Mandarin cases |
 | Manglish extraction | Corpus results by language | Partial: F1 0.9; document and discuss the known name-boundary error |
@@ -53,6 +53,7 @@ legal review, or an external Telegram conversation has already taken place.
 | Qdrant case/session storage | Point insertion, filtered similarity query and cleanup | Pass: live round trip verified and temporary points removed |
 | URL sandbox | Public fetch, private-address rejection and container cleanup | Pass after deployment fix: `https://example.com/` returned status 200 via `scrapling_stealthy`; `127.0.0.1` was rejected; no disposable container remained |
 | Evidence vault | PDF, detached signature, public key, manifest/checksums and portable package | Pass: retained package passed all six verification checks |
+| Signing-key lifecycle | Fingerprint inspection, non-overwriting rotation, runtime guard and backward verification | Pass at automated level: stale fingerprints, invalid existing files, running-agent rotation and overwrite attempts are rejected; previous signatures remain verifiable and package manifests identify the signing fingerprint; do not rotate the assessed live key solely for developer testing |
 | Tamper resistance | Automated changes to signed/checksummed data | Pass: tests reject altered evidence |
 | Permanent audit ledger | Hash-chain validation, API status, backup and isolated restore drill | Pass: a fresh 47,114-event backup and source identity were restored into a disposable target; manifest path, SHA-256, source identity, hash chain, count and terminal hash passed; the target was cleaned and live stores were not modified; retained result: `evaluation/results/backup_restore/audit_restore_20260823T131241Z_38bad116.json` |
 | Telegram connectivity | Telethon data plane and restricted Bot API control plane | Connected/active in this deployment; no external message was sent during this audit |
@@ -270,6 +271,7 @@ acceptance.
 | UAT-34 | Recover from dependency failure | In a supervised test, make one non-critical dependency unavailable and restore it | Readiness becomes degraded with a useful error; HIVE fails closed where required; restart/recovery does not duplicate messages or corrupt evidence |  |  |
 | UAT-35 | Responsive/accessibility acceptance | Complete core tasks at desktop and narrow/mobile viewport using keyboard only where feasible | Content reflows without overlap, focus is visible, labels/status are perceivable, dialog/control order is logical and critical meaning is not colour-only |  |  |
 | UAT-36 | Review privacy and retention inventory | Open Retention, compare the displayed counts with the controlled test dataset, change one review threshold and rescan | Filesystem/database/vector classes and data flows are understandable; old reviewable items are flagged; evidence/audit/checkpoints remain protected; saving records an audit event and deletes nothing |  |  |
+| UAT-37 | Inspect and rotate an approved test signing key | Record the fingerprint, try rotation while the agent runs, stop the agent, rotate with a stated reason, restart, then verify packages signed before and after | Running-agent rotation is blocked; the new path/fingerprint is unique and audited; the old key is retained; old and new packages both verify with their embedded public keys; no key material is displayed |  |  |
 
 ## 6. Usability and qualitative questionnaire
 

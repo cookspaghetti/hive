@@ -337,6 +337,12 @@ equivalent terminal flow. The session string is never written in plaintext.
 The evidence signer expects an RSA private key at `HIVE_SIGNING_KEY_PATH`.
 For development, `hive.vault.signer.generate_keypair()` can generate one.
 Keep session files, `.env`, private keys, and evidence output out of git.
+The Security workspace shows the active public-key fingerprint and supports
+non-overwriting rotation only while the agent is stopped. Previous keys are
+retained so old packages remain attributable; rotation records both public
+fingerprints in the permanent audit ledger and marks the runtime for restart.
+See [docs/SIGNING_KEY_LIFECYCLE.md](docs/SIGNING_KEY_LIFECYCLE.md) before
+rotating or retiring a key.
 Compose stores completed takeover transcripts in PostgreSQL so the control
 panel can reopen past chats. `task dev` falls back to local JSON records under
 `evidence/history/` when `HIVE_DATABASE_URL` is unset.

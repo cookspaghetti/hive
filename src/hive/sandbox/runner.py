@@ -296,6 +296,7 @@ class ScraplingDockerRunner:
         network: str = "hive-sandbox-net",
         dns: str = "1.1.1.1",
         memory_limit: str | None = "512m",
+        pids_limit: int | None = 128,
         run_timeout_s: int = 90,
     ) -> None:
         self.image = image
@@ -303,6 +304,7 @@ class ScraplingDockerRunner:
         self.network = network
         self.dns = dns
         self.memory_limit = memory_limit
+        self.pids_limit = pids_limit
         self.run_timeout_s = run_timeout_s
         Path(self.out_dir).mkdir(parents=True, exist_ok=True)
 
@@ -322,7 +324,9 @@ class ScraplingDockerRunner:
         container_name: str = "",
         output_dir: str = "",
     ) -> list[str]:
-        resource_limits = ["--pids-limit", "128"]
+        resource_limits = (
+            ["--pids-limit", str(self.pids_limit)] if self.pids_limit else []
+        )
         if self.memory_limit:
             resource_limits = ["--memory", self.memory_limit, *resource_limits]
         identity = ["--name", container_name] if container_name else []

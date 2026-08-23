@@ -49,6 +49,11 @@ tasks:
     cmds:
       - uv run python -m hive.evaluate {{.CLI_ARGS}}
 
+  evaluate:redteam:
+    desc: Run the versioned full-pipeline red-team matrix (uses configured LLM)
+    cmds:
+      - uv run python -m hive.redteam.evaluate {{.CLI_ARGS}}
+
   services:verify:
     desc: Verify the running stack's PostgreSQL and Qdrant round trips
     cmds:
@@ -116,7 +121,7 @@ tasks:
         python -c "from scrapling.fetchers import StealthyFetcher; print('scrapling ok')"
 
   qdrant:up:
-    desc: Start the optional Qdrant service (only needed for semantic memory)
+    desc: Start Qdrant for cross-case scam-pattern candidate retrieval
     cmds:
       - docker compose up -d qdrant
 

@@ -57,11 +57,11 @@ def test_docker_cmd_is_configurable():
     assert cmd[cmd.index("--dns") + 1] == "9.9.9.9"
 
 
-def test_docker_cmd_can_defer_memory_limit_to_outer_container():
-    cmd = ScraplingDockerRunner(memory_limit=None)._docker_cmd("http://x/")
+def test_docker_cmd_can_defer_cgroup_limits_to_outer_container():
+    cmd = ScraplingDockerRunner(memory_limit=None, pids_limit=None)._docker_cmd("http://x/")
 
     assert "--memory" not in cmd
-    assert "--pids-limit" in cmd
+    assert "--pids-limit" not in cmd
 
 
 def test_scrapling_script_enables_stealth_and_preserves_request_guards():

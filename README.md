@@ -465,7 +465,10 @@ but later container rebuilds and recreations reuse them. A normal
 > capabilities on the host. This is an accepted cost for a self-contained
 > research prototype and is documented here deliberately; a hardened deployment
 > would instead use a rootless/sysbox runtime or a dedicated VM. The GLiNER
-> dependency also pulls in PyTorch, so the image is large.
+> dependency also pulls in PyTorch. HIVE pins Torch to the official CPU-only
+> wheel index because the Compose deployment does not expose a GPU; this avoids
+> packaging unused CUDA runtimes. See
+> [the CPU runtime dependency record](docs/CPU_RUNTIME_DEPENDENCIES.md).
 
 ## Sandbox Notes
 

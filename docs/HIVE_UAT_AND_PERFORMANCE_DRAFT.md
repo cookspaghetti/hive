@@ -359,6 +359,7 @@ For every final measurement batch, record:
 | PERF-15 | Resource use | Sample container CPU, RSS/memory, PIDs, disk and network every second | Idle mean, active mean, peak and area/total where meaningful |
 | PERF-16 | Capacity/reliability | Repeat fixed synthetic workload at 1, 2 and 4 concurrent sessions for 15–30 minutes | Throughput, p95 change, error/timeout rate, dropped/duplicate messages, memory growth |
 | PERF-17 | Recovery | Stop/restart one dependency under a synthetic workload | Detection and recovery time, lost/duplicated events and evidence/audit validity |
+| PERF-18 | Deployment artifact footprint | Build the locked backend from a clean dependency layer and inspect the image | Image bytes, build/export duration, Torch variant, unexpected accelerator packages and successful real GLiNER/runtime readiness |
 
 ### 7.5 Proposed provisional acceptance thresholds
 
@@ -391,6 +392,7 @@ vary.
 | Measurement | Exploratory observation |
 | --- | --- |
 | Full application runtime readiness | Earlier build: 24.78 s. Final case-index runtime: 27.59 s; engine dependencies 19.09 s and GLiNER load 18.89 s. Container/panel cold-start and case backfill must be measured separately in the final batch. |
+| CPU-only dependency deployment | Backend image reduced from 3,337,709,323 to 789,796,786 bytes (76.3%). Deployed Torch is `2.12.1+cpu`, CUDA build metadata is absent, real cached GLiNER load completed in 19.50 s, and all runtime components were ready in 24.95 s. One build observation improved from about seven to about two minutes, but cache/registry conditions were not controlled. |
 | Health API | n=30 after five warm-ups; mean 62.28 ms, median 62.30 ms, p95 78.36 ms, max 86.51 ms, zero failures |
 | Runtime-status API | n=30; mean 60.37 ms, median 62.44 ms, p95 74.72 ms, zero failures |
 | History API | n=6; mean 61.08 ms, median 60.85 ms, p95 75.25 ms, zero failures |
@@ -403,6 +405,7 @@ vary.
 | Completed retained demo runs | Five completed runs: 37.2–79.0 s total; recorded pipeline means 10.61–22.03 s, maximum 29.56 s; all five evidence packages verified |
 | Evidence availability after final pipeline event | Four automatically completed runs: 1.55–3.57 s; one interactive run showed 19.48 s because operator-controlled idle/finish time is mixed into the interval and must be excluded in the final instrumentation |
 | Idle container snapshot | Backend 1.965 GiB/4 GiB, 0.23% CPU, 33 PIDs; Qdrant 41.5 MiB; PostgreSQL 67.51 MiB; frontend 5.418 MiB; SearXNG 128.3 MiB |
+| Post-optimization live snapshot | Backend 2.5 GiB/4 GiB, 0.24% CPU, 43 PIDs; Qdrant 29.86 MiB; PostgreSQL 63.39 MiB; frontend 8.77 MiB. This single point is not directly comparable with the earlier snapshot because process/runtime state was not frozen. |
 | Extraction corpus | 64 cases; precision/recall/F1 0.9821; evaluation split F1 0.975; English and Mandarin F1 1.0, Manglish F1 0.9 |
 
 The dashboard is the only observed local read path near its provisional p95

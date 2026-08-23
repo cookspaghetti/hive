@@ -243,8 +243,13 @@ Work that cannot be completed without operator/supervisor involvement remains:
 11. **Architecture corrected: Qdrant is for cross-case scam patterns, not active-session recall.**
     Active replies use the bounded transcript and deterministic validated facts. The deployed `hive_cases` index uses privacy-reduced pattern vectors; PostgreSQL remains authoritative for exact identifiers and case profiles. Qdrant results are candidate-only and cannot establish common ownership.
 
-12. **Privacy and retention controls need an explicit policy.**
-    Exact conversations are stored permanently with no automatic expiry or deletion, and text/media may be sent to configured cloud models. Add informed-consent language, access-control guidance, a retention decision, secure deletion/export procedures, and a clear data-flow disclosure.
+12. **Privacy and retention controls are partially closed in report-only mode.**
+    HIVE now inventories filesystem, PostgreSQL, and Qdrant artifact classes;
+    exposes a data-flow disclosure; protects signed evidence, audit records, and
+    active checkpoints; and audits configurable review thresholds without any
+    deletion path. Supervisor-approved consent language, the final retention
+    decision, per-case export, backup-aware secure disposal, and enforcement
+    remain open before formal participant testing.
 
 13. **The evidence claim needs external validation.**
     Cryptographic integrity tests cannot establish legal admissibility. Have the Section 90A certificate wording and handling procedure reviewed by the supervisor and, if feasible, a Malaysian legal or digital-forensics expert.
@@ -342,7 +347,9 @@ Acceptance criterion: one documented command sequence passes from a clean checko
 
 1. Draw a data-flow map showing Telegram, the local host, PostgreSQL, Qdrant, filesystem evidence, text LLM, vision LLM, and sandbox network traffic.
 2. State exactly which conversation/media data may leave the device and under which configuration.
-3. Define access control, retention, backup, export, and secure-disposal procedures for the FYP evaluation dataset.
+3. Finalise the report-only policy in `docs/PRIVACY_AND_RETENTION.md` with
+   supervisor-approved access, retention, backup, export, and secure-disposal
+   decisions for the FYP evaluation dataset.
 4. Run a backup-and-restore drill and document the result.
 5. Document privileged Docker-in-Docker as a prototype limitation; do not attempt a late architectural rewrite unless required for safe testing.
 6. Obtain supervisor review of the Section 90A wording and avoid claiming guaranteed admissibility.
@@ -373,7 +380,8 @@ Complete if time permits, otherwise document honestly as limitations:
 
 - Cross-case scam-pattern candidate retrieval as an assessed feature.
 - Rootless/dedicated-VM sandbox redesign.
-- Automated deletion/retention UI.
+- Approved, backup-aware retention enforcement and secure-disposal UI (the
+  report-only inventory and review policy are implemented).
 - Key rotation UI.
 - Multi-platform support and Bahasa Malaysia.
 

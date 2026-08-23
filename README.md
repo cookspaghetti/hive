@@ -37,6 +37,8 @@ signed evidence bundle.
   - Encrypted-at-rest Telethon session storage with AES-GCM and scrypt.
   - Early hand-back for likely benign conversations.
   - Prompt defense note injected into the system prompt when S7 flags a probe.
+  - Report-only privacy inventory with configurable review thresholds and no
+    automatic deletion.
 - Offline regression tests for the core pipeline, guardrails, sandbox analysis,
   session encryption, evidence bundle, deterministic session context,
   scam-pattern retrieval, userbot hand-back, and control bot validation.
@@ -297,6 +299,19 @@ cases and relationship edges; Qdrant finds candidates; the evidence bundle and
 audit ledger retain provenance. Only corrected, validated extraction results
 enter relationship edges and the index. Person-name similarity never creates a
 network edge.
+
+### Privacy and retention inventory
+
+The panel's **Retention** workspace inventories signed evidence, captured media,
+synthetic demos, evaluation results, the audit ledger, unfinished recovery
+checkpoints, PostgreSQL records, and Qdrant case-vector points. Configurable
+thresholds flag artifacts for operator review only: this release has no delete
+endpoint and never removes artifacts during a scan or policy update. Signed
+evidence and audit records remain protected classes.
+
+See [docs/PRIVACY_AND_RETENTION.md](docs/PRIVACY_AND_RETENTION.md) for the
+default thresholds, data-flow disclosure, access/review procedure, and the
+decisions that remain before formal participant testing.
 
 Build the forensic sandbox image:
 

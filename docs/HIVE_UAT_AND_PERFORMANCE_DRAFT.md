@@ -37,14 +37,15 @@ legal review, or an external Telegram conversation has already taken place.
 
 | Area | Current verification | Result / evidence |
 | --- | --- | --- |
-| Code quality and regression | Ruff, Python tests, JavaScript syntax, Compose configuration | Pass: 321 tests passed, one intentionally skipped; two deprecation warnings |
+| Code quality and regression | Ruff, Python tests, JavaScript syntax, Compose configuration | Pass: 337 tests passed, one intentionally skipped; one deprecation warning |
 | HVI extraction | 64-case versioned synthetic corpus | Precision 0.9821, recall 0.9821, F1 0.9821; the retained failure is one Manglish person-name boundary case |
 | English and Mandarin extraction | Corpus results by language | Pass: F1 1.0 for English and Mandarin cases |
 | Manglish extraction | Corpus results by language | Partial: F1 0.9; document and discuss the known name-boundary error |
 | Local deployment | Frontend, backend, PostgreSQL and Qdrant | Pass: all services running; backend and frontend healthy |
 | Runtime readiness | Configuration, encrypted Telegram session, LLM probe, GLiNER, case-pattern index, data/control planes | Pass after the approved Qdrant architecture correction; configured model aliases were not in the endpoint's advertised model list, although retained live demo completions succeeded |
 | Local panel/API | Health, runtime, dashboard, activity, audit, logs, evidence, evaluations, demos, history, models, Telegram, sessions and chats | Pass: checked endpoints returned HTTP 200 with valid response structures |
-| Panel workspaces | Overview, Takeovers, Intelligence, Evidence, Evaluation, Demo Lab, Activity, Logs, Models, Telegram and Security | Pass at desktop viewport; navigation and primary content rendered without the reported overlap |
+| Panel workspaces | Overview, Takeovers, Intelligence, Evidence, Evaluation, Demo Lab, Activity, Logs, Models, Telegram, Security and Retention | Pass at desktop viewport; navigation and primary content rendered without the reported overlap |
+| Privacy and retention inventory | Filesystem, PostgreSQL and Qdrant inventory; configurable review thresholds | Pass at automated level: report-only responses cannot delete artifacts, protected classes cannot be made expiring, invalid/destructive fields are rejected, and policy changes are audited; supervisor approval of the final policy remains |
 | Demo Lab | Scripted, model-driven and interactive modes; separate scammer message bubbles; run history | Pass: retained completed runs exist in all three modes; completed evidence packages report verification success |
 | Conversation continuity | Recent-message prompt plus deterministic validated current-session facts | Targeted tests pass; active messages are not written to Qdrant |
 | Cross-case scam-pattern intelligence | Privacy-reduced `hive_cases` vectors plus PostgreSQL exact relationships | Pass at implementation/live-pilot level: exact-edge and vector round trips passed; all six PostgreSQL profiles use vector schema v2; three Qdrant points use only allowed payload keys; exact-identifier leakage count is zero; candidates are labelled candidate-only |
@@ -268,6 +269,7 @@ acceptance.
 | UAT-33 | Control a demo | Pause/resume, step/advance or stop the appropriate demo mode | Controls available for the mode work once per action; state/timeline explains the result; stopping does not contact Telegram |  |  |
 | UAT-34 | Recover from dependency failure | In a supervised test, make one non-critical dependency unavailable and restore it | Readiness becomes degraded with a useful error; HIVE fails closed where required; restart/recovery does not duplicate messages or corrupt evidence |  |  |
 | UAT-35 | Responsive/accessibility acceptance | Complete core tasks at desktop and narrow/mobile viewport using keyboard only where feasible | Content reflows without overlap, focus is visible, labels/status are perceivable, dialog/control order is logical and critical meaning is not colour-only |  |  |
+| UAT-36 | Review privacy and retention inventory | Open Retention, compare the displayed counts with the controlled test dataset, change one review threshold and rescan | Filesystem/database/vector classes and data flows are understandable; old reviewable items are flagged; evidence/audit/checkpoints remain protected; saving records an audit event and deletes nothing |  |  |
 
 ## 6. Usability and qualitative questionnaire
 

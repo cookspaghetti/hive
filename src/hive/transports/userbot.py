@@ -16,7 +16,7 @@ import hashlib
 import random
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from hive.audit import audit_event
@@ -41,6 +41,8 @@ class ObservedChat:
     message_count: int = 1
     request_pending: bool = True
     request_created_at: float | None = None
+    identity_observed_at: float | None = None
+    pending_messages: list[Message] = field(default_factory=list)
 
 
 class UserbotTransport:
@@ -87,6 +89,7 @@ class UserbotTransport:
         self._inbound_check_at: dict[int, float] = {}
         self._inbound_events: dict[int, asyncio.Event] = {}
         self._media_analysis_tasks: dict[int, dict[int, asyncio.Task]] = {}
+        self._takeover_seed_messages: dict[int, list[Message]] = {}
 
     async def start(self) -> None:
         """Connect as the user and register the inbound handler."""
@@ -108,13 +111,24 @@ class UserbotTransport:
             if not eligible:
                 return
             received_at = time.time()
+            telegram_date = getattr(event, "date", None) or getattr(
+                getattr(event, "message", None), "date", None
+            )
+            telegram_ts = (
+                telegram_date.timestamp() if telegram_date is not None else received_at
+            )
             self.observe_incoming(
                 peer_id,
                 display_text,
                 event.id,
-                received_at,
+                telegram_ts,
                 name,
                 username,
+                captured_ts=received_at,
+                media_kind=media.get("media_kind"),
+                media_name=media.get("media_name"),
+                media_mime=media.get("media_mime"),
+                media_size=media.get("media_size"),
             )
             if peer_id not in self._sessions:
                 await self._notify_takeover_request(peer_id)
@@ -124,7 +138,8 @@ class UserbotTransport:
                 peer_id,
                 display_text,
                 event.id,
-                received_at,
+                telegram_ts,
+                captured_ts=received_at,
                 **media,
             )
 
@@ -333,6 +348,7 @@ class UserbotTransport:
                     timestamp,
                     str(getattr(dialog, "name", "") or ""),
                     str(getattr(entity, "username", "") or ""),
+                    captured_ts=time.time(),
                     increment=False,
                     notify_request=False,
                 )
@@ -351,6 +367,11 @@ class UserbotTransport:
         name: str = "",
         username: str = "",
         *,
+        captured_ts: float | None = None,
+        media_kind: object | None = None,
+        media_name: object | None = None,
+        media_mime: object | None = None,
+        media_size: object | None = None,
         increment: bool = True,
         notify_request: bool = True,
     ) -> None:
@@ -364,6 +385,24 @@ class UserbotTransport:
             if current and current.request_pending
             else None
         )
+        captured = time.time() if captured_ts is None else captured_ts
+        pending_messages = list(current.pending_messages) if current else []
+        if request_pending and not any(message.msg_id == msg_id for message in pending_messages):
+            pending_messages.append(
+                Message(
+                    role="stranger",
+                    text=text,
+                    ts=ts,
+                    msg_id=msg_id,
+                    media_kind=str(media_kind) if media_kind else None,
+                    media_name=str(media_name) if media_name else None,
+                    media_mime=str(media_mime) if media_mime else None,
+                    media_size=int(media_size) if isinstance(media_size, (int, float)) else None,
+                    captured_ts=captured,
+                    platform="telegram",
+                    pre_takeover=True,
+                )
+            )
         self._observed_chats[peer_id] = ObservedChat(
             peer_id=peer_id,
             name=name or (current.name if current else ""),
@@ -374,6 +413,8 @@ class UserbotTransport:
             message_count=(current.message_count + 1 if current and increment else 1),
             request_pending=request_pending,
             request_created_at=request_created_at,
+            identity_observed_at=captured,
+            pending_messages=pending_messages,
         )
         audit_event(
             "message_observed",
@@ -383,6 +424,7 @@ class UserbotTransport:
                 "msg_id": msg_id,
                 "text": text,
                 "ts": ts,
+                "captured_ts": captured,
                 "name": name,
                 "username": username,
                 "under_takeover": peer_id in self._sessions,
@@ -490,6 +532,7 @@ class UserbotTransport:
             return False
         chat.request_pending = False
         chat.request_created_at = None
+        chat.pending_messages.clear()
         self._notified_takeover_requests.discard(peer_id)
         self._notifying_takeover_requests.discard(peer_id)
         self._takeover_notification_candidates.discard(peer_id)
@@ -505,22 +548,48 @@ class UserbotTransport:
     def begin_takeover(self, peer_id: int, persona: str) -> None:
         self._clear_inbound(peer_id)
         observed = self._observed_chats.get(peer_id)
+        pending_messages: list[Message] = []
         if observed is not None:
+            pending_messages = sorted(
+                observed.pending_messages,
+                key=lambda message: (message.ts, message.msg_id),
+            )
+            observed.pending_messages.clear()
             observed.request_pending = False
             observed.request_created_at = None
         self._notified_takeover_requests.discard(peer_id)
         self._takeover_notification_candidates.discard(peer_id)
         self._sessions[peer_id] = self.engine.new_session(peer_id, persona)
         session = self._sessions[peer_id][0]
+        if observed is not None:
+            session.peer_display_name = observed.name
+            session.peer_username = observed.username
+            session.identity_observed_ts = observed.identity_observed_at
+        if pending_messages:
+            self._takeover_seed_messages[peer_id] = pending_messages
         audit_event(
             "takeover",
             "takeover_started",
             component="transport.userbot",
-            payload={"persona": persona},
+            payload={
+                "persona": persona,
+                "peer_display_name": session.peer_display_name,
+                "peer_username": session.peer_username,
+                "identity_observed_ts": session.identity_observed_ts,
+                "preserved_trigger_messages": len(pending_messages),
+            },
             peer_id=peer_id,
             session_id=session.session_id,
         )
         log.info("userbot: takeover started peer=%s persona=%s", peer_id, persona)
+
+    async def process_pending_takeover(self, peer_id: int) -> int:
+        """Process preserved pre-takeover messages after operator approval."""
+        messages = self._takeover_seed_messages.pop(peer_id, [])
+        if not messages or peer_id not in self._sessions:
+            return 0
+        await self._process_inbound_batch(peer_id, messages)
+        return len(messages)
 
     async def on_message(
         self,
@@ -535,6 +604,7 @@ class UserbotTransport:
         media_size: int | None = None,
         media_path: str | None = None,
         media_sha256: str | None = None,
+        captured_ts: float | None = None,
     ) -> None:
         if peer_id not in self._sessions:
             return
@@ -549,6 +619,8 @@ class UserbotTransport:
             media_size=media_size,
             media_path=media_path,
             media_sha256=media_sha256,
+            captured_ts=captured_ts,
+            platform="telegram",
         )
         self._schedule_media_analysis(peer_id, message)
         loop = asyncio.get_running_loop()
@@ -972,6 +1044,35 @@ class UserbotTransport:
         await self._client.send_message(peer_id, text)
 
     def end_takeover(self, peer_id: int) -> tuple[SessionState, HashChain] | None:
+        entry = self._sessions.get(peer_id)
+        pending = self._takeover_seed_messages.pop(peer_id, [])
+        if entry is not None and pending:
+            session, chain = entry
+            for message in pending:
+                session.messages.append(message)
+                chain.append(
+                    {
+                        "event": "msg_in",
+                        "msg_id": message.msg_id,
+                        "text": message.text,
+                        "platform_ts": message.ts,
+                        "captured_ts": message.captured_ts,
+                        "platform": message.platform,
+                        "pre_takeover": True,
+                    },
+                    ts=message.ts,
+                )
+            session.turn_count += len(pending)
+            session.exchange_count += 1
+            audit_event(
+                "message",
+                "pre_takeover_messages_preserved_without_reply",
+                component="transport.userbot",
+                payload={"message_ids": [message.msg_id for message in pending]},
+                peer_id=peer_id,
+                session_id=session.session_id,
+                level="warning",
+            )
         self._clear_inbound(peer_id)
         entry = self._sessions.pop(peer_id, None)
         if entry is not None:

@@ -5,7 +5,7 @@ import time
 from hive.agent.graph_nodes import _build_messages, reason_and_reply
 from hive.llm.client import ChatMessage, Tier
 from hive.llm.router import RouteInputs
-from hive.state import Message, SessionState
+from hive.state import HVI, Message, SessionState
 from tests.fakes import FakeBackend, fake_client
 
 
@@ -62,7 +62,7 @@ def test_media_description_is_prompt_context_without_changing_transcript():
     )
     session.messages.append(message)
 
-    prompt = _build_messages(session, [])
+    prompt = _build_messages(session)
 
     assert prompt[-1].content == (
         "see this\n[Private image analysis: Maybank account 1234567890]"
@@ -73,7 +73,6 @@ def test_media_description_is_prompt_context_without_changing_transcript():
 def test_case_guidance_is_private_system_context():
     prompt = _build_messages(
         _session(),
-        [],
         case_context=(
             "Private historical-pattern guidance. Never mention prior cases. "
             "Useful missing identifier types: phone."
@@ -83,3 +82,23 @@ def test_case_guidance_is_private_system_context():
     assert "Never mention prior cases" in prompt[0].content
     assert "Useful missing identifier types: phone" in prompt[0].content
     assert "prior cases" not in prompt[-1].content
+
+
+def test_validated_session_facts_preserve_continuity_without_vector_memory():
+    session = _session()
+    session.hvis.extend(
+        [
+            HVI("bank_account", "1234567890", 1, 0.9, "regex"),
+            HVI("phone", "+60123456789", 2, 0.9, "regex"),
+            HVI("bank_account", "1234567890", 3, 0.8, "regex"),
+        ]
+    )
+
+    prompt = _build_messages(session)
+
+    system = prompt[0].content
+    assert "Private current-conversation facts" in system
+    assert "bank account: 1234567890" in system
+    assert "phone: +60123456789" in system
+    assert system.count("bank account: 1234567890") == 1
+    assert "prior cases" not in system

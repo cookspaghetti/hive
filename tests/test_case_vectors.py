@@ -104,9 +104,27 @@ def test_qdrant_index_uses_separate_collection_and_candidate_label():
     assert client.created["collection_name"] == "hive_cases"
     assert client.created["vectors_config"].size == 3
     assert client.points[0].payload["case_id"] == profile["case_id"]
+    assert client.points[0].payload["vector_schema_version"] == 2
+    assert client.points[0].payload["indicator_kinds"] == ["bank_account"]
+    assert "methods" not in client.points[0].payload
     assert results[0]["relationship"] == "script_similarity"
     assert results[0]["candidate_only"] is True
     assert results[0]["score"] == 0.81
+
+
+def test_case_index_readiness_runs_a_real_vector_query():
+    client = FakeQdrant()
+    index = QdrantCaseVectorIndex(
+        "http://qdrant:6333",
+        embedder=FakeEmbedder(),
+        client=client,
+    )
+
+    index.ensure_ready()
+
+    assert client.created["collection_name"] == "hive_cases"
+    assert client.query["collection_name"] == "hive_cases"
+    assert client.query["with_payload"] is False
 
 
 def test_hybrid_store_keeps_exact_edge_stronger_than_semantic_candidate(tmp_path):
@@ -140,6 +158,26 @@ def test_hybrid_store_keeps_exact_edge_stronger_than_semantic_candidate(tmp_path
     assert related[0]["score"] == 0.95
     assert related[0]["semantic_score"] == 0.8
     assert "candidate_only" not in related[0]
+
+
+def test_hybrid_store_does_not_semantically_query_benign_profiles(tmp_path):
+    relational = LocalCaseIntelligenceStore(tmp_path)
+    benign = _profile("8514213f-a1eb-4986-a2dc-bd3fa196ea96")
+    benign["verdict"] = "likely_benign"
+    related = _profile("8d195b38-c1c3-4e00-ac1a-bcc5851ea2be")
+    relational.index(benign)
+    relational.index(related)
+
+    class Vectors:
+        def search(self, profile, limit=5):
+            raise AssertionError("benign profiles must not query semantic candidates")
+
+    hybrid = HybridCaseIntelligenceStore(relational, Vectors())
+
+    matches = hybrid.related(benign["case_id"])
+
+    assert matches[0]["relationship"] == "shared_identifier"
+    assert "semantic_score" not in matches[0]
 
 
 def test_live_probe_context_requests_only_missing_identifier_types(tmp_path):

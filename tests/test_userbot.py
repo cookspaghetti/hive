@@ -14,6 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from hive.runtime import TurnOutput
+from hive.state import Message
 from hive.transports.userbot import UserbotTransport
 
 
@@ -255,6 +256,77 @@ def test_observed_incoming_chats_are_listed_without_starting_takeover():
     ub.begin_takeover(999, "confused_elderly")
     assert ub.list_observed_chats()[0]["active"] is True
     assert ub.list_observed_chats()[0]["request_pending"] is False
+
+
+def test_takeover_preserves_trigger_messages_and_observed_identity():
+    class SeedEngine(FakeEngine):
+        def __init__(self):
+            super().__init__(handed_back=False)
+            self.seen = []
+
+        def process_messages(self, session, chain, messages):
+            self.seen.extend(messages)
+            session.messages.extend(messages)
+            for message in messages:
+                chain.append(
+                    {"event": "msg_in", "msg_id": message.msg_id, "text": message.text},
+                    ts=message.ts,
+                )
+            session.turn_count += len(messages)
+            session.exchange_count += 1
+            return TurnOutput(text=None)
+
+    engine = SeedEngine()
+    ub = _transport(engine)
+    ub.observe_incoming(
+        1001,
+        "first suspicious message",
+        41,
+        100.0,
+        "Alice Tan",
+        "alice_t",
+        captured_ts=101.0,
+    )
+    ub.observe_incoming(
+        1001,
+        "send money now",
+        42,
+        102.0,
+        captured_ts=103.0,
+    )
+
+    ub.begin_takeover(1001, "confused_elderly")
+    session = ub._sessions[1001][0]
+    assert session.peer_display_name == "Alice Tan"
+    assert session.peer_username == "alice_t"
+    assert session.identity_observed_ts == 103.0
+
+    processed = _run(ub.process_pending_takeover(1001))
+
+    assert processed == 2
+    assert [message.msg_id for message in engine.seen] == [41, 42]
+    assert all(message.pre_takeover for message in engine.seen)
+    assert [message.captured_ts for message in engine.seen] == [101.0, 103.0]
+
+
+def test_unprocessed_trigger_is_preserved_when_takeover_is_sealed_immediately():
+    ub = _transport(FakeEngine(handed_back=False))
+    ub.observe_incoming(1002, "urgent transfer", 51, 200.0, captured_ts=201.0)
+    ub.begin_takeover(1002, "confused_elderly")
+
+    session, chain = ub.end_takeover(1002)
+
+    assert session.messages == [
+        Message(
+            "stranger",
+            "urgent transfer",
+            200.0,
+            51,
+            captured_ts=201.0,
+            pre_takeover=True,
+        )
+    ]
+    assert chain.verify() is True
 
 
 def test_takeover_request_notifies_once_and_reopens_after_takeover():

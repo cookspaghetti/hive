@@ -47,9 +47,7 @@ class Settings(BaseSettings):
     # Stores
     qdrant_url: str = "http://localhost:6333"
     database_url: str = ""
-    # L2 memory: False = offline KeywordMemory; True = semantic mem0+Qdrant
-    use_semantic_memory: bool = False
-    # Cross-case candidate retrieval. PostgreSQL/local exact edges work regardless.
+    # Cross-case scam-pattern retrieval. PostgreSQL/local exact edges remain authoritative.
     use_case_similarity: bool = False
     case_similarity_threshold: float = 0.72
     case_embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"

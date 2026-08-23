@@ -31,7 +31,7 @@ class RouteInputs:
 
     injection_flagged: bool = False   # S7 guardrail tripped (bot challenge, etc.)
     eliciting_hvi: bool = False       # agent is actively pushing for a HVI
-    consistency_risk: bool = False    # drift / contradiction vs memory
+    consistency_risk: bool = False    # drift / contradiction vs conversation context
 
 
 def route(inputs: RouteInputs) -> Tier:

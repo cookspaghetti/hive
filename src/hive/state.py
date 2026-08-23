@@ -51,6 +51,9 @@ class Message:
     media_sha256: str | None = None
     media_analysis: dict[str, Any] | None = None
     media_hvis: list[HVI] = field(default_factory=list)
+    captured_ts: float | None = None
+    platform: str = "telegram"
+    pre_takeover: bool = False
 
 
 @dataclass
@@ -76,6 +79,9 @@ class SessionState:
     case_probe_context: str = ""
     case_retrieved_at_turn: int = 0
     case_indicator_count_at_retrieval: int = 0
+    peer_display_name: str = ""
+    peer_username: str = ""
+    identity_observed_ts: float | None = None
 
 
 class GraphState(TypedDict, total=False):

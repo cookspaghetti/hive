@@ -68,6 +68,7 @@ def _settings(tmp_path):
         control_bot_token="123:" + "a" * 32,
         operator_id=456,
         signing_key_path=str(tmp_path / "signing.pem"),
+        use_case_similarity=False,
     )
 
 
@@ -122,22 +123,6 @@ def test_runtime_reports_incomplete_setup_without_starting(tmp_path):
     assert manager.state == "stopped"
 
 
-def test_runtime_probes_qdrant_when_semantic_memory_is_enabled(tmp_path):
-    settings = _settings(tmp_path)
-    settings.use_semantic_memory = True
-    (tmp_path / "user.session").write_bytes(b"encrypted")
-    (tmp_path / "signing.pem").write_text("key", encoding="utf-8")
-    calls = []
-    manager = _manager(tmp_path, settings)
-    manager._qdrant_probe = lambda current: calls.append(current.qdrant_url) or "ready"
-
-    result = _run(manager.start())
-
-    assert calls == [settings.qdrant_url]
-    assert result["components"]["qdrant"]["state"] == "ready"
-    assert result["components"]["memory"]["detail"] == "semantic mem0 + Qdrant"
-
-
 def test_runtime_probes_qdrant_for_case_similarity(tmp_path):
     settings = _settings(tmp_path)
     settings.use_case_similarity = True
@@ -151,7 +136,10 @@ def test_runtime_probes_qdrant_for_case_similarity(tmp_path):
 
     assert calls == [settings.qdrant_url]
     assert result["components"]["qdrant"]["state"] == "ready"
-    assert "Qdrant case similarity" in result["components"]["memory"]["detail"]
+    assert (
+        result["components"]["case_intelligence"]["detail"]
+        == "PostgreSQL exact edges + Qdrant scam-pattern candidates"
+    )
 
 
 def test_runtime_records_failed_llm_probe(tmp_path):

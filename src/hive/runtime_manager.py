@@ -28,7 +28,7 @@ _COMPONENTS = (
     "session_store",
     "llm",
     "qdrant",
-    "memory",
+    "case_intelligence",
     "engine",
     "userbot",
     "control_bot",
@@ -200,7 +200,7 @@ class HiveRuntimeManager:
                 "ready",
                 (
                     f"models={settings.llm_model_cheap}/{settings.llm_model_strong}; "
-                    f"semantic_memory={settings.use_semantic_memory}"
+                    f"case_similarity={settings.use_case_similarity}"
                 ),
                 startup_started,
             )
@@ -218,26 +218,35 @@ class HiveRuntimeManager:
                 await self._sync_stage(
                     "llm", "probing endpoint and configured models", self._llm_probe, settings
                 )
-                if settings.use_semantic_memory or settings.use_case_similarity:
+                if settings.use_case_similarity:
                     await self._sync_stage(
                         "qdrant", "probing readiness endpoint", self._qdrant_probe, settings
                     )
-                    memory_detail = (
-                        "semantic mem0 + Qdrant"
-                        if settings.use_semantic_memory
-                        else "offline conversation memory + Qdrant case similarity"
+                    self._set_component(
+                        "case_intelligence",
+                        "initializing",
+                        "loading FastEmbed + Qdrant scam-pattern index",
                     )
-                    self._set_component("memory", "ready", memory_detail)
                 else:
-                    self._set_component("qdrant", "disabled", "semantic memory is disabled")
-                    self._set_component("memory", "ready", "offline keyword memory")
+                    self._set_component("qdrant", "disabled", "case similarity is disabled")
+                    self._set_component(
+                        "case_intelligence",
+                        "ready",
+                        "PostgreSQL exact relationships only",
+                    )
                 engine = await self._sync_stage(
                     "engine",
-                    "loading GLiNER, LLM client, sandbox runner, and memory factory",
+                    "loading GLiNER, LLM client, sandbox runner, and case intelligence",
                     self._engine_builder,
                     settings,
                     success_detail="engine dependencies initialized",
                 )
+                if settings.use_case_similarity:
+                    self._set_component(
+                        "case_intelligence",
+                        "ready",
+                        "PostgreSQL exact edges + Qdrant scam-pattern candidates",
+                    )
                 userbot = self._userbot_factory(
                     settings.tg_api_id,
                     settings.tg_api_hash,

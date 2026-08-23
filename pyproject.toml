@@ -9,9 +9,9 @@ authors = [{ name = "Tho Kai Syuen", email = "TP070466@mail.apu.edu.my" }]
 
 dependencies = [
     "langgraph>=0.2",
-    "mem0ai>=0.1",
     "qdrant-client>=1.9",
-    "fastembed>=0.7",
+    # Pin because pooling behaviour for this embedding model changed across releases.
+    "fastembed==0.8.0",
     "gliner>=0.2",
     "playwright>=1.44",
     "reportlab>=4.1",
@@ -40,6 +40,8 @@ dev = [
 
 [project.scripts]
 hive = "hive.__main__:main"
+hive-verify = "hive.verify_evidence:main"
+hive-redteam = "hive.redteam.evaluate:main"
 
 [build-system]
 requires = ["hatchling"]

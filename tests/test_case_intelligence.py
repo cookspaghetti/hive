@@ -76,6 +76,32 @@ def test_case_profile_uses_only_valid_network_indicators():
     assert "person_name" not in profile["embedding_text"]
 
 
+def test_case_profile_vector_redacts_identifiers_but_keeps_scam_pattern():
+    history = _history(
+        "8514213f-a1eb-4986-a2dc-bd3fa196ea96",
+        "1234 5678",
+        phone="+60 12-345 6789",
+    )
+    history["messages"][0]["text"] = (
+        "John says invest now, transfer to 1234 5678 and call +60 12-345 6789 "
+        "or open https://profit.example/pay"
+    )
+
+    profile = build_case_profile(history)
+
+    vector = profile["scam_vector"]
+    assert vector["schema_version"] == 2
+    assert vector["method_keys"] == ["investment_framing"]
+    assert vector["indicator_kinds"] == ["bank_account", "phone"]
+    assert vector["payment_channels"] == ["bank transfer"]
+    assert "invest now" in vector["redacted_script"]
+    assert "[bank account] and call" in vector["redacted_script"]
+    assert "1234 5678" not in profile["embedding_text"]
+    assert "+60 12-345 6789" not in profile["embedding_text"]
+    assert "John" not in profile["embedding_text"]
+    assert "profit.example" not in profile["embedding_text"]
+
+
 def test_case_profile_rejects_short_legacy_numeric_false_positives():
     profile = build_case_profile(
         _history("8514213f-a1eb-4986-a2dc-bd3fa196ea96", "123")

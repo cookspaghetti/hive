@@ -2,7 +2,7 @@
 
 This is the real orchestration graph the runtime executes for every inbound
 message. Nodes delegate to the actual layer implementations; dependencies
-(LLM client, sandbox runner, NER backend, per-peer memory, budgets) are bound
+(LLM client, sandbox runner, NER backend, case intelligence, budgets) are bound
 by closing over the owning `HiveEngine`, so the graph stays declarative while
 the engine remains the single place that holds state.
 
@@ -50,7 +50,6 @@ class TurnState(TypedDict, total=False):
     # working values passed between nodes
     screen_flagged: bool
     hvis: list
-    recall: list
     verdict: str
     reply: str
     tier: str
@@ -75,17 +74,19 @@ def build_turn_graph(engine: HiveEngine):
         session.phase = Phase.ACTIVE
         for inbound in inbounds:
             session.messages.append(inbound)
-            engine._memory_for(session.peer_id).add("stranger", inbound.text)
-            audit_event(
-                "memory",
-                "memory_entry_added",
-                component="orchestrator.memory",
-                payload={"role": "stranger", "text": inbound.text},
-                peer_id=session.peer_id,
-                session_id=session.session_id,
-            )
             chain.append(
-                {"event": "msg_in", "msg_id": inbound.msg_id, "text": inbound.text},
+                {
+                    "event": "msg_in",
+                    "msg_id": inbound.msg_id,
+                    "text": inbound.text,
+                    "platform_ts": inbound.ts,
+                    "captured_ts": inbound.captured_ts,
+                    "platform": inbound.platform,
+                    "pre_takeover": inbound.pre_takeover,
+                    "media_kind": inbound.media_kind,
+                    "media_name": inbound.media_name,
+                    "media_sha256": inbound.media_sha256,
+                },
                 ts=inbound.ts,
             )
             audit_event(
@@ -97,6 +98,9 @@ def build_turn_graph(engine: HiveEngine):
                     "text": inbound.text,
                     "ts": inbound.ts,
                     "media_kind": inbound.media_kind,
+                    "captured_ts": inbound.captured_ts,
+                    "platform": inbound.platform,
+                    "pre_takeover": inbound.pre_takeover,
                 },
                 peer_id=session.peer_id,
                 session_id=session.session_id,
@@ -196,7 +200,10 @@ def build_turn_graph(engine: HiveEngine):
             peer_id=session.peer_id,
             session_id=session.session_id,
         )
-        return {"hvis": hvis}
+        # Only newly accepted or confidence-upgraded URLs should be sandboxed.
+        # Repeated disclosures remain in the transcript without paying for or
+        # duplicating an identical browser analysis.
+        return {"hvis": accepted}
 
     def n_sandbox(state: TurnState) -> TurnState:
         session = state["session"]
@@ -274,16 +281,6 @@ def build_turn_graph(engine: HiveEngine):
 
         session = state["session"]
         inbound = state["inbound"]
-        memory = engine._memory_for(session.peer_id)
-        recall = memory.recall(inbound.text)
-        audit_event(
-            "memory",
-            "memory_recalled",
-            component="orchestrator.memory",
-            payload={"query": inbound.text, "results": recall},
-            peer_id=session.peer_id,
-            session_id=session.session_id,
-        )
         route_inputs = RouteInputs(injection_flagged=state.get("screen_flagged", False))
         defense = persona_defense_note(screen(inbound.text)) if state.get("screen_flagged") else ""
         should_retrieve_cases = bool(
@@ -309,15 +306,26 @@ def build_turn_graph(engine: HiveEngine):
                 peer_id=session.peer_id,
                 session_id=session.session_id,
             )
+        audit_event(
+            "session_context",
+            "current_session_facts_prepared",
+            component="orchestrator.reason",
+            payload={
+                "indicator_count": len(session.hvis),
+                "indicator_kinds": sorted({item.kind for item in session.hvis}),
+                "history_messages": min(len(session.messages), 12),
+            },
+            peer_id=session.peer_id,
+            session_id=session.session_id,
+        )
         reply, tier = reason_and_reply(
             session,
             engine.agent_client,
-            recall=recall,
             route_inputs=route_inputs,
             defense_note=defense,
             case_context=session.case_probe_context,
         )
-        return {"reply": reply, "tier": tier.value, "recall": recall}
+        return {"reply": reply, "tier": tier.value}
 
     def n_middleware(state: TurnState) -> TurnState:
         session = state["session"]
@@ -347,16 +355,7 @@ def build_turn_graph(engine: HiveEngine):
         )
         if state.get("record_outbound", True):
             for text in messages:
-                engine.record_outbound(session, chain, text, remember=False)
-            engine._memory_for(session.peer_id).add("agent", state["reply"])
-            audit_event(
-                "memory",
-                "memory_entry_added",
-                component="orchestrator.memory",
-                payload={"role": "agent", "text": state["reply"]},
-                peer_id=session.peer_id,
-                session_id=session.session_id,
-            )
+                engine.record_outbound(session, chain, text)
         log.info(
             "turn done: tier=%s verdict=%s delay=%.1fs",
             state.get("tier"),

@@ -32,6 +32,7 @@ _RELATION_WEIGHTS = {
     "telegram_id": 0.85,
     "email": 0.75,
 }
+_VECTOR_SCHEMA_VERSION = 2
 
 
 def normalize_indicator(kind: str, value: str) -> str:
@@ -69,6 +70,31 @@ def _analysis_outputs(
     return analysis or history_record
 
 
+def _redacted_script(script: str, raw_items: list[dict[str, Any]]) -> str:
+    """Keep scam language/tactics while removing extracted identifiers and PII."""
+    redacted = script
+    for item in raw_items:
+        kind = str(item.get("kind") or "identifier").replace("_", " ")
+        value = str(item.get("value") or "").strip()
+        if len(value) < 3:
+            continue
+        redacted = re.sub(re.escape(value), f"[{kind}]", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(r"https?://[^\s]+", "[url]", redacted, flags=re.IGNORECASE)
+    redacted = re.sub(
+        r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+        "[email]",
+        redacted,
+        flags=re.IGNORECASE,
+    )
+    redacted = re.sub(r"(?<!\w)@[A-Za-z0-9_]{5,32}\b", "[telegram id]", redacted)
+    redacted = re.sub(
+        r"(?<!\d)\d(?:[\s-]?\d){7,19}(?!\d)",
+        "[numeric identifier]",
+        redacted,
+    )
+    return redacted[:8000]
+
+
 def build_case_profile(
     history_record: dict[str, Any],
     analysis: dict[str, Any] | None = None,
@@ -76,8 +102,11 @@ def build_case_profile(
     """Create a deterministic profile from validated, message-grounded findings."""
     outputs = _analysis_outputs(history_record, analysis)
     metadata = analysis or history_record.get("analysis") or {}
+    raw_hvi_items = [
+        item for item in outputs.get("hvi_items") or [] if isinstance(item, dict)
+    ]
     indicator_map: dict[tuple[str, str], dict[str, Any]] = {}
-    for item in outputs.get("hvi_items") or []:
+    for item in raw_hvi_items:
         kind = str(item.get("kind") or "")
         confidence = float(item.get("confidence") or 0)
         normalized = normalize_indicator(kind, str(item.get("value") or ""))
@@ -126,12 +155,49 @@ def build_case_profile(
         _METHOD_LABELS.get(key, key.replace("_", " "))
         for key in sorted(methods, key=lambda item: methods[item], reverse=True)
     ]
+    indicator_kinds = sorted({item["kind"] for item in indicators})
+    payment_channels = sorted(
+        {
+            {
+                "bank_account": "bank transfer",
+                "crypto": "cryptocurrency transfer",
+                "url": "web link",
+            }[item["kind"]]
+            for item in payment_flow
+        }
+    )
+    sandbox_traits: set[str] = set()
+    for result in outputs.get("sandbox_results") or []:
+        if not isinstance(result, dict):
+            continue
+        signal = str(result.get("verdict_signal") or "").strip()
+        access = str(result.get("access_state") or "").strip()
+        if signal:
+            sandbox_traits.add(signal.replace("_", " "))
+        if access:
+            sandbox_traits.add(f"page access {access.replace('_', ' ')}")
+        if result.get("has_password_field"):
+            sandbox_traits.add("credential/password collection form")
+        if result.get("challenge_detected"):
+            sandbox_traits.add("anti-bot challenge")
+    redacted_script = _redacted_script(script, raw_hvi_items)
+    scam_vector = {
+        "schema_version": _VECTOR_SCHEMA_VERSION,
+        "method_keys": list(sorted(methods)),
+        "method_labels": method_labels,
+        "indicator_kinds": indicator_kinds,
+        "payment_channels": payment_channels,
+        "sandbox_traits": sorted(sandbox_traits),
+        "redacted_script": redacted_script,
+    }
     embedding_parts = [
-        f"Verdict: {outputs.get('verdict', 'inconclusive')}",
-        f"Methods: {', '.join(method_labels) or 'unknown'}",
-        f"Script:\n{script}",
-        "Verified indicators: "
-        + ", ".join(f"{item['kind']}={item['value']}" for item in indicators),
+        f"HIVE scam-pattern vector schema {_VECTOR_SCHEMA_VERSION}",
+        f"Observed tactics: {', '.join(method_labels) or 'unknown'}",
+        "Identifier types present: "
+        + (", ".join(kind.replace("_", " ") for kind in indicator_kinds) or "none"),
+        f"Payment channels: {', '.join(payment_channels) or 'unknown'}",
+        f"Sandbox behaviour: {', '.join(sorted(sandbox_traits)) or 'none observed'}",
+        f"Redacted conversation pattern:\n{redacted_script}",
     ]
     return {
         "case_id": str(history_record["id"]),
@@ -151,6 +217,7 @@ def build_case_profile(
         "indicators": indicators,
         "payment_flow": payment_flow,
         "sandbox_results": list(outputs.get("sandbox_results") or []),
+        "scam_vector": scam_vector,
         "embedding_text": "\n".join(embedding_parts),
     }
 

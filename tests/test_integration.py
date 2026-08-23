@@ -134,3 +134,22 @@ def test_media_intelligence_enters_verdict_with_exact_message_provenance():
     )
     assert contribution["source_message_ids"] == [42]
     assert contribution["extractor"] == "ocr"
+
+
+def test_repeated_url_is_sandboxed_only_once():
+    eng = _engine()
+    session, chain = eng.new_session(peer_id=89, persona="confused_elderly")
+
+    for message_id in (1, 2):
+        eng.process_turn(
+            session,
+            chain,
+            Message(
+                "stranger",
+                "Open https://repeat.example/login now",
+                time.time(),
+                message_id,
+            ),
+        )
+
+    assert len(session.sandbox_results) == 1

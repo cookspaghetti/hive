@@ -213,11 +213,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip loading the optional GLiNER model",
     )
-    parser.add_argument(
-        "--semantic-memory",
-        action="store_true",
-        help="Use configured mem0/Qdrant instead of isolated in-process keyword memory",
-    )
     parser.add_argument("--seal", action="store_true", help="Seal scripted messages into a report")
     parser.add_argument("--evidence-dir", type=Path, default=Path("evidence/simulations"))
     return parser
@@ -228,7 +223,6 @@ def run(argv: Sequence[str] | None = None, *, stream: TextIO = sys.stdout) -> in
     settings = load_settings()
     configure_audit(settings.audit_path, settings.database_url)
     configure_logging(settings.log_level)
-    settings = settings.model_copy(update={"use_semantic_memory": args.semantic_memory})
     persona = args.persona or settings.default_persona
     peer_id = args.peer_id if args.peer_id is not None else -time.time_ns()
 
@@ -237,7 +231,7 @@ def run(argv: Sequence[str] | None = None, *, stream: TextIO = sys.stdout) -> in
         harness = SimulationHarness(engine, peer_id=peer_id, persona=persona)
         print(
             f"HIVE simulator: peer={peer_id} persona={persona} telegram=off "
-            f"semantic_memory={'on' if args.semantic_memory else 'isolated'}",
+            f"case_similarity={'on' if settings.use_case_similarity else 'off'}",
             file=stream,
         )
         if not args.send:

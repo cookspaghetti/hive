@@ -24,7 +24,9 @@ signed evidence bundle.
   - L4 Playwright-in-Docker URL analysis.
   - S6 hybrid verdict scoring.
   - L2 persona reply generation through the cost-tiered LLM router, with
-    in-session memory recall of earlier disclosures.
+    deterministic continuity from recent messages and validated session facts.
+  - Cross-case scam-pattern candidate retrieval through FastEmbed/Qdrant,
+    separated from authoritative PostgreSQL exact-identifier relationships.
   - L1 linguistic middleware and tarpit delays.
 - Evidence vault:
   - SHA-256 hash chain.
@@ -36,8 +38,8 @@ signed evidence bundle.
   - Early hand-back for likely benign conversations.
   - Prompt defense note injected into the system prompt when S7 flags a probe.
 - Offline regression tests for the core pipeline, guardrails, sandbox analysis,
-  session encryption, evidence bundle, in-session memory recall, userbot
-  hand-back, and control bot validation.
+  session encryption, evidence bundle, deterministic session context,
+  scam-pattern retrieval, userbot hand-back, and control bot validation.
 
 ## Architecture
 
@@ -133,11 +135,11 @@ task simulate
 Each line is one phone-check exchange. Put `|||` between rapid-fire messages
 to deliver them as a single burst, for example `hello ||| are you there?`.
 The simulator uses the configured LLM and the real guardrail, extraction,
-verdict, persona, memory, reply-chunking, and evidence pipeline, but skips
-Telegram and shows planned delivery delays without waiting. Its memory is
-isolated in-process by default so test data cannot pollute Qdrant; pass
-`--semantic-memory` when that integration itself is under test. Useful commands
-are `/status`, `/history`, `/seal`, and `/quit`.
+verdict, persona, deterministic session-context, reply-chunking, case-pattern
+guidance, and evidence pipeline, but skips Telegram and shows planned delivery
+delays without waiting. Synthetic live profiles are queried but never inserted
+into the sealed-case Qdrant index. Useful commands are `/status`, `/history`,
+`/seal`, and `/quit`.
 
 Non-interactive checks are also supported, which makes the same harness usable
 from automated test runs:
@@ -154,7 +156,7 @@ simulator.
 
 Every HIVE entry point writes one append-only audit stream to
 `evidence/audit/events.jsonl`. It includes exact inbound messages, LLM prompts
-and responses, memory operations, pipeline decisions, reply plans, timing and
+and responses, case-retrieval operations, pipeline decisions, reply plans, timing and
 typing actions, Telegram delivery attempts and results, operator actions,
 session lifecycle events, and HIVE runtime logs. Each record is flushed to disk
 and linked to the previous record with SHA-256; HIVE refuses to append when the
@@ -258,9 +260,10 @@ For headless or terminal-only setup, copy `.env.example` to `.env`, fill in
 the required values, then run `task bootstrap` for the interactive Telethon
 login and signing key generation.
 
-L2 memory uses an offline keyword recall backend by default. The Compose stack
-still provisions Qdrant as its own service, but the backend only uses it when
-`HIVE_USE_SEMANTIC_MEMORY=true` enables the mem0 semantic-memory upgrade:
+Active conversations do not write message embeddings. The L2 agent receives a
+bounded recent-message window plus a deterministic summary of validated HVIs
+from the current stranger. This keeps conversational continuity local to the
+session and makes it reproducible without a second copy of the transcript.
 
 ```powershell
 docker compose up -d qdrant
@@ -271,17 +274,20 @@ docker compose up -d qdrant
 Sealing writes a canonical case profile containing the external party's
 script, scam method, validated indicators, payment flow, and sandbox findings.
 PostgreSQL is authoritative for profiles and exact shared-identifier edges.
-Enable the separate Qdrant `hive_cases` candidate index with:
+Enable the dedicated Qdrant `hive_cases` candidate index with:
 
 ```text
 HIVE_USE_CASE_SIMILARITY=true
 ```
 
 The first semantic index operation downloads the configured local multilingual
-FastEmbed model into the persistent `hive_fastembed_cache` volume. During a new
-takeover, retrieval starts only after meaningful scam evidence exists. HIVE can
-use matching patterns to choose one missing identifier type to ask for, but its
-prompt explicitly forbids mentioning prior cases or the investigation.
+FastEmbed model into the persistent `hive_fastembed_cache` volume. Sealed and
+reanalysed non-benign cases are represented by a privacy-reduced scam vector:
+validated tactic labels, identifier types, payment channels, sandbox traits,
+and an identifier-redacted external script. During a new takeover, retrieval
+starts only after meaningful scam evidence exists. HIVE can use matching
+patterns to choose one missing identifier type to ask for, but its prompt
+explicitly forbids mentioning prior cases or the investigation.
 
 Semantic similarity is labelled candidate retrieval, not proof of common ownership.
 Network attribution must distinguish exact shared identifiers (accounts,
@@ -320,6 +326,21 @@ custody. Set the optional operator name in the panel (or
 certificate. Each sealed session gets a unique filename. Sealing writes and
 signs a temporary report first; if rendering or signing fails, the takeover
 stays active and no partial bundle is published.
+
+Each seal also creates a portable `.evidence.zip` beside the PDF. It contains
+the report, detached PDF signature, public key, signed checksum manifest, and
+offline instructions. Verify a package on a separate machine with:
+
+```powershell
+hive-verify evidence/bundle_123_1.evidence.zip
+# or, from a source checkout
+python -m hive.verify_evidence evidence/bundle_123_1.evidence.zip
+```
+
+The command exits successfully only when the package structure, checksums,
+manifest signature, and PDF signature all pass. A cryptographic pass shows
+that the packaged bytes have not changed since sealing; it does not prove the
+sender's identity or guarantee legal admissibility.
 
 ## Running
 
@@ -363,7 +384,7 @@ Compose runs four separate services:
 | `frontend` | Nginx static control panel and same-origin API proxy | `127.0.0.1:9130` |
 | `backend` | FastAPI, Telegram runtime, evidence, and sandbox orchestration | Internal only |
 | `postgres` | Durable takeover transcripts and history index | Internal only |
-| `qdrant` | Optional mem0 semantic-memory vectors | Internal only |
+| `qdrant` | Cross-case scam-pattern candidate vectors (`hive_cases`) | Internal only |
 
 The backend still runs **Docker-in-Docker** because HIVE spawns disposable
 Layer 4 sandbox containers. Its inner daemon remains isolated from the host
@@ -429,11 +450,11 @@ is slower than ordinary Docker; sandbox runs therefore have a 90-second outer
 deadline and force-remove their named container on timeout.
 Each run receives its own writable screenshot directory, preventing both
 non-root permission failures and collisions between concurrent analyses.
-Compose cannot apply a child memory cgroup reliably inside Docker Desktop's
-nested daemon, so the four-service stack disables that child flag and applies a
-4 GB memory limit to the outer backend container instead. Set
-`HIVE_SANDBOX_MEMORY_LIMIT` only when the inner daemon supports nested memory
-cgroups.
+Compose cannot apply child memory or PID cgroups reliably inside Docker
+Desktop's nested daemon, so the four-service stack disables those child flags
+and applies a 4 GB memory and 1024 PID limit to the outer backend container
+instead. Set `HIVE_SANDBOX_MEMORY_LIMIT` and `HIVE_SANDBOX_PIDS_LIMIT` only when
+the inner daemon supports nested cgroups.
 Application-level request filtering is not a substitute for a kernel boundary
 against a browser exploit. For defence in depth, add `DOCKER-USER` firewall
 rules for the sandbox network subnet, as described by `EGRESS_FIREWALL_HINT` in
@@ -454,9 +475,52 @@ English, Mandarin, and Manglish regression corpus:
 task evaluate
 ```
 
+The versioned synthetic corpus contains 64 English, Mandarin, Manglish, and
+mixed-language cases, including hard negatives, multi-message context, and
+synthetic QR/OCR-derived indicators. Results are broken down by indicator,
+language, category, and development/evaluation split.
+
+Run the model-driven full-pipeline red-team matrix only when you are ready to
+use the configured LLM and retain evaluation evidence:
+
+```powershell
+task evaluate:redteam -- --output evaluation/results/redteam
+```
+
+The default matrix is 15 scenarios across all four personas (60 runs). Each
+run uses the complete HIVE graph and seals/verifies an evidence package; raw
+JSON, flat CSV, aggregate metrics, and run metadata are retained. Detection is
+counted only when the simulated scammer explicitly asserts that the
+counterparty is a bot/AI; questions such as “are you a bot?” are recorded as
+probes but do not count as detection. Remote model outputs can vary, so retain
+every final run rather than presenting the command as bit-for-bit deterministic.
+The recorder treats every non-empty line in scammer model output as a separate
+inbound chat bubble, processes adjacent bubbles as one phone-check burst, and
+stores HIVE's actual middleware-planned reply bubbles separately. No retained
+transcript message contains several model-formatted paragraphs or list rows.
+Automatic extraction precision/recall is calculated against the labelled
+scenario opener only. Indicators first disclosed in later generated messages
+are retained as additional findings and require post-run human annotation;
+they are not automatically misclassified as false positives.
+Synthetic scenario URLs use a deterministic sandbox stub by default so the
+model evaluation is safe and repeatable. Add `--live-sandbox` only with a
+controlled, authorised URL set and a ready disposable-browser environment.
+
 With the Compose stack running, `task services:verify` creates transient test
 records in PostgreSQL and an isolated Qdrant collection, verifies exact and
 semantic retrieval, and removes all test data before exiting.
+
+Measure the deployed `hive_cases` path with temporary synthetic profiles, then
+verify that stored vector text/payloads contain no exact raw identifiers:
+
+```powershell
+Get-Content -Raw scripts/benchmark_case_similarity.py | docker compose exec -T backend python -
+Get-Content -Raw scripts/verify_case_vector_privacy.py | docker compose exec -T backend python -
+```
+
+Both scripts are self-cleaning/read-only with respect to authoritative case
+records. The privacy verifier exits non-zero for an unexpected collection,
+schema version, payload key, or exact-identifier leak.
 
 Run the same deterministic lint, test, extraction-accuracy, panel-syntax, and
 Compose checks enforced in GitHub Actions with `task ci`.
@@ -475,11 +539,11 @@ uv run pytest tests/test_sandbox_runner.py tests/test_userbot.py tests/test_prom
   persistent `hive_model_cache` volume.
 - Cloud vision availability depends on the configured model; QR decoding and
   English/Mandarin OCR remain local and continue to work when vision is unavailable.
-- In-session memory uses an offline keyword-recall backend by default; the
-  semantic mem0 + Qdrant backend (`HIVE_USE_SEMANTIC_MEMORY`) is opt-in and not
-  exercised by the offline test suite.
-- Cross-case semantic candidates are opt-in with `HIVE_USE_CASE_SIMILARITY`;
-  exact shared-identifier relationships remain active without vector retrieval.
+- Active-session continuity uses the bounded transcript and validated session
+  facts; conversation-message embeddings are deliberately not stored.
+- Cross-case semantic candidates use `HIVE_USE_CASE_SIMILARITY`; exact
+  shared-identifier relationships remain authoritative and active without
+  vector retrieval. Similarity is investigative triage, not attribution proof.
 - The Section 90A certificate text and signature tooling support evidence
   packaging; legal admissibility still depends on operator process, custody,
   and local legal requirements.

@@ -7,7 +7,11 @@ from hive.case_intelligence import (
     build_case_profile,
     build_probe_context,
 )
-from hive.case_vectors import HybridCaseIntelligenceStore, QdrantCaseVectorIndex
+from hive.case_vectors import (
+    EmbeddingCompatibilityError,
+    HybridCaseIntelligenceStore,
+    QdrantCaseVectorIndex,
+)
 from hive.state import HVI, Message, SessionState
 
 
@@ -106,7 +110,10 @@ def test_qdrant_index_uses_separate_collection_and_candidate_label():
     assert client.points[0].payload["case_id"] == profile["case_id"]
     assert client.points[0].payload["vector_schema_version"] == 2
     assert client.points[0].payload["indicator_kinds"] == ["bank_account"]
+    fingerprint = client.points[0].payload["embedding_fingerprint"]
+    assert len(fingerprint) == 64
     assert "methods" not in client.points[0].payload
+    assert client.query["query_filter"].must[0].match.value == fingerprint
     assert results[0]["relationship"] == "script_similarity"
     assert results[0]["candidate_only"] is True
     assert results[0]["score"] == 0.81
@@ -125,6 +132,31 @@ def test_case_index_readiness_runs_a_real_vector_query():
     assert client.created["collection_name"] == "hive_cases"
     assert client.query["collection_name"] == "hive_cases"
     assert client.query["with_payload"] is False
+    assert len(client.query["query_filter"].must[0].match.value) == 64
+
+
+def test_existing_unversioned_collection_is_rejected():
+    client = FakeQdrant()
+    client.collection_exists = lambda _name: True
+    client.get_collection = lambda _name: SimpleNamespace(
+        config=SimpleNamespace(
+            params=SimpleNamespace(vectors=SimpleNamespace(size=3)),
+            metadata=None,
+        )
+    )
+    index = QdrantCaseVectorIndex(
+        "http://qdrant:6333",
+        embedder=FakeEmbedder(),
+        client=client,
+    )
+
+    try:
+        index.ensure_ready()
+    except EmbeddingCompatibilityError as exc:
+        assert "unversioned" in str(exc)
+        assert "hive-case-reindex" in str(exc)
+    else:
+        raise AssertionError("unversioned collection must be rejected")
 
 
 def test_hybrid_store_keeps_exact_edge_stronger_than_semantic_candidate(tmp_path):

@@ -10,7 +10,7 @@ authors = [{ name = "Tho Kai Syuen", email = "TP070466@mail.apu.edu.my" }]
 dependencies = [
     "langgraph>=0.2",
     "qdrant-client>=1.9",
-    # Pin because pooling behaviour for this embedding model changed across releases.
+    # Pin the fingerprinted mean-pooling behaviour used by the Qdrant case index.
     "fastembed==0.8.0",
     "gliner>=0.2",
     "playwright>=1.44",
@@ -41,6 +41,7 @@ dev = [
 [project.scripts]
 hive = "hive.__main__:main"
 hive-audit-restore = "hive.audit_restore:main"
+hive-case-reindex = "hive.case_reindex:main"
 hive-verify = "hive.verify_evidence:main"
 hive-redteam = "hive.redteam.evaluate:main"
 

@@ -367,6 +367,8 @@ class CaseIntelligenceStore(Protocol):
 
     def get(self, case_id: str) -> dict[str, Any] | None: ...
 
+    def list_profiles(self) -> list[dict[str, Any]]: ...
+
     def related(self, case_id: str) -> list[dict[str, Any]]: ...
 
     def match(self, profile: dict[str, Any], limit: int = 5) -> list[dict[str, Any]]: ...
@@ -397,6 +399,15 @@ class LocalCaseIntelligenceStore:
         except (OSError, json.JSONDecodeError):
             return None
         return value if isinstance(value, dict) else None
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        if not self.root.is_dir():
+            return []
+        return [
+            value
+            for path in sorted(self.root.glob("*.json"))
+            if (value := self.get(path.stem)) is not None
+        ]
 
     def related(self, case_id: str) -> list[dict[str, Any]]:
         profile = self.get(case_id)
@@ -556,6 +567,11 @@ class PostgresCaseIntelligenceStore:
             cursor.execute("SELECT profile FROM hive_cases WHERE case_id = %s", (case_id,))
             row = cursor.fetchone()
             return row[0] if row else None
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute("SELECT profile FROM hive_cases ORDER BY case_id")
+            return [row[0] for row in cursor.fetchall()]
 
     def related(self, case_id: str) -> list[dict[str, Any]]:
         with self._connect() as connection, connection.cursor() as cursor:

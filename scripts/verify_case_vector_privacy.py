@@ -7,6 +7,7 @@ import json
 import psycopg
 from qdrant_client import QdrantClient
 
+from hive.case_vectors import QdrantCaseVectorIndex
 from hive.config import load_settings
 
 ALLOWED_PAYLOAD_KEYS = {
@@ -18,6 +19,7 @@ ALLOWED_PAYLOAD_KEYS = {
     "vector_schema_version",
     "method_keys",
     "indicator_kinds",
+    "embedding_fingerprint",
 }
 
 
@@ -42,7 +44,9 @@ def main() -> None:
     qdrant = QdrantClient(url=settings.qdrant_url)
     collections = [item.name for item in qdrant.get_collections().collections]
     rows = []
-    if "hive_cases" in collections:
+    aliases = {item.alias_name for item in qdrant.get_aliases().aliases}
+    case_collection_present = "hive_cases" in collections or "hive_cases" in aliases
+    if case_collection_present:
         rows, _ = qdrant.scroll(
             "hive_cases",
             limit=10_000,
@@ -55,6 +59,24 @@ def main() -> None:
     payload_schema_violations = sum(
         (row.payload or {}).get("vector_schema_version") != 2 for row in rows
     )
+    expected_embedding_fingerprint = QdrantCaseVectorIndex(
+        settings.qdrant_url,
+        embedding_model=settings.case_embedding_model,
+        client=qdrant,
+        strict_compatibility=False,
+    ).embedding_fingerprint
+    payload_embedding_violations = sum(
+        (row.payload or {}).get("embedding_fingerprint") != expected_embedding_fingerprint
+        for row in rows
+    )
+    collection_metadata = (
+        dict(qdrant.get_collection("hive_cases").config.metadata or {})
+        if case_collection_present
+        else {}
+    )
+    metadata_embedding_match = (
+        collection_metadata.get("hive_embedding_fingerprint") == expected_embedding_fingerprint
+    )
     result = {
         "postgres_profiles": len(profiles),
         "postgres_schema_v2": len(profiles) - wrong_schema,
@@ -63,12 +85,16 @@ def main() -> None:
         "qdrant_case_points": len(rows),
         "qdrant_payload_key_violations": payload_key_violations,
         "qdrant_payload_schema_violations": payload_schema_violations,
+        "qdrant_payload_embedding_violations": payload_embedding_violations,
+        "qdrant_metadata_embedding_match": metadata_embedding_match,
         "valid": (
             wrong_schema == 0
             and text_leaks == 0
-            and collections == ["hive_cases"]
+            and "hive_cases" in set(collections) | aliases
             and payload_key_violations == 0
             and payload_schema_violations == 0
+            and payload_embedding_violations == 0
+            and metadata_embedding_match
         ),
     }
     print(json.dumps(result, indent=2))

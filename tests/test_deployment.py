@@ -18,6 +18,16 @@ def test_compose_declares_the_four_service_boundaries():
     assert "hive_fastembed:/root/.cache/fastembed" in compose
 
 
+def test_stateful_service_images_are_immutable_and_health_gated():
+    compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "postgres:17-alpine@sha256:" in compose
+    assert "qdrant/qdrant:v1.18.0@sha256:" in compose
+    assert "qdrant/qdrant:latest" not in compose
+    assert "qdrant:\n        condition: service_healthy" in compose
+    assert "GET /readyz HTTP/1.0" in compose
+
+
 def test_frontend_image_serves_assets_and_proxies_backend_apis():
     dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")
     nginx = (ROOT / "frontend" / "nginx.conf.template").read_text(encoding="utf-8")

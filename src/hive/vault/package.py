@@ -13,6 +13,7 @@ from typing import Any
 
 from hive.vault.signer import (
     public_key_bytes,
+    public_key_fingerprint,
     sign_bytes,
     verify_signature_with_public_key,
 )
@@ -74,6 +75,7 @@ def build_evidence_package(
         "package_type": "HIVE evidence package",
         "created_utc": datetime.now(UTC).isoformat(),
         "signature_algorithm": "RSA-PSS/SHA-256",
+        "signing_key_fingerprint": public_key_fingerprint(public_key),
         "files": {
             "evidence_pdf": {"name": pdf.name, "sha256": _sha256(pdf_bytes)},
             "evidence_signature": {

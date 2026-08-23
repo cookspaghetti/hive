@@ -14,7 +14,13 @@ from hive.state import HVI, Message, SessionState
 from hive.vault.bundle import _message_xml
 from hive.vault.hashchain import HashChain
 from hive.vault.package import evidence_package_path, verify_evidence_package
-from hive.vault.signer import generate_keypair, sign_bytes, verify_signature
+from hive.vault.signer import (
+    generate_keypair,
+    public_key_fingerprint,
+    sign_bytes,
+    signing_key_details,
+    verify_signature,
+)
 
 
 @pytest.fixture
@@ -36,6 +42,19 @@ def test_tampered_data_fails_verification(keypair):
     priv, pub = keypair
     sig = sign_bytes(b"original", priv)
     assert verify_signature(b"tampered", sig, pub) is False
+
+
+def test_signing_key_details_expose_stable_public_identity_only(keypair):
+    priv, pub = keypair
+
+    details = signing_key_details(priv)
+
+    assert details["valid"] is True
+    assert details["algorithm"] == "RSA-PSS/SHA-256"
+    assert details["bits"] == 2048
+    assert details["fingerprint"] == public_key_fingerprint(Path(pub).read_bytes())
+    assert details["public_key_present"] is False
+    assert "private" not in str(details).lower()
 
 
 def test_transcript_emoji_uses_font_or_explicit_unicode_fallback():
@@ -112,6 +131,9 @@ def test_build_bundle_creates_portable_verified_evidence_package(tmp_path, keypa
     verification = verify_evidence_package(package)
     assert verification["ok"] is True
     assert all(verification["checks"].values())
+    assert verification["manifest"]["signing_key_fingerprint"] == (
+        signing_key_details(priv)["fingerprint"]
+    )
 
 
 def test_evidence_package_verifier_rejects_tampering(tmp_path, keypair):

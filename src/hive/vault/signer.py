@@ -11,6 +11,10 @@ supplies their own key.
 
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+from typing import Any
+
 from hive.logging_setup import get_logger
 
 log = get_logger(__name__)
@@ -99,3 +103,50 @@ def public_key_bytes(private_key_path: str) -> bytes:
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,
     )
+
+
+def public_key_fingerprint(public_key: bytes) -> str:
+    """Return the SHA-256 fingerprint of a public key's canonical SPKI bytes."""
+    from cryptography.hazmat.primitives import serialization
+
+    loaded = serialization.load_pem_public_key(public_key)
+    canonical = loaded.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return hashlib.sha256(canonical).hexdigest()
+
+
+def signing_key_details(private_key_path: str | Path) -> dict[str, Any]:
+    """Inspect an unencrypted RSA signing key without exposing private material."""
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+
+    path = Path(private_key_path)
+    with path.open("rb") as stream:
+        key = serialization.load_pem_private_key(stream.read(), password=None)
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise ValueError("the configured signing key is not RSA")
+    public_key = key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    companion = Path(str(path) + ".pub")
+    companion_matches: bool | None = None
+    if companion.is_file():
+        try:
+            companion_matches = public_key_fingerprint(companion.read_bytes()) == (
+                public_key_fingerprint(public_key)
+            )
+        except (TypeError, ValueError):
+            companion_matches = False
+    stat = path.stat()
+    return {
+        "valid": True,
+        "algorithm": "RSA-PSS/SHA-256",
+        "bits": key.key_size,
+        "fingerprint": public_key_fingerprint(public_key),
+        "modified_ts": stat.st_mtime,
+        "public_key_present": companion.is_file(),
+        "public_key_matches": companion_matches,
+    }

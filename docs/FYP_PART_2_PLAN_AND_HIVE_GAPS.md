@@ -187,10 +187,10 @@ implemented in the current working tree:
 | A5 / UR-09 | Implemented, supervisor review pending | Live/archived session “Report” tab, PDF section, and control summary give conservative bank/NSRC 997/PDRM/preservation steps, link official sources, and state that HIVE does not report automatically. Guidance reviewed 22 August 2026. |
 | B1-B5 red-team evaluation | Harness closed; full matrix pending | Runner now calls the real HIVE graph and records exchanges, duration, tiers, HVI precision/recall/F1, verdict accuracy, guardrail flags, explicit bot-assertion detection, sandbox outcomes, chain validity, and evidence verification. A versioned 15-scenario by four-persona command can produce 60 raw JSON/CSV runs. Retained evaluation/demo records exercise the implemented modes, but the complete matrix against configured cloud models still requires time and retained outputs. |
 | C extraction corpus | Closed for synthetic benchmark | Expanded from 18 to 64 versioned synthetic cases: 37 English, 15 Mandarin, 11 Manglish, and one mixed-language case; includes 22 hard negatives, ten multi-message cases, and five media-derived cases. Overall precision/recall/F1 is 0.9821 with one deliberately retained Manglish name-boundary error. |
-| Deterministic quality gate | Passed | 315 tests passed, one skipped after replacing obsolete session-memory tests with deterministic-context, privacy-reduced case-vector, and real readiness-query coverage; Ruff, extraction evaluation, JavaScript syntax, and Compose configuration pass. |
+| Deterministic quality gate | Passed | 352 tests passed, one skipped; strict mypy passes across all 79 HIVE source files; Ruff, extraction evaluation, JavaScript syntax, lock validation, and Compose configuration pass. |
 | Live local integration | Passed within the safe local scope | PostgreSQL exact-edge and Qdrant `hive_cases` write/search/cleanup checks passed; the obsolete empty `hive_sessions` collection was removed; a disposable Scrapling browser fetched a public page, rejected a local address, and cleaned up; all protected panel/API workspaces were checked. No external Telegram message was sent. |
 | UAT and performance design | Draft complete; formal execution pending | `docs/HIVE_UAT_AND_PERFORMANCE_DRAFT.md` contains an execution-ready 35-case UAT checklist, Chapter 5 outline, acceptance/defect templates, metric definitions, provisional thresholds, and an exploratory performance baseline. |
-| Static type gate | Open technical debt | The declared Python 3.11 target conflicts with NumPy 2.5 stubs using Python 3.12 syntax. Excluding that dependency boundary reveals 43 existing HIVE type errors under a pragmatic check (202 under current strict/no-site-packages diagnostics). Do not claim mypy passes. |
+| Static type gate | Closed | The locked development environment constrains NumPy below 2.5 while HIVE supports Python 3.11. Genuine application errors were corrected and strict mypy now passes across all 79 source files; the only targeted ignore is Telethon's dynamic event decorator boundary. |
 
 Work that cannot be completed without operator/supervisor involvement remains:
 
@@ -237,8 +237,8 @@ Work that cannot be completed without operator/supervisor involvement remains:
 9. **Live integration coverage is substantially improved but external Telegram UAT remains.**
    The offline suite is supplemented by recorded Demo Lab runs, deployed GLiNER/runtime readiness, PostgreSQL and Qdrant service round trips, cross-case scam-pattern retrieval, evidence verification, and successful public/private sandbox checks. A real approved Telegram trigger/reply/stop flow and media attachment still require a dedicated test account and participant/operator evidence.
 
-10. **Static type checking remains open technical debt.**
-    Mypy first stops in the installed NumPy 2.5 stubs because they contain Python 3.12 syntax while HIVE targets Python 3.11. A dependency-isolated diagnostic then exposes 43 existing HIVE errors under a pragmatic configuration, so this is not only an environment problem. Align the supported interpreter/dependency versions, establish a realistic typed boundary for third-party libraries, and reduce genuine HIVE errors without claiming a passing strict gate prematurely.
+10. **Closed: static type checking is reproducible and passing.**
+    HIVE keeps its Python 3.11 target and constrains the development environment to NumPy 2.4 while NumPy 2.5 stubs require Python 3.12 syntax. Strict mypy passes across all 79 HIVE source files after correcting application contracts, generic types, nullable state, callbacks, and API payloads. One line-level ignore documents Telethon's dynamic event decorator boundary; no HIVE module is excluded.
 
 11. **Architecture corrected: Qdrant is for cross-case scam patterns, not active-session recall.**
     Active replies use the bounded transcript and deterministic validated facts. The deployed `hive_cases` index uses privacy-reduced pattern vectors; PostgreSQL remains authoritative for exact identifiers and case profiles. Qdrant results are candidate-only and cannot establish common ownership.
@@ -351,7 +351,7 @@ Acceptance criterion: Chapter 5 reports participant count, demographics, instrum
 
 1. Keep `HIVE_USE_CASE_SIMILARITY` consistent across `.env.example`, deployment and the panel; do not reintroduce active-message embeddings.
 2. Record the validated `hive_cases` indexing/search result and candidate-only wording in the implementation, diagrams, evaluation chapter, and limitations.
-3. Fix the reproducible mypy environment by pinning compatible dependencies/stubs or narrowing imported-package checking without suppressing HIVE errors.
+3. **Closed:** the locked development environment uses compatible NumPy stubs, strict mypy checks all 79 HIVE source files, and no HIVE module is excluded.
 4. Run the complete deterministic gate: lint, type check, tests, extraction evaluation, JavaScript syntax, and Compose configuration.
 5. Record version identifiers for Python, dependencies, container images, models, test corpus, and the evaluated Git commit.
 
@@ -429,7 +429,7 @@ Complete if time permits, otherwise document honestly as limitations:
   `3.5.1`; lock validation, the full regression suite, runtime health, and live
   PostgreSQL/Qdrant round trips passed.
 - Deterministic HVI corpus: 64 cases, 55 true positives, 1 false positive, 1 false negative; precision/recall/F1 = 0.9821. The retained error is documented in the corpus and output.
-- Mypy: not passing. The first blocker is Python 3.12 syntax in installed NumPy 2.5 stubs while the project targets Python 3.11; an isolated diagnostic also identifies existing HIVE type debt.
+- Mypy: strict check passed across all 79 HIVE source files. NumPy is constrained to the compatible 2.4 line in the development dependency set while HIVE targets Python 3.11; one targeted ignore covers Telethon's dynamic event decorator. The rebuilt deployment reported all runtime components ready and repeated PostgreSQL/Qdrant round trips successfully.
 
 ## Suggested schedule
 

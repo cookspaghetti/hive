@@ -683,6 +683,11 @@ def create_app(
         env_store=store,
         login_manager=telethon_login,
         on_change=runtime.mark_restart_required,
+        signing_rotation_guard=lambda: (
+            "Stop the agent before rotating the evidence signing key."
+            if runtime.snapshot().get("running")
+            else ""
+        ),
     )
 
     @app.get("/", response_class=HTMLResponse)

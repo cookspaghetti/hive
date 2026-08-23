@@ -352,6 +352,8 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .readiness-copy strong { line-height: 1.35; }
 .readiness-copy span { color: var(--subtle); font-size: .72rem; }
 .readiness-item > .status-chip { align-self: center; justify-self: end; }
+.signing-key-details { margin-top: 14px; }
+.signing-key-details .fingerprint { overflow-wrap: anywhere; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .68rem; text-align: right; }
 .retention-inventory { margin-top: 14px; }
 .retention-flow-row { grid-template-columns: minmax(110px, .3fr) minmax(0, 1fr); align-items: start; }
 .retention-flow-row strong { color: var(--text); font-weight: 500; line-height: 1.5; text-align: left; }

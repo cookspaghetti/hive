@@ -2,11 +2,13 @@
 
 import asyncio
 import os
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
 from hive.provisioning.env_store import EnvStore
+from hive.vault.signer import sign_bytes, verify_signature
 from hive.webpanel.setup_app import create_setup_app
 
 TOKEN = "local-setup-token"
@@ -177,3 +179,93 @@ def test_setup_rejects_credential_path_outside_project(tmp_path):
         },
     )
     assert response.status_code == 400
+
+
+def test_signing_key_status_exposes_public_fingerprint_not_private_material(tmp_path):
+    client, _store, _ = _client(tmp_path)
+
+    created = client.post(
+        "/api/setup/signing-key",
+        headers=_headers(),
+        json={"path": "./secrets/signing_key.pem"},
+    )
+    status = client.get("/api/setup/status", headers=_headers())
+
+    assert created.status_code == 200
+    key = status.json()["signing_key"]
+    assert key["valid"] is True
+    assert key["bits"] == 2048
+    assert len(key["fingerprint"]) == 64
+    assert key["public_key_present"] is True
+    assert key["public_key_matches"] is True
+    assert key["rotation_allowed"] is True
+    assert "PRIVATE KEY" not in status.text
+
+
+def test_signing_key_rotation_is_non_overwriting_and_keeps_old_signatures_valid(tmp_path):
+    client, store, _ = _client(tmp_path)
+    created = client.post(
+        "/api/setup/signing-key",
+        headers=_headers(),
+        json={"path": "./secrets/signing_key.pem"},
+    ).json()
+    old_path = tmp_path / created["path"]
+    old_public = Path(str(old_path) + ".pub")
+    old_bytes = old_path.read_bytes()
+    signature = sign_bytes(b"sealed before rotation", str(old_path))
+
+    response = client.post(
+        "/api/setup/signing-key/rotate",
+        headers=_headers(),
+        json={
+            "confirm_fingerprint": created["signing_key"]["fingerprint"],
+            "reason": "scheduled test rotation",
+        },
+    )
+
+    assert response.status_code == 200
+    result = response.json()
+    new_path = tmp_path / result["current"]["path"]
+    assert result["previous"]["retained"] is True
+    assert result["previous"]["fingerprint"] != result["current"]["fingerprint"]
+    assert result["restart_required"] is True
+    assert old_path.read_bytes() == old_bytes
+    assert old_path.is_file() and old_public.is_file()
+    assert new_path.is_file() and Path(str(new_path) + ".pub").is_file()
+    assert store.read()["HIVE_SIGNING_KEY_PATH"] == result["current"]["path"]
+    assert verify_signature(b"sealed before rotation", signature, str(old_public)) is True
+
+
+def test_signing_key_rotation_rejects_stale_fingerprint(tmp_path):
+    client, store, _ = _client(tmp_path)
+    client.post(
+        "/api/setup/signing-key",
+        headers=_headers(),
+        json={"path": "./secrets/signing_key.pem"},
+    )
+
+    response = client.post(
+        "/api/setup/signing-key/rotate",
+        headers=_headers(),
+        json={"confirm_fingerprint": "0" * 64},
+    )
+
+    assert response.status_code == 409
+    assert store.read()["HIVE_SIGNING_KEY_PATH"] == "./secrets/signing_key.pem"
+    assert len(list((tmp_path / "secrets").glob("*.pem"))) == 1
+
+
+def test_existing_invalid_signing_key_is_never_overwritten(tmp_path):
+    client, _store, _ = _client(tmp_path)
+    path = tmp_path / "secrets" / "signing_key.pem"
+    path.parent.mkdir()
+    path.write_text("not a private key", encoding="utf-8")
+
+    response = client.post(
+        "/api/setup/signing-key",
+        headers=_headers(),
+        json={"path": "./secrets/signing_key.pem"},
+    )
+
+    assert response.status_code == 409
+    assert path.read_text(encoding="utf-8") == "not a private key"

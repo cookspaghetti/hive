@@ -79,6 +79,7 @@
     activityHiddenBefore: 0,
     telegramAttempt: "",
     telegramStage: "start",
+    signingKey: null,
     setupOnly: false,
     seenTakeoverRequests: new Set(),
     loading: new Set(),
@@ -1216,9 +1217,16 @@
 
   async function loadSetup() {
     const data = await api("/api/setup/status");
-    $("#readinessList").innerHTML = Object.entries(data.checks || {}).map(([name, ready]) => `<div class="readiness-item"><div class="readiness-copy"><strong>${escapeHtml(readinessLabels[name] || titleCase(name))}</strong><span>${ready ? "Configuration present" : "Action required"}</span></div><span class="status-chip ${ready ? "success" : "error"}">${ready ? "Ready" : "Missing"}</span></div>`).join("");
+    state.signingKey = data.signing_key || { present: false, valid: false };
+    $("#readinessList").innerHTML = Object.entries(data.checks || {}).map(([name, ready]) => {
+      const detail = name === "signing_key" && state.signingKey.valid ? `${state.signingKey.bits}-bit RSA · ${state.signingKey.fingerprint.slice(0, 12)}…` : ready ? "Configuration present" : "Action required";
+      return `<div class="readiness-item"><div class="readiness-copy"><strong>${escapeHtml(readinessLabels[name] || titleCase(name))}</strong><span>${escapeHtml(detail)}</span></div><span class="status-chip ${ready ? "success" : "error"}">${ready ? "Ready" : "Missing"}</span></div>`;
+    }).join("");
     setMessage("#readinessMessage", data.ready ? "Required services are ready to start." : "Complete the missing required checks before starting the runtime.", data.ready ? "success" : "");
     if (data.paths?.signing_key) $("#signingPath").value = data.paths.signing_key;
+    const key = state.signingKey;
+    $("#signingKeyDetails").innerHTML = key.valid ? `<div class="definition-row"><span>Algorithm</span><strong>${escapeHtml(key.algorithm)} · ${Number(key.bits)} bit</strong></div><div class="definition-row"><span>SHA-256 fingerprint</span><strong class="fingerprint">${escapeHtml(key.fingerprint)}</strong></div><div class="definition-row"><span>Public companion</span><strong>${key.public_key_present ? key.public_key_matches ? "Present and matching" : "Present but mismatched" : "Derived during packaging"}</strong></div><div class="definition-row"><span>Last modified</span><strong>${escapeHtml(formatDate(key.modified_ts))}</strong></div><div class="definition-row"><span>Rotation</span><strong>${escapeHtml(key.rotation_allowed ? "Available while agent remains stopped" : key.rotation_blocked_reason || "Unavailable")}</strong></div>` : `<div class="definition-row"><span>Key status</span><strong>${escapeHtml(key.error || "Not created")}</strong></div>`;
+    $("#rotateSigningKey").disabled = !key.valid || !key.rotation_allowed;
     if (data.bot_username) setMessage("#botMessage", `Saved control bot: @${data.bot_username}`);
   }
 
@@ -1265,6 +1273,21 @@
       try {
         const result = await api("/api/setup/signing-key", { method: "POST", body: JSON.stringify({ path: $("#signingPath").value }) });
         setMessage("#signingMessage", result.created ? `Keypair created at ${result.path}.` : `A signing key already exists at ${result.path}.`, "success");
+        await loadSetup();
+      } catch (error) { setMessage("#signingMessage", error.message, "error"); }
+    });
+  }
+
+  async function rotateSigningKey() {
+    const key = state.signingKey;
+    if (!key?.valid) return setMessage("#signingMessage", "Create or repair the configured signing key first.", "error");
+    const confirmed = await confirmAction("Rotate the evidence signing key?", `Current fingerprint: ${key.fingerprint}. The agent must be stopped. HIVE will retain the old private key so existing evidence remains attributable, create a new uniquely named key, and require a runtime restart.`, "Rotate signing key");
+    if (!confirmed) return;
+    await withLoading("signing-rotation", $("#rotateSigningKey"), async () => {
+      try {
+        const result = await api("/api/setup/signing-key/rotate", { method: "POST", body: JSON.stringify({ confirm_fingerprint: key.fingerprint, reason: $("#signingRotationReason").value.trim() }) });
+        $("#signingRotationReason").value = "";
+        setMessage("#signingMessage", `Rotated to ${result.current.path}. Previous key retained; restart the agent before new sessions.`, "success");
         await loadSetup();
       } catch (error) { setMessage("#signingMessage", error.message, "error"); }
     });
@@ -1357,6 +1380,7 @@
     $("#telegramForm").addEventListener("submit", telegramSubmit);
     $("#cancelTelegramLogin").addEventListener("click", cancelTelegram);
     $("#signingForm").addEventListener("submit", createSigningKey);
+    $("#rotateSigningKey").addEventListener("click", rotateSigningKey);
     $("#panelTokenForm").addEventListener("submit", savePanelToken);
     $("#retentionForm").addEventListener("submit", saveRetention);
     $("#refreshRetention").addEventListener("click", () => loadRetention().catch((error) => toast(error.message, "error")));

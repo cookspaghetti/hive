@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import hmac
 import os
+import threading
+import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -14,7 +18,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from hive.audit import audit_event
 from hive.provisioning import EnvStore, TelethonLoginManager
 from hive.provisioning.telegram_bot import verify_control_bot_token
-from hive.vault.signer import generate_keypair
+from hive.vault.signer import generate_keypair, signing_key_details
 from hive.webpanel.assets import (
     LOGO_HTML,
     LOGO_PATH,
@@ -110,14 +114,33 @@ def register_setup_routes(
     env_store: EnvStore | None = None,
     login_manager: TelethonLoginManager | None = None,
     on_change: Any = None,
+    signing_rotation_guard: Any = None,
 ) -> TelethonLoginManager:
     project_root = Path(root).resolve()
     store = env_store or EnvStore(project_root / ".env")
     manager = login_manager or TelethonLoginManager(store)
+    signing_rotation_lock = threading.Lock()
 
     def changed() -> None:
         if on_change is not None:
             on_change()
+
+    def rotation_blocked_reason() -> str:
+        if signing_rotation_guard is None:
+            return ""
+        return str(signing_rotation_guard() or "").strip()
+
+    def signing_status(path: Path) -> dict[str, object]:
+        if not path.is_file():
+            return {"present": False, "valid": False}
+        try:
+            return {"present": True, **signing_key_details(path)}
+        except (OSError, TypeError, ValueError):
+            return {
+                "present": True,
+                "valid": False,
+                "error": "Configured file is not a valid unencrypted RSA private key.",
+            }
 
     @app.get("/api/setup/status", dependencies=[Depends(auth)])
     def status() -> dict[str, object]:
@@ -128,6 +151,10 @@ def register_setup_routes(
         signing_path = _safe_path(
             project_root, values.get("HIVE_SIGNING_KEY_PATH", "./secrets/signing_key.pem")
         )
+        signing = signing_status(signing_path)
+        rotation_blocked = rotation_blocked_reason()
+        signing["rotation_allowed"] = bool(signing["valid"] and not rotation_blocked)
+        signing["rotation_blocked_reason"] = rotation_blocked
         checks = {
             "llm": bool(values.get("HIVE_LLM_API_KEY")),
             "control_bot": bool(
@@ -141,7 +168,7 @@ def register_setup_routes(
                 and values.get("HIVE_SESSION_PASSPHRASE")
                 and session_path.is_file()
             ),
-            "signing_key": signing_path.is_file(),
+            "signing_key": bool(signing["valid"]),
             "panel": bool(values.get("HIVE_PANEL_TOKEN")),
         }
         return {
@@ -154,6 +181,7 @@ def register_setup_routes(
                 "session": _display_path(project_root, session_path),
                 "signing_key": _display_path(project_root, signing_path),
             },
+            "signing_key": signing,
         }
 
     @app.put("/api/setup/config", dependencies=[Depends(auth)])
@@ -302,13 +330,24 @@ def register_setup_routes(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         if path.exists():
+            details = signing_status(path)
+            if not details["valid"]:
+                raise HTTPException(
+                    status_code=409,
+                    detail="A file exists at this path but it is not a valid signing key.",
+                )
             audit_event(
                 "signing_key",
                 "signing_key_reused",
                 component="webpanel.setup",
                 payload={"path": _display_path(project_root, path)},
             )
-            return {"ok": True, "created": False, "path": _display_path(project_root, path)}
+            return {
+                "ok": True,
+                "created": False,
+                "path": _display_path(project_root, path),
+                "signing_key": details,
+            }
         path.parent.mkdir(parents=True, exist_ok=True)
         generate_keypair(str(path), str(path) + ".pub")
         os.chmod(path, 0o600)
@@ -320,7 +359,94 @@ def register_setup_routes(
             component="webpanel.setup",
             payload={"path": _display_path(project_root, path)},
         )
-        return {"ok": True, "created": True, "path": _display_path(project_root, path)}
+        return {
+            "ok": True,
+            "created": True,
+            "path": _display_path(project_root, path),
+            "signing_key": signing_status(path),
+        }
+
+    def _rotate_signing_key(payload: dict) -> dict[str, object]:
+        blocked = rotation_blocked_reason()
+        if blocked:
+            raise HTTPException(status_code=409, detail=blocked)
+        values = store.read()
+        requested = values.get("HIVE_SIGNING_KEY_PATH", "./secrets/signing_key.pem")
+        try:
+            current_path = _safe_path(project_root, requested)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        current = signing_status(current_path)
+        if not current["valid"]:
+            raise HTTPException(
+                status_code=409,
+                detail="Create or repair the configured signing key before rotating it.",
+            )
+        confirmation = str(payload.get("confirm_fingerprint", "")).strip().lower()
+        if not hmac.compare_digest(confirmation, str(current["fingerprint"])):
+            raise HTTPException(
+                status_code=409,
+                detail="The signing-key fingerprint changed; refresh and review it again.",
+            )
+        reason = str(payload.get("reason", "operator initiated")).strip()
+        if len(reason) > 300 or "\n" in reason or "\r" in reason:
+            raise HTTPException(status_code=400, detail="rotation reason is invalid")
+        reason = reason or "operator initiated"
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        new_path = current_path.with_name(
+            f"{current_path.stem}_{timestamp}_{uuid.uuid4().hex[:8]}{current_path.suffix}"
+        )
+        public_path = Path(str(new_path) + ".pub")
+        generate_keypair(str(new_path), str(public_path))
+        os.chmod(new_path, 0o600)
+        try:
+            new = signing_status(new_path)
+            if not new["valid"] or new["fingerprint"] == current["fingerprint"]:
+                raise RuntimeError("new signing key validation failed")
+            configured_path = _display_path(project_root, new_path)
+            store.save({"HIVE_SIGNING_KEY_PATH": configured_path})
+        except Exception:
+            new_path.unlink(missing_ok=True)
+            public_path.unlink(missing_ok=True)
+            raise
+        changed()
+        audit_event(
+            "signing_key",
+            "signing_key_rotated",
+            component="webpanel.setup",
+            payload={
+                "previous_path": _display_path(project_root, current_path),
+                "previous_fingerprint": current["fingerprint"],
+                "new_path": configured_path,
+                "new_fingerprint": new["fingerprint"],
+                "previous_key_retained": True,
+                "reason": reason,
+            },
+            level="warning",
+        )
+        return {
+            "ok": True,
+            "rotated": True,
+            "previous": {
+                "path": _display_path(project_root, current_path),
+                "fingerprint": current["fingerprint"],
+                "retained": True,
+            },
+            "current": {"path": configured_path, **new},
+            "restart_required": True,
+        }
+
+    @app.post("/api/setup/signing-key/rotate", dependencies=[Depends(auth)])
+    def rotate_signing_key(payload: Annotated[dict, Body()]) -> dict[str, object]:
+        if not signing_rotation_lock.acquire(blocking=False):
+            raise HTTPException(
+                status_code=409,
+                detail="Another signing-key rotation is already in progress.",
+            )
+        try:
+            return _rotate_signing_key(payload)
+        finally:
+            signing_rotation_lock.release()
 
     return manager
 
@@ -335,7 +461,7 @@ def _safe_path(root: Path, value: str) -> Path:
 
 def _display_path(root: Path, path: Path) -> str:
     try:
-        return str(path.relative_to(root))
+        return path.relative_to(root).as_posix()
     except ValueError:
         return str(path)
 

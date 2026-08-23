@@ -165,6 +165,9 @@ def test_panel_assets_are_served(client):
     assert 'id="activityScope"' in page.text
     assert 'data-page="retention"' in page.text
     assert 'id="retentionForm"' in page.text
+    assert 'id="signingKeyDetails"' in page.text
+    assert 'id="rotateSigningKey"' in page.text
+    assert 'api("/api/setup/signing-key/rotate"' in script.text
     assert 'api("/api/retention")' in script.text
     assert 'api("/api/retention/policy"' in script.text
     assert "No artifacts were deleted" in script.text
@@ -229,6 +232,32 @@ def test_retention_policy_rejects_destructive_or_invalid_fields(client):
     assert destructive.status_code == 400
     assert invalid.status_code == 400
     assert not (client._root / ".env").exists()
+
+
+def test_signing_key_rotation_is_blocked_while_agent_is_running(client):
+    created = client.post(
+        "/api/setup/signing-key",
+        headers=_h(),
+        json={"path": "./secrets/signing_key.pem"},
+    ).json()
+
+    response = client.post(
+        "/api/setup/signing-key/rotate",
+        headers=_h(),
+        json={"confirm_fingerprint": created["signing_key"]["fingerprint"]},
+    )
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == (
+        "Stop the agent before rotating the evidence signing key."
+    )
+    assert (client._root / "secrets" / "signing_key.pem").is_file()
+    assert len(list((client._root / "secrets").glob("*.pem"))) == 1
+    status = client.get("/api/setup/status", headers=_h()).json()
+    assert status["signing_key"]["rotation_allowed"] is False
+    assert status["signing_key"]["rotation_blocked_reason"] == (
+        "Stop the agent before rotating the evidence signing key."
+    )
 
 
 def test_frontend_can_bootstrap_an_ephemeral_backend_session(client):

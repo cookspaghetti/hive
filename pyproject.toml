@@ -56,6 +56,7 @@ hive-audit-restore = "hive.audit_restore:main"
 hive-case-reindex = "hive.case_reindex:main"
 hive-verify = "hive.verify_evidence:main"
 hive-redteam = "hive.redteam.evaluate:main"
+hive-models-verify = "hive.verify_models:main"
 hive-sandbox-verify = "hive.verify_sandbox:main"
 
 [build-system]

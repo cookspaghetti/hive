@@ -64,6 +64,11 @@ tasks:
     cmds:
       - docker compose exec -T backend python -m hive.verify_services
 
+  models:verify:
+    desc: Verify text generation from every configured model role
+    cmds:
+      - docker compose exec -T backend python -m hive.verify_models
+
   sandbox:verify:
     desc: Verify public fetch, private-address rejection, and container cleanup
     cmds:

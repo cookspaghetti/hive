@@ -44,6 +44,11 @@ tasks:
     cmds:
       - uv run python -m hive.audit_backup {{.CLI_ARGS}}
 
+  audit:restore-drill:
+    desc: Verify the newest audit backup in an isolated disposable target
+    cmds:
+      - uv run python -m hive.audit_restore {{.CLI_ARGS}}
+
   evaluate:
     desc: Measure deterministic indicator precision and recall
     cmds:

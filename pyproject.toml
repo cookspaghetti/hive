@@ -40,6 +40,7 @@ dev = [
 
 [project.scripts]
 hive = "hive.__main__:main"
+hive-audit-restore = "hive.audit_restore:main"
 hive-verify = "hive.verify_evidence:main"
 hive-redteam = "hive.redteam.evaluate:main"
 

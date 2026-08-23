@@ -27,6 +27,8 @@ venv/
 *.egg-info/
 dist/
 build/
+node_modules/
+.playwright-cli/
 
 # --- Tooling ---
 .pytest_cache/

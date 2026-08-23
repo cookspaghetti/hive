@@ -424,6 +424,10 @@ Complete if time permits, otherwise document honestly as limitations:
 - CPU-only backend dependency deployment: 789,796,786-byte image, down 76.3%
   from 3,337,709,323 bytes; deployed Torch `2.12.1+cpu`; real GLiNER and all
   runtime components ready.
+- Dependency hygiene: yanked transitive `grpcio 1.82.0` and
+  `charset-normalizer 3.4.8` releases replaced by deployed `1.83.0` and
+  `3.5.1`; lock validation, the full regression suite, runtime health, and live
+  PostgreSQL/Qdrant round trips passed.
 - Deterministic HVI corpus: 64 cases, 55 true positives, 1 false positive, 1 false negative; precision/recall/F1 = 0.9821. The retained error is documented in the corpus and output.
 - Mypy: not passing. The first blocker is Python 3.12 syntax in installed NumPy 2.5 stubs while the project targets Python 3.11; an isolated diagnostic also identifies existing HIVE type debt.
 

@@ -58,3 +58,28 @@ When changing GLiNER or Torch:
 GPU enablement is a separate deployment change requiring compatible hardware,
 wheel/index selection, resource limits, performance comparison, and UAT risk
 review. It must not occur implicitly through dependency resolution.
+
+## Transitive dependency hygiene (23 August 2026)
+
+The lockfile previously retained two yanked transitive releases even though no
+direct or transitive constraint required those exact versions. A targeted lock
+refresh replaced them without widening HIVE's declared dependency ranges:
+
+| Package | Replaced | Locked and deployed | Reason |
+| --- | ---: | ---: | --- |
+| `grpcio` | `1.82.0` | `1.83.0` | The replaced release had incorrect protobuf dependency metadata. |
+| `charset-normalizer` | `3.4.8` | `3.5.1` | The replaced release had a decoding regression. |
+
+Validation covered more than package import. `uv lock --check` completed with
+no yanked-release warning; the full Python suite passed with 352 tests, 1 skip,
+and the existing Starlette deprecation warning; and the rebuilt CPU backend
+contained `grpcio 1.83.0`, `charset-normalizer 3.5.1`, and
+`torch 2.12.1+cpu`. After deployment, HIVE reported every runtime component
+ready and `hive.verify_services` completed real PostgreSQL and Qdrant
+write/read/search/cleanup round trips.
+
+For future maintenance, prefer a targeted refresh such as
+`uv lock --upgrade-package <package>` over an indiscriminate full dependency
+upgrade. Then repeat the lock check, regression suite, image build, deployed
+version inspection, health check, and live datastore verifier before accepting
+the new lockfile.

@@ -11,10 +11,10 @@
 #
 # Caching: locked dependencies are installed before application source is
 # copied. Source-only edits therefore create a small final layer instead of
-# repacking the large Torch/CUDA environment.
+# repacking the Torch environment.
 #
-# NOTE: GLiNER pulls in torch, so the image is large. Set HIVE load_ner off
-# (build_engine(..., load_ner=False)) or trim deps for a slim variant.
+# NOTE: GLiNER pulls in Torch. pyproject.toml pins Torch to PyTorch's official
+# CPU wheel index because this deployment does not expose a GPU.
 
 FROM python:3.11-slim
 

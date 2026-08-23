@@ -13,6 +13,8 @@ dependencies = [
     # Pin the fingerprinted mean-pooling behaviour used by the Qdrant case index.
     "fastembed==0.8.0",
     "gliner>=0.2",
+    # HIVE deploys on CPU; source pin below prevents unused multi-GB CUDA wheels.
+    "torch==2.12.1",
     "playwright>=1.44",
     "reportlab>=4.1",
     "cryptography>=42.0",
@@ -37,6 +39,14 @@ dev = [
     "mypy>=1.10",
     "watchfiles>=1.2.0",
 ]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [project.scripts]
 hive = "hive.__main__:main"

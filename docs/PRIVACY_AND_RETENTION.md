@@ -70,9 +70,9 @@ cannot be converted to expiring classes through this interface.
   Qdrant reports point counts but not physical collection bytes through the
   current inventory adapter.
 - A scan is a point-in-time inventory and does not lock concurrent writes.
-- HIVE has no secure-deletion, legal-hold, per-case export, restore, or automatic
-  enforcement workflow. Those capabilities must not be implied in the report.
+- HIVE has no secure-deletion, legal-hold, per-case export, whole-system restore,
+  or automatic enforcement workflow. The audit-ledger restore drill is isolated
+  and does not imply recovery coverage for every store.
 - The supervisor/ethics process must approve the final retention duration,
   participant disclosure, cloud-model processing, backup handling, and disposal
   method before formal UAT data is collected.
-

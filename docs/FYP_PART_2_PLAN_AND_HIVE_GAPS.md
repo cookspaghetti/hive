@@ -262,7 +262,11 @@ Work that cannot be completed without operator/supervisor involvement remains:
 
 ### P2 - polish and defensibility
 
-16. Add a backup-restore drill, not only backup creation.
+16. **Audit backup-restore drill is closed at prototype scope.**
+    A fresh 47,114-event ledger backup was restored into an isolated disposable
+    target and passed manifest, checksum, source-identity, hash-chain, count, and
+    terminal-hash checks without modifying live stores. Whole-system recovery
+    across PostgreSQL, Qdrant, evidence files, and secrets remains future work.
 17. Add operator-facing evidence verification and key-rotation documentation.
 18. Run a manual accessibility and responsive-interface test in addition to the existing structural accessibility work.
 19. Capture stable final screenshots only after feature freeze.
@@ -350,7 +354,9 @@ Acceptance criterion: one documented command sequence passes from a clean checko
 3. Finalise the report-only policy in `docs/PRIVACY_AND_RETENTION.md` with
    supervisor-approved access, retention, backup, export, and secure-disposal
    decisions for the FYP evaluation dataset.
-4. Run a backup-and-restore drill and document the result.
+4. Keep the implemented audit-ledger restore drill in the final test gate and
+   define a future whole-system recovery order for PostgreSQL, Qdrant, evidence
+   files, and secrets.
 5. Document privileged Docker-in-Docker as a prototype limitation; do not attempt a late architectural rewrite unless required for safe testing.
 6. Obtain supervisor review of the Section 90A wording and avoid claiming guaranteed admissibility.
 

@@ -187,6 +187,14 @@ hash-chain checked and accompanied by a manifest containing its source identity,
 event count, terminal event hash, and file checksum. Backups are never pruned by
 this command.
 
+Exercise that backup with `task audit:restore-drill`. HIVE restores the newest
+snapshot into a newly created disposable directory, verifies its checksum,
+source identity, hash chain, event count, and terminal hash, then removes only
+the isolated copy. A JSON result is retained under
+`evaluation/results/backup_restore/`; the live ledger and service stores are not
+modified. See [docs/AUDIT_BACKUP_RESTORE.md](docs/AUDIT_BACKUP_RESTORE.md) for
+the operator procedure and whole-system recovery limitations.
+
 This ledger deliberately contains third-party messages and model context. Keep
 the evidence directory and PostgreSQL backups access-controlled. Diagnostic log
 messages redact recognizable credentials, while conversational records remain

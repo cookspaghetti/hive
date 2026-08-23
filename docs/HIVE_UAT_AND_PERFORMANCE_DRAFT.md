@@ -37,7 +37,7 @@ legal review, or an external Telegram conversation has already taken place.
 
 | Area | Current verification | Result / evidence |
 | --- | --- | --- |
-| Code quality and regression | Ruff, Python tests, JavaScript syntax, Compose configuration | Pass: 337 tests passed, one intentionally skipped; one deprecation warning |
+| Code quality and regression | Ruff, Python tests, JavaScript syntax, Compose configuration | Pass: 342 tests passed, one intentionally skipped; one deprecation warning |
 | HVI extraction | 64-case versioned synthetic corpus | Precision 0.9821, recall 0.9821, F1 0.9821; the retained failure is one Manglish person-name boundary case |
 | English and Mandarin extraction | Corpus results by language | Pass: F1 1.0 for English and Mandarin cases |
 | Manglish extraction | Corpus results by language | Partial: F1 0.9; document and discuss the known name-boundary error |
@@ -54,7 +54,7 @@ legal review, or an external Telegram conversation has already taken place.
 | URL sandbox | Public fetch, private-address rejection and container cleanup | Pass after deployment fix: `https://example.com/` returned status 200 via `scrapling_stealthy`; `127.0.0.1` was rejected; no disposable container remained |
 | Evidence vault | PDF, detached signature, public key, manifest/checksums and portable package | Pass: retained package passed all six verification checks |
 | Tamper resistance | Automated changes to signed/checksummed data | Pass: tests reject altered evidence |
-| Permanent audit ledger | Hash-chain validation, API status and backup | Pass: source ledger valid; a retained backup contains 42,932 events with a SHA-256 manifest |
+| Permanent audit ledger | Hash-chain validation, API status, backup and isolated restore drill | Pass: a fresh 47,114-event backup and source identity were restored into a disposable target; manifest path, SHA-256, source identity, hash chain, count and terminal hash passed; the target was cleaned and live stores were not modified; retained result: `evaluation/results/backup_restore/audit_restore_20260823T131241Z_38bad116.json` |
 | Telegram connectivity | Telethon data plane and restricted Bot API control plane | Connected/active in this deployment; no external message was sent during this audit |
 | Guardrails, verdict, takeover lifecycle, media/QR/vision, replay/reanalysis, reporting guidance, early hand-back | Deterministic unit/integration tests and API/UI inspection | Pass at automated level; selected items still require human/live acceptance cases below |
 
@@ -78,7 +78,7 @@ These cannot honestly be marked as passed by the developer audit:
 - the complete 15-scenario × four-persona model-driven evaluation matrix;
 - UAT/SUS with at least three intended users and confirmed ethics coverage;
 - blind persona-realism and explicit agent-detection ratings;
-- a backup restore drill, mobile/responsive and accessibility testing;
+- mobile/responsive and accessibility testing with intended users;
 - supervisor/legal review of Malaysian reporting guidance and Section 90A
   wording; cryptographic integrity is not a guarantee of admissibility; and
 - resolution of the existing static typing debt.

@@ -11,9 +11,10 @@ COPY src/hive/webpanel/resources/logo.png /usr/share/nginx/html/logo.png
 COPY src/hive/webpanel/resources/logo.png /usr/share/nginx/html/favicon.png
 COPY src/hive/webpanel/resources/panel.html /tmp/panel.html
 
-RUN sed \
+RUN ASSET_VERSION="$(cat /usr/share/nginx/html/panel.css /usr/share/nginx/html/panel.js | sha256sum | cut -c1-16)" \
+    && sed \
       -e 's/__SESSION_TOKEN__//g' \
-      -e 's/__ASSET_VERSION__/docker-20260823c/g' \
+      -e "s/__ASSET_VERSION__/${ASSET_VERSION}/g" \
       -e 's|__LOGO__|<span class="brandmark"><img src="/logo.png" alt=""></span>|g' \
       /tmp/panel.html > /usr/share/nginx/html/index.html \
     && rm /tmp/panel.html

@@ -24,6 +24,8 @@ def test_frontend_image_serves_assets_and_proxies_backend_apis():
 
     assert "FROM nginx:" in dockerfile
     assert "panel.js" in dockerfile and "panel.css" in dockerfile
+    assert "sha256sum" in dockerfile
+    assert "docker-20260823" not in dockerfile
     assert "location /api/" in nginx
     assert "proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT}" in nginx
 

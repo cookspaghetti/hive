@@ -11,13 +11,14 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
+from typing import Any
 
 
 @dataclass
 class ChainEntry:
     index: int
     ts: float
-    payload: dict
+    payload: dict[str, Any]
     prev_hash: str
     entry_hash: str = ""
 
@@ -26,7 +27,7 @@ class ChainEntry:
 class HashChain:
     entries: list[ChainEntry] = field(default_factory=list)
 
-    def _hash(self, index: int, ts: float, payload: dict, prev_hash: str) -> str:
+    def _hash(self, index: int, ts: float, payload: dict[str, Any], prev_hash: str) -> str:
         blob = json.dumps(
             {"i": index, "ts": ts, "payload": payload, "prev": prev_hash},
             sort_keys=True,
@@ -34,7 +35,7 @@ class HashChain:
         ).encode()
         return hashlib.sha256(blob).hexdigest()
 
-    def append(self, payload: dict, ts: float) -> ChainEntry:
+    def append(self, payload: dict[str, Any], ts: float) -> ChainEntry:
         index = len(self.entries)
         prev = self.entries[-1].entry_hash if self.entries else "0" * 64
         h = self._hash(index, ts, payload, prev)

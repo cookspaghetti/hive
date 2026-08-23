@@ -49,7 +49,7 @@ class TurnState(TypedDict, total=False):
     record_outbound: bool
     # working values passed between nodes
     screen_flagged: bool
-    hvis: list
+    hvis: list[Any]
     verdict: str
     reply: str
     tier: str
@@ -64,7 +64,7 @@ class TurnState(TypedDict, total=False):
     reason: str  # "" | "benign" | "max_turns" | "max_duration"
 
 
-def build_turn_graph(engine: HiveEngine):
+def build_turn_graph(engine: HiveEngine) -> Any:
     """Compile the per-turn graph, binding nodes to `engine`'s dependencies."""
 
     def n_ingress(state: TurnState) -> TurnState:
@@ -283,8 +283,9 @@ def build_turn_graph(engine: HiveEngine):
         inbound = state["inbound"]
         route_inputs = RouteInputs(injection_flagged=state.get("screen_flagged", False))
         defense = persona_defense_note(screen(inbound.text)) if state.get("screen_flagged") else ""
+        case_intelligence = engine.case_intelligence
         should_retrieve_cases = bool(
-            engine.case_intelligence
+            case_intelligence
             and session.verdict_score >= 0.55
             and (
                 not session.related_cases
@@ -292,8 +293,8 @@ def build_turn_graph(engine: HiveEngine):
                 or len(session.hvis) > session.case_indicator_count_at_retrieval
             )
         )
-        if should_retrieve_cases:
-            context, matches = build_probe_context(session, engine.case_intelligence)
+        if should_retrieve_cases and case_intelligence is not None:
+            context, matches = build_probe_context(session, case_intelligence)
             session.case_probe_context = context
             session.related_cases = matches
             session.case_retrieved_at_turn = session.turn_count
@@ -377,7 +378,7 @@ def build_turn_graph(engine: HiveEngine):
     def _after_verdict(state: TurnState) -> str:
         return "end" if state.get("terminate") else "continue"
 
-    g: StateGraph = StateGraph(TurnState)
+    g: Any = StateGraph(TurnState)
     for name, fn in [
         ("ingress", n_ingress), ("guardrails", n_guardrails), ("extract", n_extract),
         ("sandbox", n_sandbox),

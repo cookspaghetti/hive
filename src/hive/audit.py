@@ -18,7 +18,7 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
@@ -513,7 +513,7 @@ def get_audit_ledger() -> AuditLedger:
 
 
 @contextmanager
-def audit_scope(ledger: AuditLedger):
+def audit_scope(ledger: AuditLedger) -> Iterator[AuditLedger]:
     """Route audit records in the current execution context to ``ledger``.
 
     Demo and evaluation workers use this to retain a complete audit trail

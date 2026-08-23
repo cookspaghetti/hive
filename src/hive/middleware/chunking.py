@@ -106,8 +106,8 @@ def plan_reply(
 
     explicit = [_clean(row) for row in _EXPLICIT_BREAK.split(cleaned) if _clean(row)]
     if len(explicit) > 1:
-        units = [unit for row in explicit for unit in _split_long(row, max_chars)]
-        return ReplyPlan(_cap_bubbles(units, max_bubbles, max_total_chars), pace)
+        explicit_units = [unit for row in explicit for unit in _split_long(row, max_chars)]
+        return ReplyPlan(_cap_bubbles(explicit_units, max_bubbles, max_total_chars), pace)
     if len(explicit[0]) <= max_chars:
         return ReplyPlan((explicit[0],), pace)
 

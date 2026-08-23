@@ -17,6 +17,7 @@ Evidence Bundle. Original contribution — no framework ships scam scoring.
 from __future__ import annotations
 
 import time
+from typing import cast
 
 from hive.logging_setup import get_logger
 from hive.state import Message, SessionState, Verdict
@@ -159,7 +160,7 @@ def update_verdict(
         )
     source_message_ids = list(dict.fromkeys(message.msg_id for message in source_messages))
     contribs = _collect_contributions(session, soft, source_message_ids, soft_evidence)
-    instantaneous_score = _noisy_or([float(item["weight"]) for item in contribs])
+    instantaneous_score = _noisy_or([cast(float, item["weight"]) for item in contribs])
     # Scam evidence is cumulative. A later, less explicit message must not
     # erase a risk level already supported by the engagement record.
     score = max(session.verdict_score, instantaneous_score)
@@ -178,7 +179,7 @@ def update_verdict(
             "contributions": [
                 {
                     **item,
-                    "weight": round(float(item["weight"]), 4),
+                    "weight": round(cast(float, item["weight"]), 4),
                 }
                 for item in contribs
             ],

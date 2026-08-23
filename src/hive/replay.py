@@ -9,8 +9,9 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from hive.audit import audit_event
 from hive.extraction.engine import extract_contextual_hvis, extract_hvis, merge_hvis
@@ -30,7 +31,10 @@ def _message(
     path = media_paths.get(message_id)
     media_name = path.name if path else raw.get("media_name")
     return Message(
-        role=str(raw.get("role") or "stranger"),
+        role=cast(
+            Literal["stranger", "agent", "system"],
+            str(raw.get("role") or "stranger"),
+        ),
         text=str(raw.get("text") or ""),
         ts=float(raw.get("ts") or 0),
         msg_id=message_id,
@@ -51,7 +55,7 @@ def replay_history_record(
     record: dict[str, Any],
     engine: HiveEngine,
     *,
-    media_paths: dict[int, str | Path] | None = None,
+    media_paths: Mapping[int, str | Path] | None = None,
     media_descriptions: dict[int, str] | None = None,
 ) -> SessionState:
     """Rerun intelligence analysis over one immutable archived transcript."""

@@ -150,16 +150,19 @@ def _postgres_inventory(database_url: str) -> dict[str, dict[str, int]]:
     with psycopg.connect(database_url) as connection, connection.cursor() as cursor:
         for table in tables:
             cursor.execute("SELECT to_regclass(%s)", (f"public.{table}",))
-            if cursor.fetchone()[0] is None:
+            exists_row = cursor.fetchone()
+            if exists_row is None or exists_row[0] is None:
                 continue
             cursor.execute(
                 sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(table))
             )
-            count = int(cursor.fetchone()[0])
+            count_row = cursor.fetchone()
+            count = int(count_row[0]) if count_row is not None else 0
             cursor.execute("SELECT pg_total_relation_size(%s)", (f"public.{table}",))
+            size_row = cursor.fetchone()
             inventory[table] = {
                 "records": count,
-                "bytes": int(cursor.fetchone()[0] or 0),
+                "bytes": int(size_row[0] or 0) if size_row is not None else 0,
             }
     return inventory
 

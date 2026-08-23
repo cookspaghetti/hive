@@ -18,14 +18,15 @@ from hive.audit import configure_audit
 from hive.case_intelligence import build_case_intelligence_store, build_case_profile
 from hive.config import load_settings
 from hive.extraction.media import describe_image
-from hive.history import build_history_store
+from hive.history import HistoryStore, build_history_store
 from hive.llm.client import build_vision_client
 from hive.logging_setup import configure_logging
 from hive.replay import replay_history_record
 from hive.runtime import build_engine
+from hive.state import SessionState
 
 
-def _archived_records(history, selector: str) -> list[dict[str, Any]]:
+def _archived_records(history: HistoryStore, selector: str) -> list[dict[str, Any]]:
     if selector.lower() == "all":
         records = [
             record
@@ -65,7 +66,11 @@ def _attachments(values: list[str]) -> dict[int, Path]:
     return attachments
 
 
-def _persist_media(session, attachments: dict[int, Path], media_root: Path) -> None:
+def _persist_media(
+    session: SessionState,
+    attachments: dict[int, Path],
+    media_root: Path,
+) -> None:
     by_id = {message.msg_id: message for message in session.messages}
     destination_root = media_root / session.session_id
     for message_id, source in attachments.items():

@@ -28,6 +28,9 @@ from typing import Any
 # Per-layer implementations are invoked by the LangGraph nodes in
 # hive.orchestrator; the engine only holds dependencies and drives the graph.
 from hive.audit import audit_event
+from hive.case_intelligence import CaseIntelligenceStore
+from hive.config import Settings
+from hive.extraction.media import VisionDescriber
 from hive.extraction.ner import NerBackend
 from hive.llm.client import LLMClient
 from hive.logging_setup import bind_session, get_logger, reset_session
@@ -59,17 +62,17 @@ class HiveEngine:
     agent_client: LLMClient
     sandbox_runner: BrowserRunner
     ner_backend: NerBackend | None = None
-    vision_client: object | None = None
-    case_intelligence: object | None = None
+    vision_client: VisionDescriber | None = None
+    case_intelligence: CaseIntelligenceStore | None = None
     enable_early_exit: bool = True
     early_exit_min_turns: int = 3   # don't bail before we've seen enough
     max_turns: int = 60             # 0 disables; else terminate past this
     max_session_minutes: int = 120  # 0 disables; else terminate past this
-    _compiled: object = None        # cached compiled LangGraph turn graph
+    _compiled: Any = None           # cached compiled LangGraph turn graph
     _compile_lock: Any = field(default_factory=threading.Lock, repr=False)
     _session_locks: dict[int, Any] = field(default_factory=dict, repr=False)
 
-    def _graph(self):
+    def _graph(self) -> Any:
         if self._compiled is None:
             with self._compile_lock:
                 if self._compiled is None:
@@ -395,7 +398,7 @@ class HiveEngine:
         )
 
 
-def build_engine(settings, *, load_ner: bool = True) -> HiveEngine:
+def build_engine(settings: Settings, *, load_ner: bool = True) -> HiveEngine:
     """Construct a fully-wired HiveEngine from Settings.
 
     Loads the LLM client (Ollama Cloud), the disposable-container sandbox

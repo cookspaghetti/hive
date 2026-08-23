@@ -17,7 +17,9 @@ from __future__ import annotations
 
 import logging
 import sys
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
+
+SessionTokens = tuple[Token[int | None], Token[str | None]]
 
 _LEVEL_DEFAULT = "INFO"
 _configured = False
@@ -68,13 +70,13 @@ def current_session_id() -> str | None:
     return _session_ctx.get()
 
 
-def bind_session(peer_id: int | None, session_id: str | None = None):
+def bind_session(peer_id: int | None, session_id: str | None = None) -> SessionTokens:
     """Bind the current peer id for log correlation. Returns the ctx token so
     the caller can reset it when the turn/session ends."""
     return _peer_ctx.set(peer_id), _session_ctx.set(session_id)
 
 
-def reset_session(token) -> None:
+def reset_session(token: SessionTokens) -> None:
     peer_token, session_token = token
     _peer_ctx.reset(peer_token)
     _session_ctx.reset(session_token)

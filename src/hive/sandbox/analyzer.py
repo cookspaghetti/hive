@@ -14,6 +14,7 @@ Limitations documented in the design (fyp.txt L4):
 
 from __future__ import annotations
 
+from typing import Any
 from urllib.parse import urlparse
 
 from hive.logging_setup import get_logger
@@ -48,7 +49,7 @@ def _derive(url: str, f: RawFindings) -> tuple[str, bool]:
     return ("suspicious" if cloaking else "clean"), cloaking
 
 
-def analyze_url(url: str, runner: BrowserRunner) -> dict:
+def analyze_url(url: str, runner: BrowserRunner) -> dict[str, Any]:
     """Analyse a URL in the sandbox and return a session.sandbox_results entry."""
     scheme = urlparse(url).scheme.lower()
     if scheme not in ("http", "https"):

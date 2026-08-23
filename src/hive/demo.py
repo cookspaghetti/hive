@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 import re
 import secrets
@@ -10,7 +11,7 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from hive.audit import DurableAuditLedger, audit_scope
 from hive.llm.client import ChatMessage
@@ -625,7 +626,7 @@ class DemoService:
         run: dict[str, Any],
         scenario: DemoScenario,
         scammer_client: Any,
-        history: list[tuple[str, str]],
+        history: builtins.list[tuple[str, str]],
         exchange_index: int,
     ) -> tuple[str, ...] | None:
         mode = str(run.get("mode") or "scripted")
@@ -693,7 +694,7 @@ class DemoService:
     def _generate_scammer_burst(
         client: Any,
         scenario: DemoScenario,
-        history: list[tuple[str, str]],
+        history: builtins.list[tuple[str, str]],
     ) -> tuple[str, ...]:
         archetype = ARCHETYPES.get(scenario.archetype, ARCHETYPES["mixed"])
         system = (
@@ -726,7 +727,15 @@ class DemoService:
                 break
         return tuple(bubbles or ("Are you still there? I need you to complete this now.",))
 
-    def _seal(self, run, runtime, engine, session, chain, peer_id: int) -> None:
+    def _seal(
+        self,
+        run: dict[str, Any],
+        runtime: Any,
+        engine: Any,
+        session: Any,
+        chain: Any,
+        peer_id: int,
+    ) -> None:
         self._update(run, status="sealing", stage="Signing isolated demo evidence")
         settings = runtime.settings
         key = Path(str(settings.signing_key_path))
@@ -846,7 +855,7 @@ class DemoService:
         started = float(result.get("started_ts") or 0)
         ended = float(result.get("completed_ts") or time.time())
         result["duration_s"] = round(max(0.0, ended - started), 1) if started else None
-        return result
+        return cast(dict[str, Any], result)
 
     def _wait(self, run_id: str, seconds: float, *, require_step: bool = False) -> bool:
         with self._lock:
@@ -855,7 +864,7 @@ class DemoService:
         if control is None or run is None:
             return False
         speed = str(run.get("speed") or "normal")
-        factor = float(SPEEDS[speed]["factor"])
+        factor = cast(float, SPEEDS[speed]["factor"])
         deadline = time.monotonic() + seconds / factor
         condition: threading.Condition = control["condition"]
         with condition:

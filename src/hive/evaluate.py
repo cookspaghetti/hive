@@ -6,7 +6,7 @@ import argparse
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 from hive.extraction.engine import extract_contextual_hvis, extract_hvis, hvi_key, merge_hvis
 from hive.state import HVI, Message
@@ -76,7 +76,10 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
             raw_messages = [{"role": "stranger", "text": str(case["text"])}]
         messages = [
             Message(
-                role=str(raw.get("role") or "stranger"),
+                role=cast(
+                    Literal["stranger", "agent", "system"],
+                    str(raw.get("role") or "stranger"),
+                ),
                 text=str(raw.get("text") or ""),
                 ts=float(offset),
                 msg_id=index * 100 + offset,

@@ -13,12 +13,17 @@ always-LLM vision approach (reference-mapping.md).
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Protocol
 
 from hive.extraction.regex_rules import extract_regex
 from hive.logging_setup import get_logger
 from hive.state import HVI
 
 log = get_logger(__name__)
+
+
+class VisionDescriber(Protocol):
+    def describe(self, data_url: str, prompt: str) -> str: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,7 +120,7 @@ def _encode_data_url(image_path: str) -> str:
     return f"data:{mime};base64,{b64}"
 
 
-def describe_image(image_path: str, vision_client) -> str:
+def describe_image(image_path: str, vision_client: VisionDescriber) -> str:
     """Fallback vision-model description for unstructured images (fyp.txt L3).
 
     Used only when local structured extraction (QR/regex) finds nothing. Sends
@@ -132,7 +137,11 @@ def describe_image(image_path: str, vision_client) -> str:
     return text
 
 
-def extract_from_image(image_path: str, source_msg_id: int, vision_client=None) -> list[HVI]:
+def extract_from_image(
+    image_path: str,
+    source_msg_id: int,
+    vision_client: VisionDescriber | None = None,
+) -> list[HVI]:
     """Tiered image extraction (fyp.txt L3): local QR first, vision fallback.
 
     Tries local QR decoding; if nothing structured is found and a vision client
@@ -155,7 +164,7 @@ def extract_from_image(image_path: str, source_msg_id: int, vision_client=None) 
 def analyze_image(
     image_path: str,
     source_msg_id: int,
-    vision_client=None,
+    vision_client: VisionDescriber | None = None,
 ) -> MediaIntelligence:
     """Return one provenance-labelled local/vision analysis for a live image."""
     qr_hvis = decode_qr(image_path, source_msg_id)

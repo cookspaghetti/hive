@@ -165,7 +165,7 @@ def _validate_evidence(
     return SoftAssessment(scores=scores, evidence=evidence)
 
 
-def _json_object(text: str) -> dict:
+def _json_object(text: str) -> dict[str, object]:
     try:
         start, end = text.index("{"), text.rindex("}") + 1
         raw = json.loads(text[start:end])

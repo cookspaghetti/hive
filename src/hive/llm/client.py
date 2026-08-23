@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 import httpx
 
@@ -43,7 +43,12 @@ class LLMResponse:
 class ChatBackend(Protocol):
     """Minimal transport seam so a fake backend can be injected in tests."""
 
-    def chat(self, model: str, messages: list[dict], **kw) -> dict: ...
+    def chat(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        **kw: Any,
+    ) -> dict[str, Any]: ...
 
 
 class OllamaBackend:
@@ -56,13 +61,18 @@ class OllamaBackend:
             timeout=timeout,
         )
 
-    def chat(self, model: str, messages: list[dict], **kw) -> dict:
+    def chat(
+        self,
+        model: str,
+        messages: list[dict[str, Any]],
+        **kw: Any,
+    ) -> dict[str, Any]:
         resp = self._client.post(
             "/chat/completions",
             json={"model": model, "messages": messages, **kw},
         )
         resp.raise_for_status()
-        return resp.json()
+        return cast(dict[str, Any], resp.json())
 
 
 class LLMClient:
@@ -190,10 +200,10 @@ class VisionClient:
             payload={"model": self._model, "text": text},
         )
         log.info("vision call ok: model=%s chars=%d", self._model, len(text))
-        return text
+        return str(text)
 
 
-def build_client(settings) -> LLMClient:
+def build_client(settings: Any) -> LLMClient:
     """Construct a real Ollama-backed client from Settings."""
     backend = OllamaBackend(settings.llm_base_url, settings.llm_api_key)
     models = {
@@ -204,7 +214,7 @@ def build_client(settings) -> LLMClient:
     return LLMClient(backend, models)
 
 
-def build_vision_client(settings) -> VisionClient:
+def build_vision_client(settings: Any) -> VisionClient:
     """Construct the Ollama-backed vision client from Settings."""
     backend = OllamaBackend(settings.llm_base_url, settings.llm_api_key)
     return VisionClient(backend, settings.vision_model)

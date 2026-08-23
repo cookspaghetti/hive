@@ -45,7 +45,7 @@ def generate_keypair(private_path: str, public_path: str | None = None, bits: in
     log.info("L5 signer: generated %d-bit keypair", bits)
 
 
-def _pss_and_hash():
+def _pss_and_hash() -> tuple[Any, Any]:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -59,9 +59,12 @@ def _pss_and_hash():
 def sign_bytes(data: bytes, key_path: str) -> bytes:
     """Return an RSA-PSS/SHA-256 signature over `data`."""
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     with open(key_path, "rb") as fh:
         key = serialization.load_pem_private_key(fh.read(), password=None)
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise ValueError("HIVE signing key must be an RSA private key")
     pss, sha = _pss_and_hash()
     sig = key.sign(data, pss, sha)
     log.info("L5 signer: signed %d bytes -> %d-byte signature", len(data), len(sig))
@@ -83,8 +86,11 @@ def verify_signature_with_public_key(
     """Verify a signature using PEM public-key bytes."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     pub = serialization.load_pem_public_key(public_key)
+    if not isinstance(pub, rsa.RSAPublicKey):
+        raise ValueError("HIVE verification key must be an RSA public key")
     pss, sha = _pss_and_hash()
     try:
         pub.verify(signature, data, pss, sha)
@@ -96,9 +102,12 @@ def verify_signature_with_public_key(
 def public_key_bytes(private_key_path: str) -> bytes:
     """Derive SubjectPublicKeyInfo PEM bytes from an RSA private key."""
     from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
 
     with open(private_key_path, "rb") as fh:
         key = serialization.load_pem_private_key(fh.read(), password=None)
+    if not isinstance(key, rsa.RSAPrivateKey):
+        raise ValueError("HIVE signing key must be an RSA private key")
     return key.public_key().public_bytes(
         encoding=serialization.Encoding.PEM,
         format=serialization.PublicFormat.SubjectPublicKeyInfo,

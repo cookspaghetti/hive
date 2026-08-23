@@ -42,7 +42,7 @@ class FastEmbedder:
         self._model = None
         self._dimension: int | None = None
 
-    def _load(self):
+    def _load(self) -> Any:
         if self._model is None:
             with self._cache_lock:
                 if self.model_name not in self._models:
@@ -449,6 +449,9 @@ class HybridCaseIntelligenceStore:
 
     def get(self, case_id: str) -> dict[str, Any] | None:
         return self.relational.get(case_id)
+
+    def list_profiles(self) -> list[dict[str, Any]]:
+        return self.relational.list_profiles()
 
     def related(self, case_id: str) -> list[dict[str, Any]]:
         profile = self.relational.get(case_id)

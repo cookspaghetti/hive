@@ -185,11 +185,16 @@ def test_hybrid_store_keeps_exact_edge_stronger_than_semantic_candidate(tmp_path
     hybrid = HybridCaseIntelligenceStore(relational, Vectors())
 
     related = hybrid.related(first["case_id"])
+    profiles = hybrid.list_profiles()
 
     assert related[0]["relationship"] == "shared_identifier"
     assert related[0]["score"] == 0.95
     assert related[0]["semantic_score"] == 0.8
     assert "candidate_only" not in related[0]
+    assert {profile["case_id"] for profile in profiles} == {
+        first["case_id"],
+        second["case_id"],
+    }
 
 
 def test_hybrid_store_does_not_semantically_query_benign_profiles(tmp_path):

@@ -136,10 +136,10 @@ def build_case_profile(
             reason = str(contribution.get("reason") or "")
             if not reason.startswith("soft:"):
                 continue
-            key = reason.removeprefix("soft:")
+            method_key = reason.removeprefix("soft:")
             confidence = float(contribution.get("confidence") or 0)
             if confidence >= 0.5:
-                methods[key] = max(methods.get(key, 0), confidence)
+                methods[method_key] = max(methods.get(method_key, 0), confidence)
 
     script = "\n".join(
         str(message.get("text") or "")

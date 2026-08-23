@@ -118,7 +118,7 @@ class HiveRuntimeManager:
         self.userbot: Any = None
         self.control: Any = None
         self.takeovers: TakeoverCoordinator | None = None
-        self.components = {
+        self.components: dict[str, dict[str, object]] = {
             name: {"state": "pending", "detail": "", "duration_s": None}
             for name in _COMPONENTS
         }

@@ -136,7 +136,7 @@ class TelethonLoginManager:
             await _disconnect(attempt.client)
 
 
-def _default_client(api_id: int, api_hash: str):
+def _default_client(api_id: int, api_hash: str) -> Any:
     from telethon import TelegramClient
     from telethon.sessions import StringSession
 

@@ -359,7 +359,7 @@ def build_bundle(
         subject="Signed anti-scam intelligence and evidence report",
     )
 
-    def page_chrome(canvas, current_doc) -> None:
+    def page_chrome(canvas: Any, current_doc: Any) -> None:
         width, height = A4
         canvas.saveState()
         canvas.setFillColor(colors.HexColor(_BRAND_INK))

@@ -12,6 +12,7 @@ without the model loaded, and so tests stay offline.
 from __future__ import annotations
 
 import re
+from urllib.parse import urlparse
 
 from hive.extraction.ner import NerBackend, extract_entities
 from hive.extraction.regex_rules import account_numbers, extract_regex, has_bank_context
@@ -73,6 +74,18 @@ _NAME_STOPWORDS = {
     "website",
     "with",
     "yes",
+    "auntie",
+    "calling",
+    "hacker",
+    "he",
+    "i",
+    "madam",
+    "me",
+    "she",
+    "sir",
+    "they",
+    "uncle",
+    "you",
 }
 
 
@@ -97,6 +110,18 @@ def _validate_hvi(item: HVI, source_text: str) -> HVI | None:
         if has_bank_context(source_text) and not _PHONE_MY.fullmatch(compact):
             item.kind = "bank_account"
             item.value = digits
+        return item
+
+    if item.kind == "url":
+        candidate = item.value
+        if not re.match(r"https?://", candidate, re.IGNORECASE):
+            candidate = f"https://{candidate}"
+        parsed = urlparse(candidate)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            return None
+        if "." not in parsed.hostname and parsed.hostname != "localhost":
+            return None
+        item.value = candidate
         return item
 
     if item.kind == "person_name":

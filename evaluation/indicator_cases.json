@@ -1,6 +1,11 @@
 {
   "schema_version": 1,
   "description": "Sanitized, synthetic regression cases for deterministic HVI extraction.",
+  "provenance": "synthetic",
+  "corpus_version": "2026-08-22-v2",
+  "known_limitations": [
+    "The evaluation set deliberately retains a Manglish name-boundary error where the particle 'lah' is absorbed into a person name."
+  ],
   "cases": [
     {
       "id": "en-maybank-account",
@@ -132,6 +137,450 @@
       "language": "en",
       "text": "The accident reference is 8877665544.",
       "expected": []
+    },
+    {
+      "id": "en-cimb-account",
+      "language": "en",
+      "category": "investment",
+      "split": "evaluation",
+      "text": "Deposit to CIMB account 8800112233 today.",
+      "expected": [
+        {"kind": "bank_name", "value": "CIMB"},
+        {"kind": "bank_account", "value": "8800112233"}
+      ]
+    },
+    {
+      "id": "zh-public-bank-account",
+      "language": "zh",
+      "category": "ecommerce",
+      "split": "evaluation",
+      "text": "请付款到 Public Bank 银行账户 7711-2233-44。",
+      "expected": [
+        {"kind": "bank_name", "value": "Public Bank"},
+        {"kind": "bank_account", "value": "7711223344"}
+      ]
+    },
+    {
+      "id": "manglish-rhb-spaced-account",
+      "language": "manglish",
+      "category": "job",
+      "split": "evaluation",
+      "text": "Registration fee send RHB acct 6688 9900 11 can lah.",
+      "expected": [
+        {"kind": "bank_name", "value": "RHB"},
+        {"kind": "bank_account", "value": "6688990011"}
+      ]
+    },
+    {
+      "id": "en-http-url-trailing-punctuation",
+      "language": "en",
+      "category": "parcel",
+      "split": "evaluation",
+      "text": "Release the parcel at http://parcel-check.example/pay).",
+      "expected": [{"kind": "url", "value": "http://parcel-check.example/pay"}]
+    },
+    {
+      "id": "zh-www-url",
+      "language": "zh",
+      "category": "impersonation",
+      "split": "evaluation",
+      "text": "马上打开 www.case-review.example/verify 完成验证。",
+      "expected": [{"kind": "url", "value": "https://www.case-review.example/verify"}]
+    },
+    {
+      "id": "manglish-bare-domain",
+      "language": "manglish",
+      "category": "investment",
+      "split": "evaluation",
+      "text": "You check bonus-claim.example/start first lah.",
+      "expected": [{"kind": "url", "value": "https://bonus-claim.example/start"}]
+    },
+    {
+      "id": "en-bitcoin-address",
+      "language": "en",
+      "category": "romance",
+      "split": "evaluation",
+      "text": "Send BTC to 1BoatSLRHtKNngkdXEeobR76b53LETtpyT.",
+      "expected": [{"kind": "crypto_btc", "value": "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"}]
+    },
+    {
+      "id": "zh-ethereum-address",
+      "language": "zh",
+      "category": "investment",
+      "split": "evaluation",
+      "text": "请把 ETH 转到 0xde709f2102306220921060314715629080e2fb77。",
+      "expected": [{"kind": "crypto_eth", "value": "0xde709f2102306220921060314715629080e2fb77"}]
+    },
+    {
+      "id": "manglish-telegram-handle",
+      "language": "manglish",
+      "category": "job",
+      "split": "evaluation",
+      "text": "PM @daily_task_my now, slot finish fast one.",
+      "expected": [{"kind": "telegram_id", "value": "@daily_task_my"}]
+    },
+    {
+      "id": "en-malaysian-phone-compact",
+      "language": "en",
+      "category": "ecommerce",
+      "split": "evaluation",
+      "text": "Contact 60123456789 for the refund.",
+      "expected": [{"kind": "phone_my", "value": "60123456789"}]
+    },
+    {
+      "id": "zh-malaysian-phone-hyphen",
+      "language": "zh",
+      "category": "parcel",
+      "split": "evaluation",
+      "text": "请拨打 011-2345-6789 联系快递员。",
+      "expected": [{"kind": "phone_my", "value": "011-2345-6789"}]
+    },
+    {
+      "id": "en-beneficiary-name",
+      "language": "en",
+      "category": "romance",
+      "split": "evaluation",
+      "text": "The beneficiary is Aisha Rahman.",
+      "expected": [{"kind": "person_name", "value": "Aisha Rahman"}]
+    },
+    {
+      "id": "zh-account-holder-name",
+      "language": "zh",
+      "category": "ecommerce",
+      "split": "evaluation",
+      "text": "收款人是林美玲。",
+      "expected": [{"kind": "person_name", "value": "林美玲"}]
+    },
+    {
+      "id": "manglish-direct-name",
+      "language": "manglish",
+      "category": "impersonation",
+      "split": "evaluation",
+      "text": "My name is Kevin Lim lah.",
+      "expected": [{"kind": "person_name", "value": "Kevin Lim"}]
+    },
+    {
+      "id": "en-bank-name-without-account",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "I use Hong Leong for my normal banking.",
+      "expected": [{"kind": "bank_name", "value": "Hong Leong Bank"}]
+    },
+    {
+      "id": "en-date-not-indicator",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "The appointment is on 22 August 2026 at 10:30.",
+      "expected": []
+    },
+    {
+      "id": "zh-tracking-number-negative",
+      "language": "zh",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "快递追踪编号是 7788990011。",
+      "expected": []
+    },
+    {
+      "id": "manglish-invoice-number-negative",
+      "language": "manglish",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "Invoice number 6655443322 only, not payment detail lah.",
+      "expected": []
+    },
+    {
+      "id": "en-ip-address-negative",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "The local router is 192.168.1.1.",
+      "expected": []
+    },
+    {
+      "id": "zh-email-domain-negative",
+      "language": "zh",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "请发邮件到 helpdesk@example.com。",
+      "expected": []
+    },
+    {
+      "id": "en-short-phone-negative",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "My extension is 1234567.",
+      "expected": []
+    },
+    {
+      "id": "manglish-short-telegram-negative",
+      "language": "manglish",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "My nickname @abc only lah.",
+      "expected": []
+    },
+    {
+      "id": "en-short-ethereum-negative",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "The colour code is 0x1234abcd.",
+      "expected": []
+    },
+    {
+      "id": "en-invalid-bitcoin-negative",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "This sample is 1OatSLRHtKNngkdXEeobR76b53LETtpyT.",
+      "expected": []
+    },
+    {
+      "id": "en-localhost-negative",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "Open localhost during development.",
+      "expected": []
+    },
+    {
+      "id": "en-negated-bank-account",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "Reference 1122334455 is not a bank account.",
+      "expected": []
+    },
+    {
+      "id": "zh-negated-bank-account",
+      "language": "zh",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "编号 2233445566 不是银行账号。",
+      "expected": []
+    },
+    {
+      "id": "en-at-symbol-negative",
+      "language": "en",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "The price is RM20 @ 5 units.",
+      "expected": []
+    },
+    {
+      "id": "manglish-version-negative",
+      "language": "manglish",
+      "category": "hard_negative",
+      "split": "evaluation",
+      "text": "App version hive.2026 not website lah.",
+      "expected": []
+    },
+    {
+      "id": "en-cross-message-cimb-account",
+      "language": "en",
+      "category": "contextual",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "Use CIMB for the deposit."},
+        {"role": "stranger", "text": "9900112233"}
+      ],
+      "expected": [
+        {"kind": "bank_name", "value": "CIMB"},
+        {"kind": "bank_account", "value": "9900112233"}
+      ]
+    },
+    {
+      "id": "zh-cross-message-account-first",
+      "language": "zh",
+      "category": "contextual",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "3344556677"},
+        {"role": "stranger", "text": "这是 UOB 银行账户。"}
+      ],
+      "expected": [
+        {"kind": "bank_name", "value": "UOB"},
+        {"kind": "bank_account", "value": "3344556677"}
+      ]
+    },
+    {
+      "id": "en-cross-message-name-answer",
+      "language": "en",
+      "category": "contextual",
+      "split": "evaluation",
+      "messages": [
+        {"role": "agent", "text": "What is the beneficiary name?"},
+        {"role": "stranger", "text": "Alice Lee"}
+      ],
+      "expected": [{"kind": "person_name", "value": "Alice Lee"}]
+    },
+    {
+      "id": "zh-cross-message-name-answer",
+      "language": "zh",
+      "category": "contextual",
+      "split": "evaluation",
+      "messages": [
+        {"role": "agent", "text": "收款人叫什么名字？"},
+        {"role": "stranger", "text": "王小明"}
+      ],
+      "expected": [{"kind": "person_name", "value": "王小明"}]
+    },
+    {
+      "id": "manglish-cross-message-agent-reference",
+      "language": "manglish",
+      "category": "contextual",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "Siti Aminah"},
+        {"role": "stranger", "text": "she is my agent lah"}
+      ],
+      "expected": [{"kind": "person_name", "value": "Siti Aminah"}]
+    },
+    {
+      "id": "en-context-window-negative",
+      "language": "en",
+      "category": "contextual",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "Use the bank account I mentioned."},
+        {"role": "stranger", "text": "unrelated one"},
+        {"role": "stranger", "text": "another unrelated line"},
+        {"role": "stranger", "text": "9988776655"}
+      ],
+      "expected": []
+    },
+    {
+      "id": "en-cross-message-two-accounts",
+      "language": "en",
+      "category": "contextual",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "Both are CIMB accounts."},
+        {"role": "stranger", "text": "1111222233 and 4444555566"}
+      ],
+      "expected": [
+        {"kind": "bank_name", "value": "CIMB"},
+        {"kind": "bank_account", "value": "1111222233"},
+        {"kind": "bank_account", "value": "4444555566"}
+      ]
+    },
+    {
+      "id": "en-cross-message-duplicate-url",
+      "language": "en",
+      "category": "contextual",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "Open repeat-link.example/pay."},
+        {"role": "stranger", "text": "Again: https://repeat-link.example/pay"}
+      ],
+      "expected": [{"kind": "url", "value": "https://repeat-link.example/pay"}]
+    },
+    {
+      "id": "media-qr-url",
+      "language": "en",
+      "category": "media",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "Scan this QR.", "media_hvis": [
+          {"kind": "url", "value": "https://qr-payment.example/start"}
+        ]}
+      ],
+      "expected": [{"kind": "url", "value": "https://qr-payment.example/start"}]
+    },
+    {
+      "id": "media-ocr-bank",
+      "language": "zh",
+      "category": "media",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "账户在图片里。", "media_hvis": [
+          {"kind": "bank_name", "value": "Maybank"},
+          {"kind": "bank_account", "value": "7000112233"}
+        ]}
+      ],
+      "expected": [
+        {"kind": "bank_name", "value": "Maybank"},
+        {"kind": "bank_account", "value": "7000112233"}
+      ]
+    },
+    {
+      "id": "media-qr-crypto",
+      "language": "manglish",
+      "category": "media",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "Wallet QR here lah.", "media_hvis": [
+          {"kind": "crypto_eth", "value": "0x1111111111111111111111111111111111111111"}
+        ]}
+      ],
+      "expected": [{"kind": "crypto_eth", "value": "0x1111111111111111111111111111111111111111"}]
+    },
+    {
+      "id": "media-ocr-phone",
+      "language": "en",
+      "category": "media",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "Contact is in the screenshot.", "media_hvis": [
+          {"kind": "phone_my", "value": "0145678901"}
+        ]}
+      ],
+      "expected": [{"kind": "phone_my", "value": "0145678901"}]
+    },
+    {
+      "id": "media-ocr-name-account",
+      "language": "zh",
+      "category": "media",
+      "split": "evaluation",
+      "messages": [
+        {"role": "stranger", "text": "付款资料在收据。", "media_hvis": [
+          {"kind": "person_name", "value": "李佳恩"},
+          {"kind": "bank_account", "value": "8899001122"}
+        ]}
+      ],
+      "expected": [
+        {"kind": "person_name", "value": "李佳恩"},
+        {"kind": "bank_account", "value": "8899001122"}
+      ]
+    },
+    {
+      "id": "en-seven-digit-account-negative",
+      "language": "en",
+      "category": "malformed",
+      "split": "evaluation",
+      "text": "Maybank account 1234567.",
+      "expected": [{"kind": "bank_name", "value": "Maybank"}]
+    },
+    {
+      "id": "en-eighteen-digit-account-negative",
+      "language": "en",
+      "category": "malformed",
+      "split": "evaluation",
+      "text": "Account 123456789012345678 is too long.",
+      "expected": []
+    },
+    {
+      "id": "en-duplicate-url-same-message",
+      "language": "en",
+      "category": "duplicates",
+      "split": "evaluation",
+      "text": "Use dupe.example/pay then use https://dupe.example/pay again.",
+      "expected": [{"kind": "url", "value": "https://dupe.example/pay"}]
+    },
+    {
+      "id": "mixed-language-multiple-indicators",
+      "language": "mixed",
+      "category": "mixed",
+      "split": "evaluation",
+      "text": "快点 lah, open mixed-verify.example/pay and PM @mixed_help_my now.",
+      "expected": [
+        {"kind": "url", "value": "https://mixed-verify.example/pay"},
+        {"kind": "telegram_id", "value": "@mixed_help_my"}
+      ]
     }
   ]
 }

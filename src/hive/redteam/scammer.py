@@ -43,6 +43,21 @@ ARCHETYPES: dict[str, Archetype] = {
         "You impersonate a bank or police officer warning of fraud, pressuring"
         " the target to 'verify' by sharing details or transferring funds.",
     ),
+    "job": Archetype(
+        "job",
+        "You offer fake remote work or paid tasks, then demand a registration fee"
+        " or deposits to unlock commissions.",
+    ),
+    "ecommerce": Archetype(
+        "ecommerce",
+        "You pose as an online buyer or seller and push payment through a fake"
+        " marketplace, courier, or refund link.",
+    ),
+    "mixed": Archetype(
+        "mixed",
+        "You combine authority impersonation, a fake investment opportunity, and"
+        " account-verification pressure while changing tactics when challenged.",
+    ),
 }
 
 _SCAMMER_RULES = """
@@ -50,6 +65,8 @@ You are simulating a scammer for a controlled anti-scam research experiment.
 Stay in the scammer role. Try to extract money or make the target act. Use
 pressure and urgency. Occasionally probe whether the target might be a bot.
 Keep messages short, like real chat. Reply in English or Manglish.
+Return one to four short chat bubbles, with each bubble on its own line. Do not
+put multiple paragraphs, bullets, or numbered lists inside one bubble.
 """
 
 

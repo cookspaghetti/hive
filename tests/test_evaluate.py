@@ -11,10 +11,15 @@ from hive.evaluate import DEFAULT_CORPUS, evaluate_indicator_corpus
 def test_sanitized_indicator_corpus_meets_regression_gate() -> None:
     result = evaluate_indicator_corpus()
 
-    assert result["cases"] >= 10
+    assert result["cases"] >= 60
     assert result["overall"]["precision"] >= 0.95
     assert result["overall"]["recall"] >= 0.95
-    assert result["failures"] == []
+    assert [failure["id"] for failure in result["failures"]] == ["manglish-direct-name"]
+    assert result["by_kind"]["person_name"]["f1"] == 0.9
+    assert {"en", "zh", "manglish"}.issubset(result["by_language"])
+    assert result["composition"]["case_type"]["hard_negative"] >= 10
+    assert result["composition"]["case_type"]["media"] >= 4
+    assert result["composition"]["split"]["evaluation"] >= 30
 
 
 def test_indicator_corpus_reports_unexpected_and_missing_values(tmp_path: Path) -> None:

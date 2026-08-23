@@ -47,8 +47,29 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
 
     totals = {"tp": 0, "fp": 0, "fn": 0}
     by_kind: dict[str, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
+    by_language: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"tp": 0, "fp": 0, "fn": 0}
+    )
+    by_category: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"tp": 0, "fp": 0, "fn": 0}
+    )
+    by_split: dict[str, dict[str, int]] = defaultdict(
+        lambda: {"tp": 0, "fp": 0, "fn": 0}
+    )
+    composition: dict[str, dict[str, int]] = {
+        "language": defaultdict(int),
+        "category": defaultdict(int),
+        "split": defaultdict(int),
+        "provenance": defaultdict(int),
+        "case_type": defaultdict(int),
+    }
     failures: list[dict[str, Any]] = []
+    case_ids: set[str] = set()
     for index, case in enumerate(cases, start=1):
+        case_id = str(case.get("id") or "")
+        if not case_id or case_id in case_ids:
+            raise ValueError("indicator corpus case IDs must be non-empty and unique")
+        case_ids.add(case_id)
         expected = {_expected_key(item) for item in case.get("expected", [])}
         raw_messages = case.get("messages")
         if not isinstance(raw_messages, list):
@@ -66,6 +87,22 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
         for message in messages:
             if message.role == "stranger":
                 merge_hvis(extracted, extract_hvis(message.text, message.msg_id))
+        for message, raw in zip(messages, raw_messages, strict=True):
+            media_hvis = raw.get("media_hvis", [])
+            if isinstance(media_hvis, list):
+                merge_hvis(
+                    extracted,
+                    [
+                        HVI(
+                            kind=str(item["kind"]),
+                            value=str(item["value"]),
+                            source_msg_id=message.msg_id,
+                            confidence=float(item.get("confidence", 0.8)),
+                            extractor="synthetic_media",
+                        )
+                        for item in media_hvis
+                    ],
+                )
         current_ids = {message.msg_id for message in messages if message.role == "stranger"}
         merge_hvis(extracted, extract_contextual_hvis(messages, current_ids))
         actual = {hvi_key(item) for item in extracted}
@@ -75,6 +112,28 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
         totals["tp"] += len(matched)
         totals["fp"] += len(unexpected)
         totals["fn"] += len(missing)
+        language = str(case.get("language") or "unspecified")
+        category = str(case.get("category") or "unspecified")
+        split = str(case.get("split") or "development")
+        provenance = str(case.get("provenance") or payload.get("provenance") or "unspecified")
+        case_type = (
+            "media"
+            if any(raw.get("media_hvis") for raw in raw_messages)
+            else "multi_message"
+            if len(raw_messages) > 1
+            else "positive"
+            if expected
+            else "hard_negative"
+        )
+        for group in (by_language[language], by_category[category], by_split[split]):
+            group["tp"] += len(matched)
+            group["fp"] += len(unexpected)
+            group["fn"] += len(missing)
+        composition["language"][language] += 1
+        composition["category"][category] += 1
+        composition["split"][split] += 1
+        composition["provenance"][provenance] += 1
+        composition["case_type"][case_type] += 1
         for kind, _value in matched:
             by_kind[kind]["tp"] += 1
         for kind, _value in unexpected:
@@ -98,6 +157,22 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
         "by_kind": {
             kind: _score(values["tp"], values["fp"], values["fn"])
             for kind, values in sorted(by_kind.items())
+        },
+        "by_language": {
+            key: _score(values["tp"], values["fp"], values["fn"])
+            for key, values in sorted(by_language.items())
+        },
+        "by_category": {
+            key: _score(values["tp"], values["fp"], values["fn"])
+            for key, values in sorted(by_category.items())
+        },
+        "by_split": {
+            key: _score(values["tp"], values["fp"], values["fn"])
+            for key, values in sorted(by_split.items())
+        },
+        "composition": {
+            dimension: dict(sorted(values.items()))
+            for dimension, values in composition.items()
         },
         "failures": failures,
     }

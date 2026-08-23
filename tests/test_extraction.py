@@ -26,6 +26,24 @@ def test_regex_finds_url_and_phone():
     assert "phone_my" in _kinds(hvis)
 
 
+def test_ner_rejects_url_fragments_and_role_words():
+    class NoisyBackend:
+        def predict(self, text, labels):
+            return [
+                ("url", "https", 0.8),
+                ("url", "link", 0.8),
+                ("person name", "uncle", 0.8),
+                ("person name", "calling", 0.8),
+                ("url", "valid.example/pay", 0.8),
+            ]
+
+    hvis = extract_hvis("uncle open the link", 1, ner_backend=NoisyBackend())
+
+    assert [(item.kind, item.value) for item in hvis] == [
+        ("url", "https://valid.example/pay")
+    ]
+
+
 def test_regex_normalizes_bare_domain_for_sandboxing():
     hvis = extract_regex("8Bit.co this is the website. Trust me", 2)
 

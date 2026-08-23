@@ -16,6 +16,8 @@ secrets/
 # --- Evidence output (may contain third-party PII; keep local) ---
 evidence/
 *.evidence.pdf
+evaluation/results/
+tmp/
 
 # --- Python ---
 __pycache__/

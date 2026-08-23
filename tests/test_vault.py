@@ -5,11 +5,15 @@ Covers RSA sign/verify round-trip and full evidence-bundle generation
 """
 
 import time
+import zipfile
+from pathlib import Path
 
 import pytest
 
 from hive.state import HVI, Message, SessionState
+from hive.vault.bundle import _message_xml
 from hive.vault.hashchain import HashChain
+from hive.vault.package import evidence_package_path, verify_evidence_package
 from hive.vault.signer import generate_keypair, sign_bytes, verify_signature
 
 
@@ -34,13 +38,30 @@ def test_tampered_data_fails_verification(keypair):
     assert verify_signature(b"tampered", sig, pub) is False
 
 
+def test_transcript_emoji_uses_font_or_explicit_unicode_fallback():
+    assert _message_xml("wait 😰 now", "EmojiFont") == (
+        'wait <font name="EmojiFont">😰</font> now'
+    )
+    assert _message_xml("wait 😰 now", None) == "wait [emoji U+1F630] now"
+
+
 def _populated_session() -> tuple[SessionState, HashChain]:
     s = SessionState(peer_id=99, persona="confused_elderly")
+    s.peer_display_name = "Observed Sender"
+    s.peer_username = "observed_sender"
+    s.identity_observed_ts = 1.0
     s.verdict = "likely_scam"
     s.verdict_score = 0.82
     s.turn_count = 2
     s.messages = [
-        Message(role="stranger", text="transfer to Maybank 1234567890", ts=time.time(), msg_id=0),
+        Message(
+            role="stranger",
+            text="transfer to Maybank 1234567890",
+            ts=time.time(),
+            msg_id=0,
+            captured_ts=time.time(),
+            pre_takeover=True,
+        ),
         Message(role="agent", text="aiyo how ah", ts=time.time(), msg_id=1),
         Message(
             role="stranger",
@@ -70,7 +91,7 @@ def _populated_session() -> tuple[SessionState, HashChain]:
     return s, chain
 
 
-def test_build_bundle_creates_pdf_and_signature(tmp_path, keypair):
+def test_build_bundle_creates_portable_verified_evidence_package(tmp_path, keypair):
     from hive.vault.bundle import build_bundle
 
     priv, pub = keypair
@@ -78,16 +99,41 @@ def test_build_bundle_creates_pdf_and_signature(tmp_path, keypair):
     out = str(tmp_path / "bundle.pdf")
     path = build_bundle(session, chain, out, priv, operator_name="Tho Kai Syuen")
 
-    from pathlib import Path
-
     pdf = Path(path)
     sig = Path(path + ".sig")
+    package = evidence_package_path(pdf)
     assert pdf.exists() and pdf.stat().st_size > 0
     assert sig.exists() and sig.stat().st_size > 0
+    assert package.exists() and package.stat().st_size > 0
     assert pdf.read_bytes().startswith(b"%PDF")
 
     # The detached signature must verify against the produced PDF.
     assert verify_signature(pdf.read_bytes(), sig.read_bytes(), pub) is True
+    verification = verify_evidence_package(package)
+    assert verification["ok"] is True
+    assert all(verification["checks"].values())
+
+
+def test_evidence_package_verifier_rejects_tampering(tmp_path, keypair):
+    from hive.vault.bundle import build_bundle
+
+    priv, _pub = keypair
+    session, chain = _populated_session()
+    pdf = Path(build_bundle(session, chain, str(tmp_path / "bundle.pdf"), priv))
+    package = evidence_package_path(pdf)
+    tampered = tmp_path / "tampered.evidence.zip"
+
+    with zipfile.ZipFile(package) as source, zipfile.ZipFile(tampered, "w") as target:
+        for info in source.infolist():
+            data = source.read(info.filename)
+            if info.filename == pdf.name:
+                data += b"tampered"
+            target.writestr(info, data)
+
+    verification = verify_evidence_package(tampered)
+    assert verification["ok"] is False
+    assert verification["checks"]["pdf_checksum"] is False
+    assert verification["checks"]["pdf_signature"] is False
 
 
 def test_bundle_failure_does_not_publish_partial_files(tmp_path, keypair, monkeypatch):
@@ -107,6 +153,7 @@ def test_bundle_failure_does_not_publish_partial_files(tmp_path, keypair, monkey
 
     assert not out.exists()
     assert not out.with_suffix(".pdf.sig").exists()
+    assert not evidence_package_path(out).exists()
     assert list(tmp_path.glob(".*.tmp*")) == []
 
 
@@ -129,6 +176,8 @@ def test_s90a_certificate_contains_operator():
     cert = s90a_certificate(session, "Tho Kai Syuen")
     assert "Tho Kai Syuen" in cert
     assert "90A" in cert
+    assert "Observed Sender" in cert
+    assert "observed_sender" in cert
 
 
 def test_bundle_paths_are_unique_and_reject_traversal(tmp_path):

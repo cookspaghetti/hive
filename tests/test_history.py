@@ -18,8 +18,20 @@ def test_history_store_persists_and_lists_newest_first(tmp_path):
     store.archive(older, ended_ts=20)
 
     newer = SessionState(peer_id=20, persona="small_business_owner", started_ts=30)
+    newer.peer_display_name = "Observed Sender"
+    newer.peer_username = "observed_sender"
+    newer.identity_observed_ts = 29.5
     newer.exchange_count = 1
-    newer.messages.append(Message("agent", "second chat", 31, 2))
+    newer.messages.append(
+        Message(
+            "agent",
+            "second chat",
+            31,
+            2,
+            captured_ts=31.5,
+            pre_takeover=True,
+        )
+    )
     newer.hvis.append(HVI("bank_account", "123", 2, 0.9))
     archived = store.archive(newer, evidence_path="bundle_20.pdf", ended_ts=40)
 
@@ -37,6 +49,14 @@ def test_history_store_persists_and_lists_newest_first(tmp_path):
     assert archived["analysis"]["schema_version"] == 1
     assert len(archived["analysis"]["transcript_sha256"]) == 64
     assert rows[0]["analysis_run_id"] == archived["analysis"]["id"]
+    assert archived["peer_identity"] == {
+        "display_name": "Observed Sender",
+        "username": "observed_sender",
+        "observed_ts": 29.5,
+        "platform": "telegram",
+    }
+    assert archived["messages"][0]["captured_ts"] == 31.5
+    assert archived["messages"][0]["pre_takeover"] is True
 
 
 def test_history_store_migrates_legacy_ids_and_keeps_old_alias(tmp_path):

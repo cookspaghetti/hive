@@ -41,6 +41,9 @@ def _message(
         media_size=path.stat().st_size if path else raw.get("media_size"),
         media_path=str(path) if path else None,
         media_sha256=(hashlib.sha256(path.read_bytes()).hexdigest() if path else None),
+        captured_ts=(float(raw["captured_ts"]) if raw.get("captured_ts") is not None else None),
+        platform=str(raw.get("platform") or "telegram"),
+        pre_takeover=bool(raw.get("pre_takeover", False)),
     )
 
 
@@ -63,6 +66,12 @@ def replay_history_record(
         phase=Phase.ACTIVE,
         started_ts=float(record.get("started_ts") or 0) or None,
         replay_of=str(record.get("id") or "") or None,
+    )
+    identity = record.get("peer_identity") or {}
+    session.peer_display_name = str(identity.get("display_name") or "")
+    session.peer_username = str(identity.get("username") or "")
+    session.identity_observed_ts = (
+        float(identity["observed_ts"]) if identity.get("observed_ts") is not None else None
     )
     batch: list[Message] = []
     sandboxed_urls: set[str] = set()

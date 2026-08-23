@@ -9,6 +9,7 @@ import asyncio
 from dataclasses import dataclass
 
 from hive.history import TakeoverHistoryStore
+from hive.runtime import TurnOutput
 from hive.state import Message, SessionState
 from hive.transports.control_bot import HELP_TEXT, ControlBot
 from hive.transports.userbot import UserbotTransport
@@ -33,6 +34,13 @@ class FakeEngine:
 
     def summary(self, session):
         return "summary"
+
+    def process_turn(self, session, chain, inbound):
+        session.messages.append(inbound)
+        session.turn_count += 1
+        session.exchange_count += 1
+        chain.append({"event": "msg_in", "msg_id": inbound.msg_id}, ts=inbound.ts)
+        return TurnOutput(text=None)
 
     def close_session(self, session, chain, out_path, key_path, operator_name=""):
         if self.fail_seal:

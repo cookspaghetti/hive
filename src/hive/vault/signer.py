@@ -66,14 +66,36 @@ def sign_bytes(data: bytes, key_path: str) -> bytes:
 
 def verify_signature(data: bytes, signature: bytes, public_key_path: str) -> bool:
     """Verify an RSA-PSS/SHA-256 signature. Returns True/False (no raise)."""
+    with open(public_key_path, "rb") as fh:
+        public_key = fh.read()
+    return verify_signature_with_public_key(data, signature, public_key)
+
+
+def verify_signature_with_public_key(
+    data: bytes,
+    signature: bytes,
+    public_key: bytes,
+) -> bool:
+    """Verify a signature using PEM public-key bytes."""
     from cryptography.exceptions import InvalidSignature
     from cryptography.hazmat.primitives import serialization
 
-    with open(public_key_path, "rb") as fh:
-        pub = serialization.load_pem_public_key(fh.read())
+    pub = serialization.load_pem_public_key(public_key)
     pss, sha = _pss_and_hash()
     try:
         pub.verify(signature, data, pss, sha)
         return True
     except InvalidSignature:
         return False
+
+
+def public_key_bytes(private_key_path: str) -> bytes:
+    """Derive SubjectPublicKeyInfo PEM bytes from an RSA private key."""
+    from cryptography.hazmat.primitives import serialization
+
+    with open(private_key_path, "rb") as fh:
+        key = serialization.load_pem_private_key(fh.read(), password=None)
+    return key.public_key().public_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )

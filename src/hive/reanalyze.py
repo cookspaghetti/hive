@@ -112,8 +112,7 @@ def run(argv: Sequence[str] | None = None) -> int:
             message_id: describe_image(str(path), vision)
             for message_id, path in attachments.items()
         }
-    isolated = settings.model_copy(update={"use_semantic_memory": False})
-    engine = build_engine(isolated, load_ner=not args.no_ner)
+    engine = build_engine(settings, load_ner=not args.no_ner)
     migrated = (
         history.migrate_legacy_ids()
         if args.migrate_legacy_ids and hasattr(history, "migrate_legacy_ids")

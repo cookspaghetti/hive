@@ -19,6 +19,8 @@ import threading
 import time
 import uuid
 from collections.abc import Collection, Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -447,6 +449,10 @@ class DurableAuditLedger:
 
 
 _LEDGER: AuditLedger = NullAuditLedger()
+_LEDGER_OVERRIDE: ContextVar[AuditLedger | None] = ContextVar(
+    "hive_audit_ledger_override",
+    default=None,
+)
 _HANDLER_INSTALLED = False
 _GLOBAL_LOCK = threading.Lock()
 
@@ -503,7 +509,21 @@ def configure_audit(
 
 
 def get_audit_ledger() -> AuditLedger:
-    return _LEDGER
+    return _LEDGER_OVERRIDE.get() or _LEDGER
+
+
+@contextmanager
+def audit_scope(ledger: AuditLedger):
+    """Route audit records in the current execution context to ``ledger``.
+
+    Demo and evaluation workers use this to retain a complete audit trail
+    without mixing synthetic conversation content into the operational ledger.
+    """
+    token = _LEDGER_OVERRIDE.set(ledger)
+    try:
+        yield ledger
+    finally:
+        _LEDGER_OVERRIDE.reset(token)
 
 
 def audit_event(
@@ -524,7 +544,7 @@ def audit_event(
             peer_id = current_peer_id()
         if session_id is None:
             session_id = current_session_id()
-    return _LEDGER.append(
+    return get_audit_ledger().append(
         event_type,
         action,
         component=component,

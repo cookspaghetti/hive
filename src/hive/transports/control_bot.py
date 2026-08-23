@@ -30,6 +30,7 @@ from hive.takeover import (
     TakeoverSealError,
 )
 from hive.transports.userbot import UserbotTransport
+from hive.vault.package import evidence_package_path
 
 log = get_logger(__name__)
 
@@ -194,6 +195,7 @@ class ControlBot:
                 result = f"This takeover request for {peer_id} is no longer pending."
             else:
                 self.userbot.begin_takeover(peer_id, self.default_persona)
+                await self.userbot.process_pending_takeover(peer_id)
                 result = (
                     f"✅ Takeover started on {peer_id} "
                     f"as {self.default_persona}."
@@ -396,8 +398,8 @@ class ControlBot:
                     f"Stop and seal takeover {peer_id}?\n\n"
                     f"Verdict: {session.verdict}\n"
                     f"Messages: {len(session.messages)}\n\n"
-                    "HIVE will stop replying, archive the chat, generate the signed PDF, "
-                    "and send it here."
+                    "HIVE will stop replying, archive the chat, generate the signed PDF "
+                    "and portable verification package, then send them here."
                 ),
                 reply_markup=self._seal_confirmation_markup(peer_id),
             )
@@ -431,11 +433,22 @@ class ControlBot:
         )
         with sealed.path.open("rb") as stream:
             await query.message.reply_document(stream, filename=f"evidence_{peer_id}.pdf")
+        package = evidence_package_path(sealed.path)
+        if package.is_file():
+            with package.open("rb") as stream:
+                await query.message.reply_document(
+                    stream,
+                    filename=f"evidence_{peer_id}.evidence.zip",
+                )
         audit_event(
             "control_message",
             "control_bot_document_sent",
             component="transport.control_bot",
-            payload={"filename": f"evidence_{peer_id}.pdf", "path": str(sealed.path)},
+            payload={
+                "filename": f"evidence_{peer_id}.pdf",
+                "path": str(sealed.path),
+                "package": str(package) if package.is_file() else None,
+            },
             peer_id=peer_id,
             session_id=sealed.session.session_id,
         )
@@ -617,6 +630,7 @@ class ControlBot:
             )
             return
         self.userbot.begin_takeover(peer, persona)
+        await self.userbot.process_pending_takeover(peer)
         await self._reply_text(update, f"Takeover started on {peer} as {persona}.")
 
     async def _cmd_persona(self, update, context):  # pragma: no cover

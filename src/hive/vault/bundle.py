@@ -5,17 +5,28 @@ from __future__ import annotations
 import hashlib
 import html
 import os
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from hive.logging_setup import get_logger
+from hive.reporting import reporting_guidance
 from hive.state import SessionState
 from hive.vault.hashchain import HashChain
+from hive.vault.package import build_evidence_package, evidence_package_path
 from hive.vault.signer import sign_bytes
 
 log = get_logger(__name__)
 _FONT_PAIR: tuple[str, str] | None = None
+_EMOJI_FONT: str | None = None
+_EMOJI_FONT_READY = False
+_EMOJI_SEQUENCE = re.compile(
+    r"([\u2600-\u27BF\U0001F000-\U0001FAFF]"
+    r"(?:[\uFE0E\uFE0F\U0001F3FB-\U0001F3FF]|"
+    r"\u200D[\u2600-\u27BF\U0001F000-\U0001FAFF]"
+    r"[\uFE0E\uFE0F\U0001F3FB-\U0001F3FF]*)*)"
+)
 
 _BRAND_INK = "#20242A"
 _BRAND_GOLD = "#E5A321"
@@ -36,6 +47,8 @@ def s90a_certificate(session: SessionState, operator_name: str) -> str:
         "and the information is derived from data supplied in the ordinary course "
         "of its activities.\n"
         f"Session peer id: {session.peer_id}\n"
+        f"Observed display name: {session.peer_display_name or 'Unavailable'}\n"
+        f"Observed username: {session.peer_username or 'Unavailable'}\n"
         f"Certificate generated (UTC): {now}\n"
         "Signature: ______________________   Date: ____________\n"
     )
@@ -43,6 +56,61 @@ def s90a_certificate(session: SessionState, operator_name: str) -> str:
 
 def _xml(value: object) -> str:
     return html.escape(str(value or "")).replace("\n", "<br/>")
+
+
+def _emoji_font() -> str | None:
+    """Register an optional monochrome emoji fallback for evidence reports."""
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFError, TTFont
+
+    global _EMOJI_FONT, _EMOJI_FONT_READY
+    if _EMOJI_FONT_READY:
+        return _EMOJI_FONT
+    _EMOJI_FONT_READY = True
+    candidates = [
+        os.getenv("HIVE_REPORT_FONT_EMOJI", ""),
+        r"C:\Windows\Fonts\seguiemj.ttf",
+        "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
+        "/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf",
+    ]
+    for index, path in enumerate(candidates):
+        if not path or not Path(path).is_file():
+            continue
+        name = f"HIVEEmoji{index}"
+        try:
+            pdfmetrics.registerFont(TTFont(name, path))
+        except (OSError, TTFError) as exc:
+            log.warning("report emoji font rejected: path=%s error=%s", path, exc)
+            continue
+        _EMOJI_FONT = name
+        return name
+    log.warning("no report emoji font available; using explicit Unicode labels")
+    return None
+
+
+def _message_xml(value: object, emoji_font: str | None) -> str:
+    """Escape transcript text and render emoji without missing-glyph squares."""
+
+    def render_line(line: str) -> str:
+        parts: list[str] = []
+        cursor = 0
+        for match in _EMOJI_SEQUENCE.finditer(line):
+            parts.append(html.escape(line[cursor : match.start()]))
+            emoji = match.group(0)
+            if emoji_font:
+                parts.append(f'<font name="{emoji_font}">{html.escape(emoji)}</font>')
+            else:
+                codepoints = " ".join(
+                    f"U+{ord(character):04X}"
+                    for character in emoji
+                    if character not in {"\u200d", "\ufe0e", "\ufe0f"}
+                )
+                parts.append(f"[emoji {codepoints}]")
+            cursor = match.end()
+        parts.append(html.escape(line[cursor:]))
+        return "".join(parts)
+
+    return "<br/>".join(render_line(line) for line in str(value or "").split("\n"))
 
 
 def _timestamp(value: float | None) -> str:
@@ -270,8 +338,10 @@ def build_bundle(
     temporary = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     signature_target = Path(str(target) + ".sig")
     signature_temporary = Path(str(temporary) + ".sig")
+    package_target = evidence_package_path(target)
 
     font, bold_font = _font_pair()
+    emoji_font = _emoji_font()
     styles = _styles(font, bold_font)
     generated = datetime.now(UTC)
     document_id = f"HIVE-{session.peer_id}-{generated:%Y%m%d%H%M%S}"
@@ -368,6 +438,18 @@ def build_bundle(
             Paragraph("RECORDED VALUE", styles["table_header"]),
         ],
         [Paragraph("Peer ID", styles["table"]), Paragraph(_xml(session.peer_id), styles["table"])],
+        [
+            Paragraph("Observed display name", styles["table"]),
+            Paragraph(_xml(session.peer_display_name or "Unavailable"), styles["table"]),
+        ],
+        [
+            Paragraph("Observed username", styles["table"]),
+            Paragraph(_xml(session.peer_username or "Unavailable"), styles["table"]),
+        ],
+        [
+            Paragraph("Identity observed", styles["table"]),
+            Paragraph(_xml(_timestamp(session.identity_observed_ts)), styles["table"]),
+        ],
         [Paragraph("Persona", styles["table"]), Paragraph(_xml(session.persona), styles["table"])],
         [
             Paragraph("Session started", styles["table"]),
@@ -418,9 +500,16 @@ def build_bundle(
         role = "HIVE PERSONA" if is_agent else "EXTERNAL PARTY"
         accent = "#667085" if is_agent else _BRAND_GOLD
         background = "#F2F4F7" if is_agent else "#FFF8E6"
+        provenance = "PRE-TAKEOVER TRIGGER" if message.pre_takeover else message.platform.upper()
+        captured = (
+            f" | Captured {_xml(_timestamp(message.captured_ts))}"
+            if message.captured_ts is not None and message.captured_ts != message.ts
+            else ""
+        )
         body = Paragraph(
-            f"<font name=\"{bold_font}\" size=\"7\">{role}  |  "
-            f"{_xml(_timestamp(message.ts))}</font><br/>{_xml(message.text)}",
+            f"<font name=\"{bold_font}\" size=\"7\">{role} | {provenance} | "
+            f"Message {_xml(message.msg_id)} | {_xml(_timestamp(message.ts))}{captured}"
+            f"</font><br/>{_message_xml(message.text, emoji_font)}",
             styles["message"],
         )
         bubble = Table([[body]], colWidths=[doc.width])
@@ -519,6 +608,30 @@ def build_bundle(
     else:
         story.append(Paragraph("No sandbox analyses were recorded.", styles["body"]))
 
+    _section(story, "Recommended reporting actions", styles)
+    guidance = reporting_guidance()
+    story.append(Paragraph(_xml(guidance["disclaimer"]), styles["small"]))
+    for index, step in enumerate(guidance["steps"], start=1):
+        source = (
+            f"<br/><font size=\"7\">Official source: {_xml(step['source_url'])}</font>"
+            if step["source_url"]
+            else ""
+        )
+        story.append(
+            Paragraph(
+                f"<b>{index}. {_xml(step['title'])}</b><br/>"
+                f"{_xml(step['action'])}{source}",
+                styles["body"],
+            )
+        )
+    story.append(
+        Paragraph(
+            f"Guidance reviewed {_xml(guidance['reviewed_date'])}; verify current "
+            "instructions before use.",
+            styles["small"],
+        )
+    )
+
     story.append(PageBreak())
     story.append(Paragraph("EVIDENCE INTEGRITY", styles["kicker"]))
     story.append(Paragraph("Cryptographic chain of custody", styles["title"]))
@@ -590,17 +703,21 @@ def build_bundle(
         # discover PDFs, so they can never observe a half-sealed case file.
         signature_temporary.replace(signature_target)
         temporary.replace(target)
+        build_evidence_package(target, key_path, output_path=package_target)
     except Exception:
         temporary.unlink(missing_ok=True)
         signature_temporary.unlink(missing_ok=True)
         signature_target.unlink(missing_ok=True)
+        target.unlink(missing_ok=True)
+        package_target.unlink(missing_ok=True)
         raise
 
     log.info(
-        "L5 bundle: wrote %s (%d bytes, sha256=%s) + %s",
+        "L5 bundle: wrote %s (%d bytes, sha256=%s) + %s + %s",
         target,
         len(pdf_bytes),
         digest[:12],
         signature_target,
+        package_target,
     )
     return str(target)

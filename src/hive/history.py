@@ -68,6 +68,9 @@ def _record(
             "media_size": message.media_size,
             "media_available": bool(message.media_path),
             "media_sha256": message.media_sha256,
+            "captured_ts": message.captured_ts,
+            "platform": message.platform,
+            "pre_takeover": message.pre_takeover,
         }
         for message in session.messages
     ]
@@ -82,6 +85,12 @@ def _record(
         "id": history_id,
         "session_id": session.session_id,
         "peer_id": session.peer_id,
+        "peer_identity": {
+            "display_name": session.peer_display_name,
+            "username": session.peer_username,
+            "observed_ts": session.identity_observed_ts,
+            "platform": "telegram",
+        },
         "persona": session.persona,
         "phase": status,
         "verdict": session.verdict,

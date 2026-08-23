@@ -278,7 +278,7 @@ def test_panel_activity_defaults_to_curated_milestones_with_full_ledger_option(t
     assert client.get("/api/activity?scope=invalid", headers=headers).status_code == 400
 
 
-def test_real_turn_emits_correlated_message_model_memory_and_reply_events(monkeypatch):
+def test_real_turn_emits_correlated_message_model_context_and_reply_events(monkeypatch):
     class CapturingLedger:
         def __init__(self):
             self.rows = []
@@ -308,8 +308,7 @@ def test_real_turn_emits_correlated_message_model_memory_and_reply_events(monkey
         "inbound_recorded",
         "chat_completion_requested",
         "chat_completion_received",
-        "memory_entry_added",
-        "memory_recalled",
+        "current_session_facts_prepared",
         "reply_plan_created",
         "outbound_recorded",
     } <= actions

@@ -7,6 +7,7 @@ import hmac
 import os
 import threading
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -54,7 +55,7 @@ def create_setup_app(
     manager = login_manager or TelethonLoginManager(store)
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI):
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         yield
         await manager.close()
 
@@ -185,7 +186,7 @@ def register_setup_routes(
         }
 
     @app.put("/api/setup/config", dependencies=[Depends(auth)])
-    def save_config(payload: Annotated[dict, Body()]) -> dict[str, bool]:
+    def save_config(payload: Annotated[dict[str, Any], Body()]) -> dict[str, bool]:
         unknown = set(payload) - CONFIG_KEYS
         if unknown:
             detail = f"unsupported setting: {sorted(unknown)[0]}"
@@ -209,7 +210,7 @@ def register_setup_routes(
         return {"ok": True}
 
     @app.post("/api/setup/bot/verify", dependencies=[Depends(auth)])
-    async def verify_bot(payload: Annotated[dict, Body()]) -> dict[str, object]:
+    async def verify_bot(payload: Annotated[dict[str, Any], Body()]) -> dict[str, object]:
         token = str(payload.get("token", "")).strip()
         operator_id = _positive_int(payload.get("operator_id"))
         operator_name = str(payload.get("operator_name", "")).strip()
@@ -240,7 +241,7 @@ def register_setup_routes(
         return {"ok": True, "bot": bot}
 
     @app.post("/api/setup/telethon/start", dependencies=[Depends(auth)])
-    async def telethon_start(payload: Annotated[dict, Body()]) -> dict[str, str]:
+    async def telethon_start(payload: Annotated[dict[str, Any], Body()]) -> dict[str, str]:
         try:
             api_id = int(payload.get("api_id", 0))
             session_path = str(payload.get("session_path", "./secrets/user.session"))
@@ -269,7 +270,7 @@ def register_setup_routes(
         return result
 
     @app.post("/api/setup/telethon/code", dependencies=[Depends(auth)])
-    async def telethon_code(payload: Annotated[dict, Body()]) -> dict[str, str]:
+    async def telethon_code(payload: Annotated[dict[str, Any], Body()]) -> dict[str, str]:
         try:
             result = await manager.submit_code(
                 str(payload.get("attempt_id", "")), str(payload.get("code", ""))
@@ -290,7 +291,7 @@ def register_setup_routes(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/setup/telethon/password", dependencies=[Depends(auth)])
-    async def telethon_password(payload: Annotated[dict, Body()]) -> dict[str, str]:
+    async def telethon_password(payload: Annotated[dict[str, Any], Body()]) -> dict[str, str]:
         try:
             result = await manager.submit_password(
                 str(payload.get("attempt_id", "")), str(payload.get("password", ""))
@@ -311,7 +312,7 @@ def register_setup_routes(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @app.post("/api/setup/telethon/cancel", dependencies=[Depends(auth)])
-    async def telethon_cancel(payload: Annotated[dict, Body()]) -> dict[str, bool]:
+    async def telethon_cancel(payload: Annotated[dict[str, Any], Body()]) -> dict[str, bool]:
         attempt_id = str(payload.get("attempt_id", ""))
         await manager.cancel(attempt_id)
         audit_event(
@@ -323,7 +324,7 @@ def register_setup_routes(
         return {"ok": True}
 
     @app.post("/api/setup/signing-key", dependencies=[Depends(auth)])
-    def signing_key(payload: Annotated[dict, Body()]) -> dict[str, object]:
+    def signing_key(payload: Annotated[dict[str, Any], Body()]) -> dict[str, object]:
         requested = str(payload.get("path", "./secrets/signing_key.pem"))
         try:
             path = _safe_path(project_root, requested)
@@ -366,7 +367,7 @@ def register_setup_routes(
             "signing_key": signing_status(path),
         }
 
-    def _rotate_signing_key(payload: dict) -> dict[str, object]:
+    def _rotate_signing_key(payload: dict[str, Any]) -> dict[str, object]:
         blocked = rotation_blocked_reason()
         if blocked:
             raise HTTPException(status_code=409, detail=blocked)
@@ -437,7 +438,7 @@ def register_setup_routes(
         }
 
     @app.post("/api/setup/signing-key/rotate", dependencies=[Depends(auth)])
-    def rotate_signing_key(payload: Annotated[dict, Body()]) -> dict[str, object]:
+    def rotate_signing_key(payload: Annotated[dict[str, Any], Body()]) -> dict[str, object]:
         if not signing_rotation_lock.acquire(blocking=False):
             raise HTTPException(
                 status_code=409,
@@ -467,6 +468,8 @@ def _display_path(root: Path, path: Path) -> str:
 
 
 def _positive_int(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, (str, bytes, bytearray, int, float)):
+        return 0
     try:
         number = int(value or 0)
     except (TypeError, ValueError):

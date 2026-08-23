@@ -16,8 +16,10 @@ import hashlib
 import random
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 from hive.active_takeovers import (
     ACTIVE,
@@ -57,8 +59,8 @@ class UserbotTransport:
         api_hash: str,
         session_str: str,
         engine: HiveEngine,
-        on_handback=None,
-        on_takeover_request=None,
+        on_handback: Callable[[int, SessionState], Awaitable[None]] | None = None,
+        on_takeover_request: Callable[[dict[str, object]], Awaitable[bool]] | None = None,
         *,
         inbox_debounce_s: float = 3.5,
         inbox_max_wait_s: float = 12.0,
@@ -82,7 +84,7 @@ class UserbotTransport:
         self.media_max_bytes = max(0, media_max_bytes)
         self.checkpoint_store = checkpoint_store
         self._rng = random.Random(random_seed)
-        self._client = None
+        self._client: Any = None
         # peer_id -> (SessionState, HashChain)
         self._sessions: dict[int, tuple[SessionState, HashChain]] = {}
         self._observed_chats: dict[int, ObservedChat] = {}
@@ -90,13 +92,13 @@ class UserbotTransport:
         self._notifying_takeover_requests: set[int] = set()
         self._takeover_notification_candidates: set[int] = set()
         self._inbound_buffers: dict[int, list[Message]] = {}
-        self._inbound_tasks: dict[int, asyncio.Task] = {}
+        self._inbound_tasks: dict[int, asyncio.Task[Any]] = {}
         self._inbound_first_at: dict[int, float] = {}
         self._inbound_last_at: dict[int, float] = {}
         self._inbound_check_at: dict[int, float] = {}
         self._inbound_events: dict[int, asyncio.Event] = {}
         self._inflight_batches: dict[int, list[Message]] = {}
-        self._media_analysis_tasks: dict[int, dict[int, asyncio.Task]] = {}
+        self._media_analysis_tasks: dict[int, dict[int, asyncio.Task[Any]]] = {}
         self._takeover_seed_messages: dict[int, list[Message]] = {}
         self._paused_recoveries: set[int] = set()
         self.restore_takeovers()
@@ -232,8 +234,8 @@ class UserbotTransport:
         me = await self._client.get_me()
         log.info("userbot: connected as id=%s", getattr(me, "id", "?"))
 
-        @self._client.on(events.NewMessage(incoming=True))
-        async def _handler(event):  # pragma: no cover - needs live telegram
+        @self._client.on(events.NewMessage(incoming=True))  # type: ignore[untyped-decorator]
+        async def _handler(event: Any) -> None:  # pragma: no cover - needs live telegram
             peer_id = event.chat_id
             text = event.raw_text or ""
             media = self._describe_media(event)
@@ -271,12 +273,33 @@ class UserbotTransport:
                 event.id,
                 telegram_ts,
                 captured_ts=received_at,
-                **media,
+                media_kind=(
+                    str(media["media_kind"]) if media.get("media_kind") is not None else None
+                ),
+                media_name=(
+                    str(media["media_name"]) if media.get("media_name") is not None else None
+                ),
+                media_mime=(
+                    str(media["media_mime"]) if media.get("media_mime") is not None else None
+                ),
+                media_size=(
+                    cast(int, media["media_size"])
+                    if isinstance(media.get("media_size"), int)
+                    else None
+                ),
+                media_path=(
+                    str(media["media_path"]) if media.get("media_path") is not None else None
+                ),
+                media_sha256=(
+                    str(media["media_sha256"])
+                    if media.get("media_sha256") is not None
+                    else None
+                ),
             )
 
         await self._seed_recent_chats()
 
-    async def _event_identity(self, event) -> tuple[str, str, bool]:  # pragma: no cover
+    async def _event_identity(self, event: Any) -> tuple[str, str, bool]:  # pragma: no cover
         if not getattr(event, "is_private", False):
             return "", "", False
         try:
@@ -298,7 +321,7 @@ class UserbotTransport:
         return name, str(getattr(sender, "username", "") or ""), eligible
 
     @staticmethod
-    def _describe_media(event) -> dict[str, object | None]:
+    def _describe_media(event: Any) -> dict[str, object | None]:
         """Return stable, serialisable metadata for a Telethon media message."""
         message = getattr(event, "message", event)
         file = getattr(message, "file", None)
@@ -350,7 +373,7 @@ class UserbotTransport:
 
     async def _capture_media(
         self,
-        event,
+        event: Any,
         peer_id: int,
         media: dict[str, object | None],
     ) -> dict[str, object | None]:
@@ -906,7 +929,7 @@ class UserbotTransport:
         self,
         peer_id: int,
         batch: list[Message],
-        session,
+        session: SessionState,
     ) -> None:
         tasks = self._media_analysis_tasks.get(peer_id, {})
         for message in batch:
@@ -1274,7 +1297,10 @@ class UserbotTransport:
         if entry is not None:
             if self.checkpoint_store is not None:
                 self.checkpoint_store.delete(entry[0].session_id)
-            entry = self._sessions.pop(peer_id, None)
+            removed = self._sessions.pop(peer_id, None)
+            if removed is None:
+                return None
+            entry = removed
             self._paused_recoveries.discard(peer_id)
             audit_event(
                 "takeover",

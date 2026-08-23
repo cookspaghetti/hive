@@ -12,7 +12,7 @@ import re
 import threading
 import time
 from collections import deque
-from typing import Any
+from typing import Any, cast
 
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(authorization\s*[:=]\s*bearer\s+)[^\s,;]+"),
@@ -92,7 +92,7 @@ class ObservationHub(logging.Handler):
                 payload={"detail": detail, "severity": severity},
                 peer_id=peer_id,
                 level="error" if severity == "error" else "info",
-                ts=float(row["ts"]),
+                ts=cast(float, row["ts"]),
             )
         except Exception:
             # The observation buffer must never recurse through logging. Audit

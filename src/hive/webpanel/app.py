@@ -10,12 +10,14 @@ import mimetypes
 import re
 import secrets
 import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from starlette.responses import Response
 
 from hive.agent.personas import PERSONAS
 from hive.analysis_runs import (
@@ -48,6 +50,7 @@ from hive.retention import (
     validate_policy_payload,
 )
 from hive.runtime_manager import ActiveSessionsError, RuntimeNotReadyError, probe_llm
+from hive.state import SessionState
 from hive.takeover import (
     TakeoverBusyError,
     TakeoverCoordinator,
@@ -103,7 +106,11 @@ _IMPORTANT_TAKEOVER_REQUEST_ACTIONS = frozenset(
 )
 
 
-def _session_summary(peer_id, session, recovery_status: str = "active") -> dict:
+def _session_summary(
+    peer_id: int,
+    session: SessionState,
+    recovery_status: str = "active",
+) -> dict[str, object]:
     started = session.started_ts
     return {
         "peer_id": peer_id,
@@ -122,7 +129,11 @@ def _session_summary(peer_id, session, recovery_status: str = "active") -> dict:
     }
 
 
-def _session_detail(peer_id, session, recovery_status: str = "active") -> dict:
+def _session_detail(
+    peer_id: int,
+    session: SessionState,
+    recovery_status: str = "active",
+) -> dict[str, Any]:
     detail = _session_summary(peer_id, session, recovery_status)
     detail["session_id"] = session.session_id
     detail["peer_identity"] = {
@@ -358,13 +369,13 @@ def _audit_activity(
     after: int = 0,
     limit: int = 200,
     important_only: bool = True,
-) -> list[dict]:
+) -> list[dict[str, Any]]:
     rows = ledger.list(
         after=after,
         limit=1000 if important_only else limit,
         event_types=_IMPORTANT_ACTIVITY_TYPES if important_only else None,
     )
-    items = []
+    items: list[dict[str, Any]] = []
     last_verdict: dict[tuple[object, object], str] = {}
     for row in rows:
         if important_only and not _important_activity(row):
@@ -601,7 +612,7 @@ def create_app(
     observations.event("runtime", "Control panel ready", "Local operator console initialized")
 
     @asynccontextmanager
-    async def lifespan(app: FastAPI):
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if auto_start:
             app.state.runtime_start_task = asyncio.create_task(_start_if_ready(runtime))
         yield
@@ -616,7 +627,10 @@ def create_app(
     app = FastAPI(title="HIVE Control Panel", docs_url=None, redoc_url=None, lifespan=lifespan)
 
     @app.middleware("http")
-    async def audit_http_request(request: Request, call_next):
+    async def audit_http_request(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
         started = time.perf_counter()
         payload = {
             "method": request.method,
@@ -670,7 +684,10 @@ def create_app(
         app.state.bound_host = bound_host
 
         @app.middleware("http")
-        async def validate_host(request: Request, call_next):
+        async def validate_host(
+            request: Request,
+            call_next: Callable[[Request], Awaitable[Response]],
+        ) -> Response:
             host = _host_without_port(request.headers.get("host", ""))
             if not _accepted_host(host, bound_host):
                 return JSONResponse(status_code=400, content={"detail": "invalid Host header"})
@@ -734,7 +751,7 @@ def create_app(
 
     @app.get("/api/runtime/status", dependencies=[Depends(auth)])
     def runtime_status() -> dict[str, object]:
-        return runtime.snapshot()
+        return cast(dict[str, object], runtime.snapshot())
 
     @app.get("/api/dashboard", dependencies=[Depends(auth)])
     def dashboard() -> dict[str, object]:
@@ -759,13 +776,16 @@ def create_app(
                 "active_sessions": len(sessions),
                 "observed_chats": len(chats),
                 "likely_scams": sum(row["verdict"] == "likely_scam" for row in sessions),
-                "hvis": sum(int(row["hvis"]) for row in sessions),
-                "sandbox_runs": sum(int(row["sandbox"]) for row in sessions),
-                "turns": sum(int(row["turns"]) for row in sessions),
+                "hvis": sum(cast(int, row["hvis"]) for row in sessions),
+                "sandbox_runs": sum(cast(int, row["sandbox"]) for row in sessions),
+                "turns": sum(cast(int, row["turns"]) for row in sessions),
             },
             "sessions": sorted(
                 sessions,
-                key=lambda row: float(row.get("last_message_ts") or row.get("started_ts") or 0),
+                key=lambda row: cast(
+                    float,
+                    row.get("last_message_ts") or row.get("started_ts") or 0.0,
+                ),
                 reverse=True,
             )[:6],
             "chats": chats[:6],
@@ -826,7 +846,9 @@ def create_app(
         return retention_report()
 
     @app.put("/api/retention/policy", dependencies=[Depends(auth)])
-    def save_retention_policy(payload: Annotated[dict, Body()]) -> dict[str, Any]:
+    def save_retention_policy(
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, Any]:
         previous = current_retention_policy().to_dict()
         try:
             values = validate_policy_payload(payload)
@@ -858,7 +880,7 @@ def create_app(
         evidence_root = project_root / "evidence"
         if not evidence_root.is_dir():
             return []
-        rows = []
+        rows: list[dict[str, object]] = []
         for path in evidence_root.glob("bundle_*.pdf"):
             parsed = parse_bundle_name(path.name)
             if parsed is None:
@@ -889,7 +911,7 @@ def create_app(
                     ),
                 }
             )
-        return sorted(rows, key=lambda row: float(row["created_ts"]), reverse=True)
+        return sorted(rows, key=lambda row: cast(float, row["created_ts"]), reverse=True)
 
     def evaluation_records() -> dict[str, dict[str, Any]]:
         evaluation_root = (project_root / "evaluation" / "results").resolve()
@@ -1018,7 +1040,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="demo run not found") from exc
 
     @app.post("/api/demo/runs", dependencies=[Depends(auth)])
-    def demo_start(payload: Annotated[dict, Body()]) -> dict[str, Any]:
+    def demo_start(payload: Annotated[dict[str, Any], Body()]) -> dict[str, Any]:
         scenario = str(payload.get("scenario") or "investment")
         persona = str(payload.get("persona") or "confused_elderly")
         speed = str(payload.get("speed") or "normal")
@@ -1041,7 +1063,7 @@ def create_app(
 
     def demo_control(run_id: str, action: str) -> dict[str, Any]:
         try:
-            return getattr(demos, action)(run_id)
+            return cast(dict[str, Any], getattr(demos, action)(run_id))
         except DemoNotFoundError as exc:
             raise HTTPException(status_code=404, detail="demo run not found") from exc
 
@@ -1078,7 +1100,7 @@ def create_app(
     @app.post("/api/demo/runs/{run_id}/messages", dependencies=[Depends(auth)])
     def demo_message(
         run_id: str,
-        payload: Annotated[dict, Body()],
+        payload: Annotated[dict[str, Any], Body()],
     ) -> dict[str, Any]:
         try:
             return demos.submit_message(run_id, str(payload.get("text") or ""))
@@ -1241,7 +1263,7 @@ def create_app(
         filename: str,
         token: str = "",
         x_hive_token: str = Header(default=""),
-    ):
+    ) -> FileResponse:
         if not authorised(x_hive_token or token):
             raise HTTPException(status_code=401, detail="unauthorised")
         if parse_bundle_name(filename) is None:
@@ -1256,7 +1278,7 @@ def create_app(
         filename: str,
         token: str = "",
         x_hive_token: str = Header(default=""),
-    ):
+    ) -> FileResponse:
         if not authorised(x_hive_token or token):
             raise HTTPException(status_code=401, detail="unauthorised")
         if parse_evidence_package_name(filename) is None:
@@ -1333,7 +1355,7 @@ def create_app(
         try:
             result = await runtime.start()
             observations.event("runtime", "Agent started", severity="success")
-            return result
+            return cast(dict[str, object], result)
         except RuntimeNotReadyError as exc:
             raise HTTPException(
                 status_code=409,
@@ -1343,7 +1365,9 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.post("/api/runtime/restart", dependencies=[Depends(auth)])
-    async def runtime_restart(payload: Annotated[dict, Body()]) -> dict[str, object]:
+    async def runtime_restart(
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, object]:
         try:
             forced = bool(payload.get("force", False))
             result = await runtime.restart(force=forced)
@@ -1353,7 +1377,7 @@ def create_app(
                 "Active sessions were checkpointed for paused recovery" if forced else "",
                 severity="warning" if forced else "success",
             )
-            return result
+            return cast(dict[str, object], result)
         except ActiveSessionsError as exc:
             raise HTTPException(
                 status_code=409,
@@ -1368,7 +1392,9 @@ def create_app(
             raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     @app.post("/api/runtime/stop", dependencies=[Depends(auth)])
-    async def runtime_stop(payload: Annotated[dict, Body()]) -> dict[str, object]:
+    async def runtime_stop(
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, object]:
         try:
             forced = bool(payload.get("force", False))
             result = await runtime.stop(force=forced)
@@ -1378,7 +1404,7 @@ def create_app(
                 "Active sessions were checkpointed for paused recovery" if forced else "",
                 severity="warning" if forced else "info",
             )
-            return result
+            return cast(dict[str, object], result)
         except ActiveSessionsError as exc:
             raise HTTPException(
                 status_code=409,
@@ -1394,7 +1420,7 @@ def create_app(
         return runtime.engine, runtime.userbot, runtime.settings
 
     @app.get("/api/sessions", dependencies=[Depends(auth)])
-    def list_sessions() -> list[dict]:
+    def list_sessions() -> list[dict[str, object]]:
         _engine, current_userbot, _settings = live()
         return [
             _session_summary(
@@ -1413,7 +1439,7 @@ def create_app(
         return _pending_takeover_requests(current_userbot)
 
     @app.get("/api/sessions/{peer_id}", dependencies=[Depends(auth)])
-    def get_session(peer_id: int) -> dict:
+    def get_session(peer_id: int) -> dict[str, Any]:
         _engine, current_userbot, _settings = live()
         entry = current_userbot._sessions.get(peer_id)
         if entry is None:
@@ -1437,10 +1463,12 @@ def create_app(
         return detail
 
     @app.post("/api/takeover", dependencies=[Depends(auth)])
-    async def takeover(payload: Annotated[dict, Body()]) -> dict:
+    async def takeover(
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, object]:
         _engine, current_userbot, current_settings = live()
         peer_id = payload.get("peer_id")
-        persona = payload.get("persona") or current_settings.default_persona
+        persona = str(payload.get("persona") or current_settings.default_persona)
         if not isinstance(peer_id, int):
             raise HTTPException(status_code=400, detail="peer_id must be an integer")
         if persona not in VALID_PERSONAS:
@@ -1457,12 +1485,15 @@ def create_app(
         return {"ok": True, "peer_id": peer_id, "persona": persona}
 
     @app.post("/api/sessions/{peer_id}/persona", dependencies=[Depends(auth)])
-    def set_persona(peer_id: int, payload: Annotated[dict, Body()]) -> dict:
+    def set_persona(
+        peer_id: int,
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, object]:
         _engine, current_userbot, _settings = live()
         entry = current_userbot._sessions.get(peer_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="no active takeover")
-        persona = payload.get("persona")
+        persona = str(payload.get("persona") or "")
         if persona not in VALID_PERSONAS:
             raise HTTPException(status_code=400, detail=f"unknown persona: {persona}")
         update_persona = getattr(current_userbot, "update_persona", None)
@@ -1474,7 +1505,7 @@ def create_app(
         return {"ok": True, "peer_id": peer_id, "persona": persona}
 
     @app.post("/api/sessions/{peer_id}/resume", dependencies=[Depends(auth)])
-    async def resume_session(peer_id: int) -> dict:
+    async def resume_session(peer_id: int) -> dict[str, object]:
         _engine, current_userbot, _settings = live()
         resume = getattr(current_userbot, "resume_recovery", None)
         if not callable(resume):
@@ -1495,7 +1526,7 @@ def create_app(
         return {"ok": True, "peer_id": peer_id, "processed_messages": processed}
 
     @app.post("/api/sessions/{peer_id}/abandon", dependencies=[Depends(auth)])
-    def abandon_session(peer_id: int) -> dict:
+    def abandon_session(peer_id: int) -> dict[str, object]:
         _engine, current_userbot, _settings = live()
         abandon = getattr(current_userbot, "abandon_recovery", None)
         if not callable(abandon):
@@ -1516,7 +1547,7 @@ def create_app(
         return {"ok": True, "peer_id": peer_id, "session_id": session.session_id}
 
     @app.post("/api/sessions/{peer_id}/stop", dependencies=[Depends(auth)])
-    def stop_session(peer_id: int) -> dict:
+    def stop_session(peer_id: int) -> dict[str, object]:
         live()
         coordinator = getattr(runtime, "takeovers", None) or fallback_takeovers
         if coordinator is None:
@@ -1557,7 +1588,11 @@ def create_app(
         }
 
     @app.get("/api/sessions/{peer_id}/evidence")
-    def evidence(peer_id: int, token: str = "", x_hive_token: str = Header(default="")):
+    def evidence(
+        peer_id: int,
+        token: str = "",
+        x_hive_token: str = Header(default=""),
+    ) -> FileResponse:
         if not authorised(x_hive_token or token):
             raise HTTPException(status_code=401, detail="unauthorised")
         evidence_root = project_root / "evidence"

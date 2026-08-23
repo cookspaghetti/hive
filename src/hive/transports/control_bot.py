@@ -16,6 +16,7 @@ Requires a live Bot API connection, so not unit-tested.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 from hive.agent.personas import PERSONAS
 from hive.audit import audit_event
@@ -23,6 +24,7 @@ from hive.config import Settings
 from hive.history import HistoryStore, build_history_store
 from hive.logging_setup import get_logger
 from hive.runtime import HiveEngine
+from hive.state import SessionState
 from hive.takeover import (
     TakeoverBusyError,
     TakeoverCoordinator,
@@ -74,7 +76,7 @@ class ControlBot:
             self.history,
             evidence_root="evidence",
         )
-        self._app = None
+        self._app: Any = None
         # Get notified when the userbot hands a benign conversation back.
         self.userbot.on_handback = self._on_handback
         self.userbot.on_takeover_request = self._on_takeover_request
@@ -82,7 +84,13 @@ class ControlBot:
     def _authorised(self, user_id: int | None) -> bool:
         return user_id == self.operator_id
 
-    async def _reply_text(self, update, text: str, *, reply_markup=None) -> None:
+    async def _reply_text(
+        self,
+        update: Any,
+        text: str,
+        *,
+        reply_markup: Any = None,
+    ) -> None:
         if reply_markup is None:
             await update.message.reply_text(text)
         else:
@@ -94,7 +102,11 @@ class ControlBot:
             payload={"text": text},
         )
 
-    async def _on_handback(self, peer_id, session) -> None:  # pragma: no cover
+    async def _on_handback(
+        self,
+        peer_id: int,
+        session: SessionState,
+    ) -> None:  # pragma: no cover
         """Fired by the userbot when a benign conversation is handed back.
 
         No evidence bundle is sealed (the verdict is benign); we just inform the
@@ -124,7 +136,7 @@ class ControlBot:
 
         if self._app is None:
             return False
-        peer_id = int(chat["peer_id"])
+        peer_id = int(str(chat["peer_id"]))
         display_name = str(chat.get("name") or f"Peer {peer_id}")
         username = str(chat.get("username") or "")
         account = f"{display_name} (@{username})" if username else display_name
@@ -133,7 +145,7 @@ class ControlBot:
             "🚨 HIVE takeover request\n\n"
             f"From: {account}\n"
             f"Peer ID: {peer_id}\n"
-            f"Messages waiting: {int(chat.get('message_count') or 1)}\n"
+            f"Messages waiting: {int(str(chat.get('message_count') or 1))}\n"
             f"Latest: {preview}\n\n"
             "Take over this chat?"
         )
@@ -165,7 +177,7 @@ class ControlBot:
         )
         return True
 
-    async def _callback_takeover_request(self, update, context) -> None:
+    async def _callback_takeover_request(self, update: Any, context: Any) -> None:
         query = update.callback_query
         user_id = update.effective_user.id if update.effective_user else None
         authorised = self._authorised(user_id)
@@ -220,7 +232,7 @@ class ControlBot:
         )
 
     @staticmethod
-    def _stop_markup(peer_id: int):
+    def _stop_markup(peer_id: int) -> Any:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         return InlineKeyboardMarkup(
@@ -231,7 +243,7 @@ class ControlBot:
     def _persona_label(persona: str) -> str:
         return persona.replace("_", " ").title()
 
-    def _status_picker_markup(self):
+    def _status_picker_markup(self) -> Any:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         buttons = []
@@ -246,7 +258,7 @@ class ControlBot:
             )
         return InlineKeyboardMarkup(buttons)
 
-    def _persona_picker_markup(self):
+    def _persona_picker_markup(self) -> Any:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         buttons = []
@@ -268,7 +280,7 @@ class ControlBot:
             buttons.append(row)
         return InlineKeyboardMarkup(buttons)
 
-    async def _callback_status(self, update, context) -> None:
+    async def _callback_status(self, update: Any, context: Any) -> None:
         query = update.callback_query
         user_id = update.effective_user.id if update.effective_user else None
         authorised = self._authorised(user_id)
@@ -302,7 +314,7 @@ class ControlBot:
             reply_markup=self._stop_markup(peer_id),
         )
 
-    async def _callback_persona(self, update, context) -> None:
+    async def _callback_persona(self, update: Any, context: Any) -> None:
         query = update.callback_query
         user_id = update.effective_user.id if update.effective_user else None
         authorised = self._authorised(user_id)
@@ -341,7 +353,7 @@ class ControlBot:
         )
 
     @staticmethod
-    def _seal_confirmation_markup(peer_id: int):
+    def _seal_confirmation_markup(peer_id: int) -> Any:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         return InlineKeyboardMarkup(
@@ -359,7 +371,7 @@ class ControlBot:
             ]
         )
 
-    async def _callback_seal(self, update, context) -> None:
+    async def _callback_seal(self, update: Any, context: Any) -> None:
         query = update.callback_query
         user_id = update.effective_user.id if update.effective_user else None
         authorised = self._authorised(user_id)
@@ -529,7 +541,7 @@ class ControlBot:
 
     # --- command handlers (thin wrappers around testable logic) ---
 
-    async def _guard(self, update) -> bool:  # pragma: no cover
+    async def _guard(self, update: Any) -> bool:  # pragma: no cover
         uid = update.effective_user.id if update.effective_user else None
         authorised = self._authorised(uid)
         audit_event(
@@ -549,7 +561,7 @@ class ControlBot:
             return False
         return True
 
-    async def _peer_arg(self, update, context, usage: str) -> int | None:
+    async def _peer_arg(self, update: Any, context: Any, usage: str) -> int | None:
         """Parse args[0] as an int peer id, or reply usage and return None."""
         if not context.args:
             await self._reply_text(update, usage)
@@ -560,17 +572,17 @@ class ControlBot:
             await self._reply_text(update, usage)
             return None
 
-    async def _cmd_help(self, update, context):  # pragma: no cover
+    async def _cmd_help(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
         await self._reply_text(update, HELP_TEXT)
 
-    async def _cmd_fallback(self, update, context):  # pragma: no cover
+    async def _cmd_fallback(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
         await self._reply_text(update, "Use one of the commands below.\n\n" + HELP_TEXT)
 
-    async def _cmd_chats(self, update, context):  # pragma: no cover
+    async def _cmd_chats(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
         chats = self.userbot.list_observed_chats()
@@ -586,7 +598,7 @@ class ControlBot:
             lines.append(f"{chat['peer_id']}: {account} [{state}]")
         await self._reply_text(update, "\n".join(lines))
 
-    async def _cmd_takeovers(self, update, context):  # pragma: no cover
+    async def _cmd_takeovers(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
         sessions = sorted(self.userbot._sessions.items())
@@ -616,7 +628,7 @@ class ControlBot:
             reply_markup=InlineKeyboardMarkup(buttons),
         )
 
-    async def _cmd_takeover(self, update, context):  # pragma: no cover
+    async def _cmd_takeover(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
         peer = await self._peer_arg(update, context, "Usage: /takeover <peer_id> [persona]")
@@ -633,7 +645,7 @@ class ControlBot:
         await self.userbot.process_pending_takeover(peer)
         await self._reply_text(update, f"Takeover started on {peer} as {persona}.")
 
-    async def _cmd_persona(self, update, context):  # pragma: no cover
+    async def _cmd_persona(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
         if not context.args:
@@ -653,7 +665,7 @@ class ControlBot:
         self.default_persona = name
         await self._reply_text(update, f"Default persona set to {self.default_persona}.")
 
-    async def _cmd_status(self, update, context):  # pragma: no cover
+    async def _cmd_status(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
         if not context.args:
@@ -679,7 +691,7 @@ class ControlBot:
             reply_markup=self._stop_markup(peer),
         )
 
-    async def _cmd_stop(self, update, context):  # pragma: no cover
+    async def _cmd_stop(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
         peer = await self._peer_arg(update, context, "Usage: /stop <peer_id>")

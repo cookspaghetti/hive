@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import tempfile
@@ -33,6 +34,10 @@ ALLOWED_KEYS = {
     "HIVE_PANEL_PORT",
     "HIVE_PANEL_TOKEN",
     "HIVE_QDRANT_URL",
+    "HIVE_RETENTION_ACTIVE_REVIEW_DAYS",
+    "HIVE_RETENTION_DEMO_DAYS",
+    "HIVE_RETENTION_EVALUATION_DAYS",
+    "HIVE_RETENTION_MEDIA_DAYS",
     "HIVE_SESSION_PASSPHRASE",
     "HIVE_SIGNING_KEY_PATH",
     "HIVE_TG_API_HASH",
@@ -48,7 +53,7 @@ _SENSITIVE_SUFFIXES = ("_API_HASH", "_API_KEY", "_PASSPHRASE", "_TOKEN")
 
 
 class EnvStore:
-    """Read and atomically update a single HIVE `.env` file."""
+    """Read and update one HIVE `.env`, atomically where the mount permits it."""
 
     def __init__(self, path: str | Path = ".env") -> None:
         self.path = Path(path)
@@ -107,7 +112,18 @@ class EnvStore:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.chmod(temp_name, old_mode & 0o777 if old_mode is not None else 0o600)
-            os.replace(temp_name, self.path)
+            try:
+                os.replace(temp_name, self.path)
+            except OSError as exc:
+                # Docker cannot replace the inode of a single-file bind mount.
+                # Preserve that deployment's persistence with a flushed in-place
+                # write; other filesystem errors must remain visible.
+                if exc.errno != errno.EBUSY or not self.path.exists():
+                    raise
+                with self.path.open("w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(content)
+                    handle.flush()
+                    os.fsync(handle.fileno())
         finally:
             if os.path.exists(temp_name):
                 os.unlink(temp_name)

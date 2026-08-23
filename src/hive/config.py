@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     case_similarity_threshold: float = 0.72
     case_embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
+    # Report-only retention policy. HIVE does not delete artifacts automatically.
+    retention_media_days: int = 30
+    retention_demo_days: int = 90
+    retention_evaluation_days: int = 180
+    retention_active_review_days: int = 7
+
     # Web control panel (always available; persistent token is optional).
     panel_token: str = ""
     panel_host: str = "127.0.0.1"

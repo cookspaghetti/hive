@@ -1,6 +1,7 @@
 """Offline tests for safe credential storage and Telethon login state."""
 
 import asyncio
+import errno
 import os
 from pathlib import Path
 
@@ -47,6 +48,35 @@ def test_env_store_updates_duplicate_keys_consistently(tmp_path):
 
     assert EnvStore(path).read()["HIVE_TG_PHONE"] == "+60123"
     assert path.read_text(encoding="utf-8").count("HIVE_TG_PHONE=+60123") == 2
+
+
+def test_env_store_updates_single_file_docker_bind_mount(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    path.write_text("HIVE_TG_PHONE=old\n", encoding="utf-8")
+
+    def mounted_replace(_source, _destination):
+        raise OSError(errno.EBUSY, "bind-mounted file")
+
+    monkeypatch.setattr(os, "replace", mounted_replace)
+    EnvStore(path).save({"HIVE_TG_PHONE": "+60123"})
+
+    assert path.read_text(encoding="utf-8") == "HIVE_TG_PHONE=+60123\n"
+    assert list(tmp_path.glob("..env.*")) == []
+
+
+def test_env_store_does_not_hide_unexpected_replace_failures(tmp_path, monkeypatch):
+    path = tmp_path / ".env"
+    path.write_text("HIVE_TG_PHONE=old\n", encoding="utf-8")
+
+    def denied_replace(_source, _destination):
+        raise OSError(errno.EACCES, "denied")
+
+    monkeypatch.setattr(os, "replace", denied_replace)
+    with pytest.raises(OSError, match="denied"):
+        EnvStore(path).save({"HIVE_TG_PHONE": "+60123"})
+
+    assert path.read_text(encoding="utf-8") == "HIVE_TG_PHONE=old\n"
+    assert list(tmp_path.glob("..env.*")) == []
 
 
 def test_hf_token_is_exported_for_hugging_face_clients(tmp_path, monkeypatch):

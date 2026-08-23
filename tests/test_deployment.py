@@ -40,6 +40,16 @@ def test_frontend_image_serves_assets_and_proxies_backend_apis():
     assert "proxy_pass http://${BACKEND_HOST}:${BACKEND_PORT}" in nginx
 
 
+def test_application_and_sandbox_base_images_are_immutable():
+    backend = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+    frontend = (ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")
+    sandbox = (ROOT / "docker" / "sandbox" / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "FROM python:3.11-slim@sha256:" in backend
+    assert "FROM nginx:1.27-alpine@sha256:" in frontend
+    assert "FROM python:3.12-slim-trixie@sha256:" in sandbox
+
+
 def test_task_run_migrates_away_from_the_legacy_single_container():
     taskfile = (ROOT / "Taskfile.yml").read_text(encoding="utf-8")
 

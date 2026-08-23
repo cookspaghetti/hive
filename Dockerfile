@@ -16,7 +16,7 @@
 # NOTE: GLiNER pulls in Torch. pyproject.toml pins Torch to PyTorch's official
 # CPU wheel index because this deployment does not expose a GPU.
 
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:9c900dea9e8fb7e16277c179b555cc72d29a352dbc33cff48ad5a0412fd5bfc7
 
 ENV PYTHONUNBUFFERED=1 \
     DOCKER_TLS_CERTDIR="" \

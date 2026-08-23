@@ -7,7 +7,7 @@
 # The container only ever runs the Scrapling script passed via `python -c`,
 # writes a screenshot to the mounted /out, and prints JSON findings to stdout.
 
-FROM python:3.12-slim-trixie
+FROM python:3.12-slim-trixie@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3cc9fa7036991a2a63c4a
 
 ARG SCRAPLING_VERSION=0.4.14
 ARG PLAYWRIGHT_VERSION=1.62.0

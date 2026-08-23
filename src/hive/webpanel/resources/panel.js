@@ -386,7 +386,7 @@
         await loadDashboard();
       } catch (error) {
         if (error.detail?.code === "active_sessions" && !force) {
-          const confirmed = await confirmAction("Active sessions will be discarded", `${error.detail.count} takeover(s) are still active. Force ${action}?`, `Force ${action}`);
+          const confirmed = await confirmAction("Active sessions will be checkpointed", `${error.detail.count} takeover(s) are still active. Force ${action}? They will return paused and require an explicit resume after startup.`, `Force ${action}`);
           if (confirmed) return runtimeAction(action, true);
         }
         setMessage("#runtimeMessage", error.message, "error");
@@ -431,7 +431,7 @@
     $("#sessionCountLabel").textContent = `${sessions.length} active takeover${sessions.length === 1 ? "" : "s"}`;
     $("#historyCountLabel").textContent = `${history.length} archived takeover${history.length === 1 ? "" : "s"}`;
     $("#chatRows").innerHTML = chats.length ? chats.map((item) => `<tr><td><strong>${escapeHtml(item.display_name || item.name || item.username || `Peer ${item.peer_id}`)}</strong><br><span class="mono">${Number(item.peer_id)}</span></td><td class="ellipsis">${escapeHtml(item.latest_text || item.last_message || item.text || "No preview")}</td><td>${formatDate(item.latest_ts || item.last_message_at || item.ts)}</td><td class="actions"><button class="table-button" type="button" data-takeover-peer="${Number(item.peer_id)}">Take over</button></td></tr>`).join("") : tableEmpty(4, "No takeover requests", "New private messages will appear here and in the Telegram control bot.");
-    $("#sessionRows").innerHTML = sessions.length ? sessions.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${escapeHtml(personaLabels[item.persona] || titleCase(item.persona))}</td><td>${escapeHtml(titleCase(item.phase))}</td><td><span class="status-chip ${chipClass(item.verdict)}">${escapeHtml(titleCase(item.verdict))}</span></td><td>${Math.round(Number(item.score || 0) * 100)}%</td><td class="actions"><button class="table-button" type="button" data-open-peer="${Number(item.peer_id)}">Inspect</button></td></tr>`).join("") : tableEmpty(6, "No active takeovers", "Begin a controlled engagement from a takeover request.");
+    $("#sessionRows").innerHTML = sessions.length ? sessions.map((item) => { const paused = item.recovery_status === "paused_after_restart"; return `<tr><td class="mono">${Number(item.peer_id)}</td><td>${escapeHtml(personaLabels[item.persona] || titleCase(item.persona))}</td><td><span class="status-chip ${paused ? "warning" : "running"}">${paused ? "Recovery paused" : escapeHtml(titleCase(item.phase))}</span></td><td><span class="status-chip ${chipClass(item.verdict)}">${escapeHtml(titleCase(item.verdict))}</span></td><td>${Math.round(Number(item.score || 0) * 100)}%</td><td class="actions"><button class="table-button" type="button" data-open-peer="${Number(item.peer_id)}">Inspect</button></td></tr>`; }).join("") : tableEmpty(6, "No active takeovers", "Begin a controlled engagement from a takeover request.");
     $("#historyRows").innerHTML = history.length ? history.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${formatDate(item.ended_ts)}</td><td><span class="status-chip ${chipClass(item.verdict)}">${escapeHtml(titleCase(item.verdict))}</span></td><td>${Number(item.message_count || 0)}</td><td class="actions"><button class="table-button" type="button" data-history-id="${escapeHtml(item.id)}">View chat</button></td></tr>`).join("") : tableEmpty(5, "No takeover history", "Completed takeovers and their transcripts will appear here.");
   }
 
@@ -599,10 +599,13 @@
     $("#inspectorScore").textContent = `${Math.round(Number(session.score || 0) * 100)}%`;
     $("#inspectorTurns").textContent = `${session.turns} turns · ${formatDuration(session.duration_s)}`;
     $("#inspectorPersona").innerHTML = Object.entries(personaLabels).map(([key, label]) => `<option value="${key}" ${key === session.persona ? "selected" : ""}>${label}</option>`).join("");
-    $("#inspectorPersona").disabled = archived;
+    const recoveryPaused = !archived && session.recovery_status === "paused_after_restart";
+    $("#inspectorPersona").disabled = archived || recoveryPaused;
     $("#inspectorActions").hidden = archived;
     $(".live-update").classList.toggle("archived", archived);
-    $("#inspectorLiveLabel").textContent = archived ? "Archived" : "Live";
+    $("#inspectorLiveLabel").textContent = archived ? "Archived" : recoveryPaused ? "Paused after restart" : "Live";
+    $("#resumeSession").hidden = !recoveryPaused;
+    $("#abandonSession").hidden = !recoveryPaused;
     transcript.innerHTML = session.messages?.length ? session.messages.map(renderTranscriptMessage).join("") : emptyState("No transcript yet", "Messages will appear after the engagement begins.");
     if (followLatest) requestAnimationFrame(() => { transcript.scrollTop = transcript.scrollHeight; });
     $("#inspectorSignals").innerHTML = session.signal_trail?.length ? session.signal_trail.map((signal) => renderSignal(signal, session.messages)).join("") : emptyState("No signals yet", "Classifier evidence will appear as messages are assessed.");
@@ -826,6 +829,37 @@
         closeInspectorDialog();
         await loadOperations();
         navigate("evidence");
+      } catch (error) { toast(error.message, "error"); }
+    });
+  }
+
+  async function resumeSession() {
+    if (!state.selectedPeer) return;
+    const confirmed = await confirmAction("Resume this interrupted takeover?", "Any messages queued while HIVE was offline or paused will be analysed, and HIVE may send a response as the account user.", "Resume takeover");
+    if (!confirmed) return;
+    await withLoading("resume-recovery", $("#resumeSession"), async () => {
+      try {
+        const result = await api(`/api/sessions/${state.selectedPeer}/resume`, { method: "POST", body: "{}" });
+        toast(`Takeover resumed. ${Number(result.processed_messages || 0)} queued message(s) processed.`, "success");
+        await loadOperations();
+        await openSession(state.selectedPeer);
+      } catch (error) { toast(error.message, "error"); }
+    });
+  }
+
+  async function abandonSession() {
+    if (!state.selectedPeer) return;
+    const peerId = state.selectedPeer;
+    const confirmed = await confirmAction("Abandon this checkpoint?", "The unfinished session will be removed without an evidence bundle. The operator action remains in the audit ledger.", "Abandon checkpoint");
+    if (!confirmed) return;
+    await withLoading("abandon-recovery", $("#abandonSession"), async () => {
+      try {
+        await api(`/api/sessions/${peerId}/abandon`, { method: "POST", body: "{}" });
+        toast(`Interrupted takeover ${peerId} abandoned.`, "warning");
+        state.selectedPeer = null;
+        state.selectedSession = null;
+        closeInspectorDialog();
+        await loadOperations();
       } catch (error) { toast(error.message, "error"); }
     });
   }
@@ -1223,7 +1257,7 @@
     $("#refreshPage").addEventListener("click", () => loadRoute(state.route));
     $("#startAgent").addEventListener("click", () => runtimeAction("start"));
     $("#restartAgent").addEventListener("click", () => runtimeAction("restart"));
-    $("#stopAgent").addEventListener("click", async () => { if (await confirmAction("Stop the agent?", "The control panel will remain available. Active sessions must be sealed or explicitly discarded.", "Stop agent")) runtimeAction("stop"); });
+    $("#stopAgent").addEventListener("click", async () => { if (await confirmAction("Stop the agent?", "The control panel will remain available. Active sessions must be sealed first, or force-stopped into restart-safe paused recovery.", "Stop agent")) runtimeAction("stop"); });
     $("#takeoverSearch").addEventListener("input", renderOperations);
     $("#manualTakeover").addEventListener("click", showManualTakeover);
     $("#closeInspector").addEventListener("click", closeInspectorDialog);
@@ -1238,6 +1272,8 @@
       if (event.target === $("#sessionInspector")) closeInspectorDialog();
     });
     $("#sealSession").addEventListener("click", sealSession);
+    $("#resumeSession").addEventListener("click", resumeSession);
+    $("#abandonSession").addEventListener("click", abandonSession);
     $("#inspectorPersona").addEventListener("change", async (event) => {
       try { await api(`/api/sessions/${state.selectedPeer}/persona`, { method: "POST", body: JSON.stringify({ persona: event.target.value }) }); toast("Persona updated.", "success"); await openSession(state.selectedPeer); }
       catch (error) { toast(error.message, "error"); }

@@ -97,7 +97,7 @@ _IMPORTANT_TAKEOVER_REQUEST_ACTIONS = frozenset(
 )
 
 
-def _session_summary(peer_id, session) -> dict:
+def _session_summary(peer_id, session, recovery_status: str = "active") -> dict:
     started = session.started_ts
     return {
         "peer_id": peer_id,
@@ -112,11 +112,12 @@ def _session_summary(peer_id, session) -> dict:
         "started_ts": started,
         "duration_s": max(0, round(time.time() - started)) if started else None,
         "last_message_ts": session.messages[-1].ts if session.messages else None,
+        "recovery_status": recovery_status,
     }
 
 
-def _session_detail(peer_id, session) -> dict:
-    detail = _session_summary(peer_id, session)
+def _session_detail(peer_id, session, recovery_status: str = "active") -> dict:
+    detail = _session_summary(peer_id, session, recovery_status)
     detail["session_id"] = session.session_id
     detail["peer_identity"] = {
         "display_name": session.peer_display_name,
@@ -698,7 +699,13 @@ def create_app(
         chats: list[dict[str, object]] = []
         if runtime.is_running and runtime.userbot is not None:
             sessions = [
-                _session_summary(peer_id, session)
+                _session_summary(
+                    peer_id,
+                    session,
+                    runtime.userbot.recovery_status(peer_id)
+                    if callable(getattr(runtime.userbot, "recovery_status", None))
+                    else "active",
+                )
                 for peer_id, (session, _chain) in runtime.userbot._sessions.items()
             ]
             chats = _pending_takeover_requests(runtime.userbot)
@@ -1267,7 +1274,7 @@ def create_app(
             observations.event(
                 "runtime",
                 "Agent restarted",
-                "Active sessions were discarded" if forced else "",
+                "Active sessions were checkpointed for paused recovery" if forced else "",
                 severity="warning" if forced else "success",
             )
             return result
@@ -1292,7 +1299,7 @@ def create_app(
             observations.event(
                 "runtime",
                 "Agent stopped",
-                "Active sessions were discarded" if forced else "",
+                "Active sessions were checkpointed for paused recovery" if forced else "",
                 severity="warning" if forced else "info",
             )
             return result
@@ -1314,7 +1321,13 @@ def create_app(
     def list_sessions() -> list[dict]:
         _engine, current_userbot, _settings = live()
         return [
-            _session_summary(peer_id, session)
+            _session_summary(
+                peer_id,
+                session,
+                current_userbot.recovery_status(peer_id)
+                if callable(getattr(current_userbot, "recovery_status", None))
+                else "active",
+            )
             for peer_id, (session, _chain) in current_userbot._sessions.items()
         ]
 
@@ -1331,7 +1344,13 @@ def create_app(
             raise HTTPException(status_code=404, detail="no active takeover")
         profile = build_live_case_profile(entry[0])
         detail = attach_pattern_profile(
-            _session_detail(peer_id, entry[0]),
+            _session_detail(
+                peer_id,
+                entry[0],
+                current_userbot.recovery_status(peer_id)
+                if callable(getattr(current_userbot, "recovery_status", None))
+                else "active",
+            ),
             profile,
             source="live_session",
         )
@@ -1370,9 +1389,55 @@ def create_app(
         persona = payload.get("persona")
         if persona not in VALID_PERSONAS:
             raise HTTPException(status_code=400, detail=f"unknown persona: {persona}")
-        entry[0].persona = persona
+        update_persona = getattr(current_userbot, "update_persona", None)
+        if callable(update_persona):
+            update_persona(peer_id, persona)
+        else:
+            entry[0].persona = persona
         observations.event("takeover", "Persona changed", persona, peer_id=peer_id)
         return {"ok": True, "peer_id": peer_id, "persona": persona}
+
+    @app.post("/api/sessions/{peer_id}/resume", dependencies=[Depends(auth)])
+    async def resume_session(peer_id: int) -> dict:
+        _engine, current_userbot, _settings = live()
+        resume = getattr(current_userbot, "resume_recovery", None)
+        if not callable(resume):
+            raise HTTPException(status_code=409, detail="takeover recovery unavailable")
+        try:
+            processed = await resume(peer_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="no active takeover") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="takeover is not recovery-paused") from exc
+        observations.event(
+            "takeover_recovery",
+            "Interrupted takeover resumed",
+            f"{processed} queued message(s) processed",
+            peer_id=peer_id,
+            severity="warning",
+        )
+        return {"ok": True, "peer_id": peer_id, "processed_messages": processed}
+
+    @app.post("/api/sessions/{peer_id}/abandon", dependencies=[Depends(auth)])
+    def abandon_session(peer_id: int) -> dict:
+        _engine, current_userbot, _settings = live()
+        abandon = getattr(current_userbot, "abandon_recovery", None)
+        if not callable(abandon):
+            raise HTTPException(status_code=409, detail="takeover recovery unavailable")
+        try:
+            session, _chain = abandon(peer_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail="no active takeover") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail="takeover is not recovery-paused") from exc
+        observations.event(
+            "takeover_recovery",
+            "Interrupted takeover abandoned",
+            f"Checkpoint {session.session_id} removed without sealing",
+            peer_id=peer_id,
+            severity="warning",
+        )
+        return {"ok": True, "peer_id": peer_id, "session_id": session.session_id}
 
     @app.post("/api/sessions/{peer_id}/stop", dependencies=[Depends(auth)])
     def stop_session(peer_id: int) -> dict:

@@ -53,6 +53,7 @@ class FakeUserbot:
     def __init__(self):
         self._sessions = {}
         self._observed_chats = []
+        self._paused_recoveries = set()
 
     def list_observed_chats(self):
         return self._observed_chats
@@ -66,6 +67,26 @@ class FakeUserbot:
 
     def end_takeover(self, peer_id):
         return self._sessions.pop(peer_id, None)
+
+    def recovery_status(self, peer_id):
+        return "paused_after_restart" if peer_id in self._paused_recoveries else "active"
+
+    async def resume_recovery(self, peer_id):
+        if peer_id not in self._sessions:
+            raise LookupError
+        if peer_id not in self._paused_recoveries:
+            raise ValueError
+        self._paused_recoveries.remove(peer_id)
+        return 2
+
+    def abandon_recovery(self, peer_id):
+        if peer_id not in self._paused_recoveries:
+            raise ValueError
+        self._paused_recoveries.remove(peer_id)
+        return self.end_takeover(peer_id)
+
+    def update_persona(self, peer_id, persona):
+        self._sessions[peer_id][0].persona = persona
 
 
 def fake_reanalysis(record, engine, settings):
@@ -409,6 +430,27 @@ def test_takeover_and_persona(client):
     )
     assert r.status_code == 200
     assert client._userbot._sessions[200][0].persona == "small_business_owner"
+
+
+def test_recovery_paused_session_can_be_resumed_or_abandoned(client):
+    client._userbot._paused_recoveries.add(100)
+
+    listed = client.get("/api/sessions", headers=_h()).json()
+    assert listed[0]["recovery_status"] == "paused_after_restart"
+    resumed = client.post("/api/sessions/100/resume", headers=_h())
+    assert resumed.status_code == 200
+    assert resumed.json()["processed_messages"] == 2
+    assert client._userbot.recovery_status(100) == "active"
+
+    client._userbot._paused_recoveries.add(100)
+    abandoned = client.post("/api/sessions/100/abandon", headers=_h())
+    assert abandoned.status_code == 200
+    assert 100 not in client._userbot._sessions
+
+
+def test_recovery_actions_reject_live_session(client):
+    assert client.post("/api/sessions/100/resume", headers=_h()).status_code == 409
+    assert client.post("/api/sessions/100/abandon", headers=_h()).status_code == 409
 
 
 def test_takeover_rejects_bad_persona(client):

@@ -404,12 +404,10 @@ def build_engine(settings: Settings, *, load_ner: bool = True) -> HiveEngine:
     Loads the LLM client (Ollama Cloud), the disposable-container sandbox
     runner, and — optionally — the GLiNER NER backend (heavy first load).
     """
-    import os
-
     from hive.case_intelligence import build_case_intelligence_store
     from hive.extraction.ner import get_default_backend
     from hive.llm.client import build_client, build_vision_client
-    from hive.sandbox.runner import ScraplingDockerRunner
+    from hive.sandbox.runner import configured_sandbox_runner
 
     client = build_client(settings)
     vision_client = build_vision_client(settings)
@@ -425,13 +423,7 @@ def build_engine(settings: Settings, *, load_ner: bool = True) -> HiveEngine:
             "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         ),
     )
-    sandbox_memory = os.getenv("HIVE_SANDBOX_MEMORY_LIMIT", "512m").strip() or None
-    sandbox_pids_value = os.getenv("HIVE_SANDBOX_PIDS_LIMIT", "128").strip()
-    sandbox_pids = int(sandbox_pids_value) if sandbox_pids_value else None
-    runner = ScraplingDockerRunner(
-        memory_limit=sandbox_memory,
-        pids_limit=sandbox_pids,
-    )
+    runner = configured_sandbox_runner()
     ner = get_default_backend() if load_ner else None
     ensure_case_index = getattr(case_intelligence, "ensure_ready", None)
     if getattr(settings, "use_case_similarity", False) and ensure_case_index is not None:

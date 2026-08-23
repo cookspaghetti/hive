@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import os
 import socket
 import subprocess
 import uuid
@@ -420,3 +421,20 @@ class ScraplingDockerRunner:
 
 # Compatibility for callers that imported the original runner name.
 PlaywrightDockerRunner = ScraplingDockerRunner
+
+
+def configured_sandbox_runner(
+    *,
+    out_dir: str = "/tmp/hive-sandbox",
+    run_timeout_s: int = 90,
+) -> ScraplingDockerRunner:
+    """Build the runner with the same resource settings used by production."""
+    memory_limit = os.getenv("HIVE_SANDBOX_MEMORY_LIMIT", "512m").strip() or None
+    pids_value = os.getenv("HIVE_SANDBOX_PIDS_LIMIT", "128").strip()
+    pids_limit = int(pids_value) if pids_value else None
+    return ScraplingDockerRunner(
+        out_dir=out_dir,
+        memory_limit=memory_limit,
+        pids_limit=pids_limit,
+        run_timeout_s=run_timeout_s,
+    )

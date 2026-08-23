@@ -15,6 +15,7 @@ import pytest
 from hive.sandbox.runner import (
     _SCRAPLING_SCRIPT,
     ScraplingDockerRunner,
+    configured_sandbox_runner,
     validate_public_url,
 )
 
@@ -62,6 +63,27 @@ def test_docker_cmd_can_defer_cgroup_limits_to_outer_container():
 
     assert "--memory" not in cmd
     assert "--pids-limit" not in cmd
+
+
+def test_configured_runner_honours_disabled_nested_cgroup_limits(monkeypatch):
+    monkeypatch.setenv("HIVE_SANDBOX_MEMORY_LIMIT", "")
+    monkeypatch.setenv("HIVE_SANDBOX_PIDS_LIMIT", "")
+
+    runner = configured_sandbox_runner(run_timeout_s=17)
+
+    assert runner.memory_limit is None
+    assert runner.pids_limit is None
+    assert runner.run_timeout_s == 17
+
+
+def test_configured_runner_uses_resource_limits_by_default(monkeypatch):
+    monkeypatch.delenv("HIVE_SANDBOX_MEMORY_LIMIT", raising=False)
+    monkeypatch.delenv("HIVE_SANDBOX_PIDS_LIMIT", raising=False)
+
+    runner = configured_sandbox_runner()
+
+    assert runner.memory_limit == "512m"
+    assert runner.pids_limit == 128
 
 
 def test_scrapling_script_enables_stealth_and_preserves_request_guards():

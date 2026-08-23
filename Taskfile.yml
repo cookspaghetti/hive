@@ -64,6 +64,11 @@ tasks:
     cmds:
       - docker compose exec -T backend python -m hive.verify_services
 
+  sandbox:verify:
+    desc: Verify public fetch, private-address rejection, and container cleanup
+    cmds:
+      - docker compose exec -T backend python -m hive.verify_sandbox
+
   lint:
     desc: Lint with ruff
     cmds:

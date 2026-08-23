@@ -42,6 +42,11 @@ from hive.logging_setup import get_logger
 from hive.provisioning import EnvStore, TelethonLoginManager
 from hive.reanalysis_service import ReanalysisRunner, ReanalysisService
 from hive.reporting import reporting_guidance
+from hive.retention import (
+    RetentionPolicy,
+    build_retention_report,
+    validate_policy_payload,
+)
 from hive.runtime_manager import ActiveSessionsError, RuntimeNotReadyError, probe_llm
 from hive.takeover import (
     TakeoverBusyError,
@@ -68,6 +73,7 @@ _IMPORTANT_ACTIVITY_TYPES = frozenset(
         "llm_error",
         "media_capture",
         "operator_event",
+        "retention_policy",
         "reply_delivery",
         "reply_steering",
         "sandbox",
@@ -532,6 +538,39 @@ def create_app(
         project_root,
         lambda: runtime,
     )
+
+    def current_retention_policy() -> RetentionPolicy:
+        values = store.read()
+        base = RetentionPolicy.from_settings(configured)
+        payload = {
+            "media_days": values.get("HIVE_RETENTION_MEDIA_DAYS", base.media_days),
+            "demo_days": values.get("HIVE_RETENTION_DEMO_DAYS", base.demo_days),
+            "evaluation_days": values.get(
+                "HIVE_RETENTION_EVALUATION_DAYS",
+                base.evaluation_days,
+            ),
+            "active_checkpoint_review_days": values.get(
+                "HIVE_RETENTION_ACTIVE_REVIEW_DAYS",
+                base.active_checkpoint_review_days,
+            ),
+        }
+        validated = validate_policy_payload(payload)
+        return RetentionPolicy(
+            media_days=validated["HIVE_RETENTION_MEDIA_DAYS"],
+            demo_days=validated["HIVE_RETENTION_DEMO_DAYS"],
+            evaluation_days=validated["HIVE_RETENTION_EVALUATION_DAYS"],
+            active_checkpoint_review_days=validated[
+                "HIVE_RETENTION_ACTIVE_REVIEW_DAYS"
+            ],
+        )
+
+    def retention_report() -> dict[str, Any]:
+        return build_retention_report(
+            project_root,
+            current_retention_policy(),
+            database_url=getattr(configured, "database_url", ""),
+            qdrant_url=getattr(configured, "qdrant_url", ""),
+        )
     migrate_history_ids = getattr(history, "migrate_legacy_ids", None)
     if migrate_history_ids is not None:
         migrate_history_ids()
@@ -776,6 +815,38 @@ def create_app(
     @app.get("/api/logs", dependencies=[Depends(auth)])
     def logs(after: int = 0, limit: int = 200) -> dict[str, object]:
         return {"items": observations.logs(after=after, limit=limit)}
+
+    @app.get("/api/retention", dependencies=[Depends(auth)])
+    def get_retention_report() -> dict[str, Any]:
+        return retention_report()
+
+    @app.put("/api/retention/policy", dependencies=[Depends(auth)])
+    def save_retention_policy(payload: Annotated[dict, Body()]) -> dict[str, Any]:
+        previous = current_retention_policy().to_dict()
+        try:
+            values = validate_policy_payload(payload)
+            store.save(values)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        current = current_retention_policy().to_dict()
+        audit.append(
+            "retention_policy",
+            "retention_policy_saved",
+            component="webpanel.retention",
+            payload={
+                "previous": previous,
+                "current": current,
+                "mode": "report_only",
+                "deletion_performed": False,
+            },
+        )
+        observations.event(
+            "retention_policy",
+            "Retention policy updated",
+            "Report-only thresholds changed; no artifacts were deleted",
+            severity="warning",
+        )
+        return retention_report()
 
     @app.get("/api/evidence", dependencies=[Depends(auth)])
     def evidence_index() -> list[dict[str, object]]:

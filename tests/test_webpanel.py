@@ -163,11 +163,72 @@ def test_panel_assets_are_served(client):
     assert "/messages`" in script.text
     assert 'controlDemo(interactive ? "finish" : "stop")' in script.text
     assert 'id="activityScope"' in page.text
+    assert 'data-page="retention"' in page.text
+    assert 'id="retentionForm"' in page.text
+    assert 'api("/api/retention")' in script.text
+    assert 'api("/api/retention/policy"' in script.text
+    assert "No artifacts were deleted" in script.text
     assert "All audit events" in page.text
     assert "scope=${encodeURIComponent(scope)}" in script.text
     assert '$("#activityScope").addEventListener("change"' in script.text
     assert css.headers["cache-control"] == "no-store"
     assert script.headers["cache-control"] == "no-store"
+
+
+def test_retention_report_is_authorised_and_never_deletes(client):
+    media = client._root / "evidence" / "media" / "capture.jpg"
+    media.parent.mkdir(parents=True)
+    media.write_bytes(b"captured")
+
+    assert client.get("/api/retention").status_code == 401
+    response = client.get("/api/retention", headers=_h())
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["mode"] == "report_only"
+    assert report["enforcement_available"] is False
+    assert report["deletion_performed"] is False
+    assert report["summary"]["files"] == 1
+    assert media.exists()
+
+
+def test_retention_policy_save_persists_review_thresholds_without_deletion(client):
+    response = client.put(
+        "/api/retention/policy",
+        headers=_h(),
+        json={
+            "media_days": 14,
+            "demo_days": 45,
+            "evaluation_days": 120,
+            "active_checkpoint_review_days": 3,
+        },
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["policy"]["media_days"] == 14
+    assert report["policy"]["active_checkpoint_review_days"] == 3
+    assert report["deletion_performed"] is False
+    saved = (client._root / ".env").read_text(encoding="utf-8")
+    assert "HIVE_RETENTION_MEDIA_DAYS=14" in saved
+    assert "HIVE_RETENTION_ACTIVE_REVIEW_DAYS=3" in saved
+
+
+def test_retention_policy_rejects_destructive_or_invalid_fields(client):
+    destructive = client.put(
+        "/api/retention/policy",
+        headers=_h(),
+        json={"delete_after_days": 1},
+    )
+    invalid = client.put(
+        "/api/retention/policy",
+        headers=_h(),
+        json={"media_days": 0},
+    )
+
+    assert destructive.status_code == 400
+    assert invalid.status_code == 400
+    assert not (client._root / ".env").exists()
 
 
 def test_frontend_can_bootstrap_an_ephemeral_backend_session(client):

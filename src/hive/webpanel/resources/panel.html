@@ -35,6 +35,7 @@
         <button class="nav-item" type="button" data-route="models"><span class="nav-key">09</span>Models</button>
         <button class="nav-item" type="button" data-route="telegram"><span class="nav-key">10</span>Telegram</button>
         <button class="nav-item" type="button" data-route="security"><span class="nav-key">11</span>Security</button>
+        <button class="nav-item" type="button" data-route="retention"><span class="nav-key">12</span>Retention</button>
       </nav>
 
       <div class="sidebar-footer">
@@ -260,6 +261,27 @@
               <form class="surface form-surface" id="panelTokenForm"><div class="surface-heading"><div><h2>Panel authentication</h2><p>Set a persistent token for future panel sessions.</p></div></div><label class="field"><span>New API token</span><input id="panelToken" type="password" autocomplete="new-password"></label><div class="form-actions"><button class="button secondary" type="submit">Save API token</button><span class="inline-message" id="panelTokenMessage" role="status"></span></div></form>
             </div>
           </div>
+        </section>
+
+        <section class="page" data-page="retention" aria-labelledby="retentionTitle">
+          <div class="page-heading"><div><p class="context-line">Privacy operations</p><h1 id="retentionTitle">Data retention</h1><p>Inventory HIVE artifacts, document their handling boundaries, and identify items requiring review. This release is report-only and cannot delete data.</p></div><span class="status-chip warning" id="retentionMode">Report only</span></div>
+          <div class="metric-strip retention-metrics" aria-label="Retention inventory summary">
+            <div><span>Stored files</span><strong id="retentionFiles">—</strong></div>
+            <div><span>Database records</span><strong id="retentionRecords">—</strong></div>
+            <div><span>Measured storage</span><strong id="retentionBytes">—</strong></div>
+            <div><span>Review due</span><strong id="retentionDue">—</strong></div>
+            <div><span>Protected classes</span><strong id="retentionProtected">—</strong></div>
+          </div>
+          <div class="retention-layout">
+            <form class="surface form-surface" id="retentionForm"><div class="surface-heading"><div><h2>Review thresholds</h2><p>Thresholds flag artifacts for operator review; they never trigger deletion.</p></div></div><div class="form-grid">
+              <label class="field"><span>Captured media <small>days</small></span><input id="retentionMediaDays" type="number" min="1" max="3650" required></label>
+              <label class="field"><span>Synthetic demos <small>days</small></span><input id="retentionDemoDays" type="number" min="1" max="3650" required></label>
+              <label class="field"><span>Evaluation results <small>days</small></span><input id="retentionEvaluationDays" type="number" min="1" max="3650" required></label>
+              <label class="field"><span>Checkpoint review <small>days</small></span><input id="retentionActiveDays" type="number" min="1" max="3650" required></label>
+            </div><div class="form-actions"><button class="button primary" type="submit">Save report policy</button><span class="inline-message" id="retentionMessage" role="status"></span></div></form>
+            <article class="surface"><div class="surface-heading"><div><h2>Data-flow disclosure</h2><p>Where exact or privacy-reduced information may be processed.</p></div></div><div class="definition-list" id="retentionDataHandling"></div></article>
+          </div>
+          <article class="surface data-surface retention-inventory"><div class="surface-heading"><div><h2>Artifact inventory</h2><p id="retentionGenerated">Not scanned</p></div><button class="button secondary compact" id="refreshRetention" type="button">Rescan</button></div><div class="table-scroll"><table><thead><tr><th>Class</th><th>Status</th><th>Files</th><th>Records</th><th>Storage</th><th>Policy</th><th>Review due</th></tr></thead><tbody id="retentionRows"></tbody></table></div><p class="inline-message" id="retentionWarnings" role="status"></p></article>
         </section>
       </main>
     </div>

@@ -268,7 +268,7 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .intelligence-summary > div { padding: 13px 15px; background: var(--surface); }
 .intelligence-summary span { display: block; color: var(--subtle); font-size: .7rem; }
 .intelligence-summary strong { font-variant-numeric: tabular-nums; }
-.intelligence-grid, .model-layout, .security-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, .9fr); gap: 14px; align-items: start; }
+.intelligence-grid, .model-layout, .security-layout, .retention-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(330px, .9fr); gap: 14px; align-items: start; }
 .media-intelligence { grid-column: 1 / -1; }
 .pattern-profile-surface, .relationship-surface { min-height: 100%; }
 .pattern-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 15px; }
@@ -352,6 +352,9 @@ td.actions { width: 1%; text-align: right; white-space: nowrap; }
 .readiness-copy strong { line-height: 1.35; }
 .readiness-copy span { color: var(--subtle); font-size: .72rem; }
 .readiness-item > .status-chip { align-self: center; justify-self: end; }
+.retention-inventory { margin-top: 14px; }
+.retention-flow-row { grid-template-columns: minmax(110px, .3fr) minmax(0, 1fr); align-items: start; }
+.retention-flow-row strong { color: var(--text); font-weight: 500; line-height: 1.5; text-align: left; }
 
 dialog { width: min(calc(100% - 28px), 600px); padding: 0; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); color: var(--text); box-shadow: 0 24px 80px rgba(0,0,0,.5); }
 dialog::backdrop { background: rgba(4, 6, 8, .74); }
@@ -378,7 +381,7 @@ dialog::backdrop { background: rgba(4, 6, 8, .74); }
 @keyframes shimmer { to { transform: translateX(100%); } }
 
 @media (max-width: 1120px) {
-  .overview-grid, .intelligence-grid, .model-layout, .security-layout, .demo-layout { grid-template-columns: 1fr; }
+  .overview-grid, .intelligence-grid, .model-layout, .security-layout, .retention-layout, .demo-layout { grid-template-columns: 1fr; }
   .demo-history { grid-column: 1; }
   .demo-conversation, .demo-intelligence { height: auto; min-height: 480px; max-height: none; }
   .model-status { position: static; }

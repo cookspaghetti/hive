@@ -15,6 +15,7 @@
     ["models", "Models", "Endpoint and tier assignments"],
     ["telegram", "Telegram", "Messaging plane configuration"],
     ["security", "Security", "Readiness, keys, and panel access"],
+    ["retention", "Retention", "Privacy inventory and report-only review policy"],
   ];
   const personaLabels = {
     confused_elderly: "Confused elderly",
@@ -103,9 +104,9 @@
   const percentage = (value) => `${Math.round(Number(value || 0) * 100)}%`;
   const chipClass = (value) => {
     const normalized = String(value || "").toLowerCase().replaceAll(" ", "_");
-    if (["running", "ready", "success", "healthy", "configured", "signed", "clean"].includes(normalized)) return "success";
+    if (["running", "ready", "success", "healthy", "configured", "signed", "clean", "protected", "within_policy"].includes(normalized)) return "success";
     if (["error", "failed", "stopped", "likely_scam", "malicious", "missing", "unsigned"].includes(normalized)) return "error";
-    if (["warning", "degraded", "restart_required", "suspicious"].includes(normalized)) return "warning";
+    if (["warning", "degraded", "restart_required", "suspicious", "review_due"].includes(normalized)) return "warning";
     return "info";
   };
   const emptyState = (title, detail) => `<div class="empty-state"><strong>${escapeHtml(title)}</strong><p>${escapeHtml(detail)}</p></div>`;
@@ -295,6 +296,7 @@
       if (route === "models") await loadModels();
       if (route === "telegram") await Promise.all([loadTelegram(), loadSetup()]);
       if (route === "security") await loadSetup();
+      if (route === "retention") await loadRetention();
     } catch (error) {
       if (error.status === 401) toast("Panel authentication failed. Set a valid token in Security.", "error");
       else toast(error.message, "error");
@@ -1220,6 +1222,43 @@
     if (data.bot_username) setMessage("#botMessage", `Saved control bot: @${data.bot_username}`);
   }
 
+  async function loadRetention() {
+    const data = await api("/api/retention");
+    const summary = data.summary || {};
+    const policy = data.policy || {};
+    $("#retentionMode").textContent = data.mode === "report_only" ? "Report only · no deletion" : titleCase(data.mode);
+    $("#retentionFiles").textContent = Number(summary.files || 0).toLocaleString();
+    $("#retentionRecords").textContent = Number(summary.records || 0).toLocaleString();
+    $("#retentionBytes").textContent = formatBytes(Number(summary.bytes || 0));
+    $("#retentionDue").textContent = Number(summary.review_due_count || 0).toLocaleString();
+    $("#retentionProtected").textContent = Number(summary.protected_categories || 0).toLocaleString();
+    $("#retentionMediaDays").value = policy.media_days || 30;
+    $("#retentionDemoDays").value = policy.demo_days || 90;
+    $("#retentionEvaluationDays").value = policy.evaluation_days || 180;
+    $("#retentionActiveDays").value = policy.active_checkpoint_review_days || 7;
+    $("#retentionGenerated").textContent = `Scanned ${formatDate(data.generated_ts)} · No deletion performed`;
+    $("#retentionRows").innerHTML = (data.categories || []).map((item) => `<tr><td><strong>${escapeHtml(item.label)}</strong><br><span class="message">${escapeHtml(item.detail)}</span></td><td><span class="status-chip ${chipClass(item.status)}">${escapeHtml(titleCase(item.status))}</span></td><td>${Number(item.file_count || 0).toLocaleString()}</td><td>${Number(item.record_count || 0).toLocaleString()}</td><td>${formatBytes(Number(item.bytes || 0))}</td><td>${item.protected ? "Protected indefinitely" : `${Number(item.retention_days)} days · review only`}</td><td>${Number(item.review_due_count || 0).toLocaleString()}${item.review_due_bytes ? `<br><span class="message">${formatBytes(Number(item.review_due_bytes))}</span>` : ""}</td></tr>`).join("") || tableEmpty(7, "No artifact classes", "The retention inventory returned no categories.");
+    $("#retentionDataHandling").innerHTML = Object.entries(data.data_handling || {}).map(([key, value]) => `<div class="definition-row retention-flow-row"><span>${escapeHtml(titleCase(key))}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+    setMessage("#retentionWarnings", (data.warnings || []).join(" · "), (data.warnings || []).length ? "error" : "");
+  }
+
+  async function saveRetention(event) {
+    event.preventDefault();
+    const payload = {
+      media_days: Number($("#retentionMediaDays").value),
+      demo_days: Number($("#retentionDemoDays").value),
+      evaluation_days: Number($("#retentionEvaluationDays").value),
+      active_checkpoint_review_days: Number($("#retentionActiveDays").value),
+    };
+    await withLoading("retention-save", event.submitter, async () => {
+      try {
+        await api("/api/retention/policy", { method: "PUT", body: JSON.stringify(payload) });
+        setMessage("#retentionMessage", "Report policy saved. No artifacts were deleted.", "success");
+        await loadRetention();
+      } catch (error) { setMessage("#retentionMessage", error.message, "error"); }
+    });
+  }
+
   async function createSigningKey(event) {
     event.preventDefault();
     await withLoading("signing", event.submitter, async () => {
@@ -1319,6 +1358,8 @@
     $("#cancelTelegramLogin").addEventListener("click", cancelTelegram);
     $("#signingForm").addEventListener("submit", createSigningKey);
     $("#panelTokenForm").addEventListener("submit", savePanelToken);
+    $("#retentionForm").addEventListener("submit", saveRetention);
+    $("#refreshRetention").addEventListener("click", () => loadRetention().catch((error) => toast(error.message, "error")));
     $("#openCommand").addEventListener("click", () => { renderCommandResults(); $("#commandDialog").showModal(); $("#commandSearch").focus(); });
     $("#commandSearch").addEventListener("input", (event) => renderCommandResults(event.target.value));
     document.addEventListener("click", (event) => {

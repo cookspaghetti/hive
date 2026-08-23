@@ -25,7 +25,7 @@ def verify(settings: Settings, backend: ChatBackend) -> dict[str, Any]:
                 model,
                 [{"role": "user", "content": "Reply with exactly READY."}],
                 temperature=0.0,
-                max_tokens=128,
+                max_tokens=512,
             )
             text = extract_chat_text(raw)
             raw_usage = raw.get("usage")

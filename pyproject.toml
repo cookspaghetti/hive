@@ -37,6 +37,8 @@ dev = [
     "pytest-asyncio>=0.23",
     "ruff>=0.5",
     "mypy>=1.10",
+    # NumPy 2.5 stubs use Python 3.12 syntax; mypy checks HIVE's Python 3.11 floor.
+    "numpy<2.5",
     "watchfiles>=1.2.0",
 ]
 

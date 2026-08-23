@@ -110,6 +110,7 @@ def test_runtime_starts_and_stops_both_telegram_planes(tmp_path):
     assert stopped["state"] == "stopped"
     assert userbot.started and userbot.stopped
     assert control.started and control.stopped
+    assert userbot.options["checkpoint_store"] is not None
 
 
 def test_runtime_reports_incomplete_setup_without_starting(tmp_path):

@@ -91,6 +91,9 @@ class TakeoverCoordinator:
                         operator_name=getattr(self.settings, "operator_name", ""),
                     )
                 )
+                checkpoint = getattr(self.userbot, "checkpoint_takeover", None)
+                if callable(checkpoint):
+                    checkpoint(peer_id)
                 record = self.history.archive(
                     session,
                     evidence_path=sealed_path,
@@ -99,6 +102,12 @@ class TakeoverCoordinator:
                 self._index_case(record)
             except Exception as exc:
                 session.phase = previous_phase
+                checkpoint = getattr(self.userbot, "checkpoint_takeover", None)
+                if callable(checkpoint):
+                    try:
+                        checkpoint(peer_id)
+                    except Exception:  # noqa: BLE001 - preserve the original seal error
+                        pass
                 audit_event(
                     "takeover",
                     "stop_and_seal_failed",

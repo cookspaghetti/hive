@@ -11,6 +11,7 @@ from typing import Any
 
 import httpx
 
+from hive.active_takeovers import build_active_takeover_store
 from hive.case_intelligence import build_case_intelligence_store
 from hive.config import Settings, load_settings
 from hive.history import build_history_store
@@ -152,6 +153,11 @@ class HiveRuntimeManager:
                 "duration_s": None,
             }
         sessions = len(self.userbot._sessions) if self.userbot is not None else 0
+        recovery_paused = (
+            len(getattr(self.userbot, "_paused_recoveries", ()))
+            if self.userbot is not None
+            else 0
+        )
         visible_state = (
             "restart_required" if self.restart_required and self.is_running else self.state
         )
@@ -160,6 +166,7 @@ class HiveRuntimeManager:
             "running": self.is_running,
             "restart_required": self.restart_required,
             "active_sessions": sessions,
+            "recovery_paused": recovery_paused,
             "error": self.error,
             "ready": ready,
             "checks": checks,
@@ -258,6 +265,10 @@ class HiveRuntimeManager:
                         getattr(settings, "media_path", "./evidence/media")
                     ),
                     media_max_bytes=getattr(settings, "media_max_bytes", 25 * 1024 * 1024),
+                    checkpoint_store=build_active_takeover_store(
+                        self.root / "evidence" / "active_takeovers",
+                        getattr(settings, "database_url", ""),
+                    ),
                 )
                 takeover_coordinator = TakeoverCoordinator(
                     engine,

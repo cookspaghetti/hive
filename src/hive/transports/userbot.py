@@ -19,6 +19,11 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from hive.active_takeovers import (
+    ACTIVE,
+    PAUSED_AFTER_RESTART,
+    ActiveTakeoverStore,
+)
 from hive.audit import audit_event
 from hive.logging_setup import get_logger
 from hive.middleware.temporal import compute_phone_check_delay, wait
@@ -60,6 +65,7 @@ class UserbotTransport:
         media_root: str | Path = "./evidence/media",
         media_max_bytes: int = 25 * 1024 * 1024,
         random_seed: int | None = None,
+        checkpoint_store: ActiveTakeoverStore | None = None,
     ) -> None:
         self.api_id = api_id
         self.api_hash = api_hash
@@ -74,6 +80,7 @@ class UserbotTransport:
         self.inbox_max_wait_s = max(self.inbox_debounce_s, inbox_max_wait_s)
         self.media_root = Path(media_root)
         self.media_max_bytes = max(0, media_max_bytes)
+        self.checkpoint_store = checkpoint_store
         self._rng = random.Random(random_seed)
         self._client = None
         # peer_id -> (SessionState, HashChain)
@@ -88,8 +95,132 @@ class UserbotTransport:
         self._inbound_last_at: dict[int, float] = {}
         self._inbound_check_at: dict[int, float] = {}
         self._inbound_events: dict[int, asyncio.Event] = {}
+        self._inflight_batches: dict[int, list[Message]] = {}
         self._media_analysis_tasks: dict[int, dict[int, asyncio.Task]] = {}
         self._takeover_seed_messages: dict[int, list[Message]] = {}
+        self._paused_recoveries: set[int] = set()
+        self.restore_takeovers()
+
+    def restore_takeovers(self) -> int:
+        """Load unfinished checkpoints as operator-paused sessions."""
+        if self.checkpoint_store is None:
+            return 0
+        restored = 0
+        for checkpoint in self.checkpoint_store.list():
+            session = checkpoint.session
+            if session.phase in {Phase.CLOSING, Phase.SEALED}:
+                self.checkpoint_store.delete(session.session_id)
+                continue
+            if session.peer_id in self._sessions:
+                continue
+            self._sessions[session.peer_id] = (session, checkpoint.chain)
+            if checkpoint.pending_messages:
+                self._takeover_seed_messages[session.peer_id] = list(
+                    checkpoint.pending_messages
+                )
+            self._paused_recoveries.add(session.peer_id)
+            self._checkpoint(session.peer_id)
+            audit_event(
+                "takeover_recovery",
+                "takeover_restored_paused",
+                component="transport.userbot",
+                payload={
+                    "pending_messages": len(checkpoint.pending_messages),
+                    "checkpoint_updated_ts": checkpoint.updated_ts,
+                },
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+                level="warning",
+            )
+            restored += 1
+        return restored
+
+    def recovery_status(self, peer_id: int) -> str:
+        return PAUSED_AFTER_RESTART if peer_id in self._paused_recoveries else ACTIVE
+
+    def _checkpoint_messages(self, peer_id: int) -> list[Message]:
+        messages = [
+            *self._takeover_seed_messages.get(peer_id, ()),
+            *self._inflight_batches.get(peer_id, ()),
+            *self._inbound_buffers.get(peer_id, ()),
+        ]
+        seen: set[int] = set()
+        unique: list[Message] = []
+        for message in messages:
+            if message.msg_id not in seen:
+                unique.append(message)
+                seen.add(message.msg_id)
+        return unique
+
+    def _checkpoint(self, peer_id: int) -> None:
+        if self.checkpoint_store is None:
+            return
+        entry = self._sessions.get(peer_id)
+        if entry is None:
+            return
+        session, chain = entry
+        self.checkpoint_store.save(
+            session,
+            chain,
+            pending_messages=self._checkpoint_messages(peer_id),
+            recovery_status=self.recovery_status(peer_id),
+        )
+
+    def checkpoint_takeover(self, peer_id: int) -> None:
+        """Persist a state mutation made by another control surface."""
+        self._checkpoint(peer_id)
+
+    def update_persona(self, peer_id: int, persona: str) -> None:
+        entry = self._sessions.get(peer_id)
+        if entry is None:
+            raise LookupError(f"no active takeover on {peer_id}")
+        entry[0].persona = persona
+        self._checkpoint(peer_id)
+
+    async def resume_recovery(self, peer_id: int) -> int:
+        """Explicitly resume a restored session and process its queued inbound messages."""
+        if peer_id not in self._sessions:
+            raise LookupError(f"no active takeover on {peer_id}")
+        if peer_id not in self._paused_recoveries:
+            raise ValueError(f"takeover {peer_id} is not recovery-paused")
+        session = self._sessions[peer_id][0]
+        self._paused_recoveries.remove(peer_id)
+        self._checkpoint(peer_id)
+        audit_event(
+            "takeover_recovery",
+            "takeover_recovery_resumed",
+            component="transport.userbot",
+            payload={"pending_messages": len(self._takeover_seed_messages.get(peer_id, ()))},
+            peer_id=peer_id,
+            session_id=session.session_id,
+        )
+        try:
+            return await self.process_pending_takeover(peer_id)
+        except Exception:
+            self._paused_recoveries.add(peer_id)
+            self._checkpoint(peer_id)
+            raise
+
+    def abandon_recovery(self, peer_id: int) -> tuple[SessionState, HashChain]:
+        """Discard a recovery-paused checkpoint after an explicit operator action."""
+        if peer_id not in self._paused_recoveries:
+            raise ValueError(f"takeover {peer_id} is not recovery-paused")
+        session = self._sessions[peer_id][0]
+        message_count = len(session.messages)
+        pending_count = len(self._takeover_seed_messages.get(peer_id, ()))
+        entry = self.end_takeover(peer_id)
+        if entry is None:  # guarded above; retained for a stable return type
+            raise LookupError(f"no active takeover on {peer_id}")
+        audit_event(
+            "takeover_recovery",
+            "takeover_recovery_abandoned",
+            component="transport.userbot",
+            payload={"messages": message_count, "pending_messages": pending_count},
+            peer_id=peer_id,
+            session_id=session.session_id,
+            level="warning",
+        )
+        return entry
 
     async def start(self) -> None:
         """Connect as the user and register the inbound handler."""
@@ -567,6 +698,12 @@ class UserbotTransport:
             session.identity_observed_ts = observed.identity_observed_at
         if pending_messages:
             self._takeover_seed_messages[peer_id] = pending_messages
+        try:
+            self._checkpoint(peer_id)
+        except Exception:
+            self._sessions.pop(peer_id, None)
+            self._takeover_seed_messages.pop(peer_id, None)
+            raise
         audit_event(
             "takeover",
             "takeover_started",
@@ -585,10 +722,25 @@ class UserbotTransport:
 
     async def process_pending_takeover(self, peer_id: int) -> int:
         """Process preserved pre-takeover messages after operator approval."""
+        if peer_id in self._paused_recoveries:
+            return 0
         messages = self._takeover_seed_messages.pop(peer_id, [])
         if not messages or peer_id not in self._sessions:
             return 0
-        await self._process_inbound_batch(peer_id, messages)
+        try:
+            await self._process_inbound_batch(peer_id, messages)
+        except Exception:
+            session = self._sessions.get(peer_id, (None, None))[0]
+            processed_ids = {
+                message.msg_id for message in getattr(session, "messages", ())
+            }
+            unprocessed = [
+                message for message in messages if message.msg_id not in processed_ids
+            ]
+            if unprocessed:
+                self._takeover_seed_messages[peer_id] = unprocessed
+            self._checkpoint(peer_id)
+            raise
         return len(messages)
 
     async def on_message(
@@ -622,10 +774,28 @@ class UserbotTransport:
             captured_ts=captured_ts,
             platform="telegram",
         )
+        if peer_id in self._paused_recoveries:
+            queued = self._takeover_seed_messages.setdefault(peer_id, [])
+            if not any(item.msg_id == message.msg_id for item in queued):
+                queued.append(message)
+            self._checkpoint(peer_id)
+            session = self._sessions[peer_id][0]
+            audit_event(
+                "takeover_recovery",
+                "inbound_queued_while_recovery_paused",
+                component="transport.userbot",
+                payload={"msg_id": msg_id, "queued_messages": len(queued)},
+                peer_id=peer_id,
+                session_id=session.session_id,
+                ts=ts,
+                level="warning",
+            )
+            return
         self._schedule_media_analysis(peer_id, message)
         loop = asyncio.get_running_loop()
         now = loop.time()
         self._inbound_buffers.setdefault(peer_id, []).append(message)
+        self._checkpoint(peer_id)
         if peer_id not in self._inbound_first_at:
             self._inbound_first_at[peer_id] = now
             session = self._sessions[peer_id][0]
@@ -793,32 +963,57 @@ class UserbotTransport:
         session, chain = entry
         if session.phase in {Phase.CLOSING, Phase.SEALED}:
             return
+        self._inflight_batches[peer_id] = list(batch)
+        self._checkpoint(peer_id)
         await self._resolve_media_analysis(peer_id, batch, session)
         loop = asyncio.get_running_loop()
         processing_started = loop.time()
         process_messages = getattr(self.engine, "process_messages", None)
         delayed_recording = callable(getattr(self.engine, "record_outbound", None))
-        if process_messages is not None:
-            if delayed_recording:
+        try:
+            if process_messages is not None:
+                if delayed_recording:
+                    out = await asyncio.to_thread(
+                        process_messages,
+                        session,
+                        chain,
+                        batch,
+                        record_outbound=False,
+                    )
+                else:
+                    out = await asyncio.to_thread(process_messages, session, chain, batch)
+            else:
+                latest = batch[-1]
+                combined = Message(
+                    "stranger",
+                    "\n".join(message.text for message in batch if message.text),
+                    latest.ts,
+                    latest.msg_id,
+                )
                 out = await asyncio.to_thread(
-                    process_messages,
+                    self.engine.process_turn,
                     session,
                     chain,
-                    batch,
-                    record_outbound=False,
+                    combined,
                 )
-            else:
-                out = await asyncio.to_thread(process_messages, session, chain, batch)
-        else:
-            latest = batch[-1]
-            combined = Message(
-                "stranger",
-                "\n".join(message.text for message in batch if message.text),
-                latest.ts,
-                latest.msg_id,
-            )
-            out = await asyncio.to_thread(self.engine.process_turn, session, chain, combined)
+        except Exception:
+            processed_ids = {message.msg_id for message in session.messages}
+            unprocessed = [message for message in batch if message.msg_id not in processed_ids]
+            if unprocessed:
+                queued = self._takeover_seed_messages.setdefault(peer_id, [])
+                queued.extend(
+                    message
+                    for message in unprocessed
+                    if not any(existing.msg_id == message.msg_id for existing in queued)
+                )
+            self._inflight_batches.pop(peer_id, None)
+            self._checkpoint(peer_id)
+            raise
         processing_elapsed = loop.time() - processing_started
+        # Persist the processed inbound state before attempting any Telegram send.
+        # A crash after this point can lose a drafted reply, but cannot replay it.
+        self._inflight_batches.pop(peer_id, None)
+        self._checkpoint(peer_id)
         log.info("userbot: processing peer=%s inbound_batch=%d", peer_id, len(batch))
         if session.phase in {Phase.CLOSING, Phase.SEALED} or peer_id not in self._sessions:
             return
@@ -1036,6 +1231,7 @@ class UserbotTransport:
         )
         if delayed_recording:
             self.engine.record_outbound(session, chain, text)
+        self._checkpoint(peer_id)
         return True
 
     async def send_as_user(self, peer_id: int, text: str) -> None:  # pragma: no cover
@@ -1074,8 +1270,12 @@ class UserbotTransport:
                 level="warning",
             )
         self._clear_inbound(peer_id)
-        entry = self._sessions.pop(peer_id, None)
+        entry = self._sessions.get(peer_id)
         if entry is not None:
+            if self.checkpoint_store is not None:
+                self.checkpoint_store.delete(entry[0].session_id)
+            entry = self._sessions.pop(peer_id, None)
+            self._paused_recoveries.discard(peer_id)
             audit_event(
                 "takeover",
                 "takeover_ended",
@@ -1095,6 +1295,7 @@ class UserbotTransport:
         self._inbound_last_at.pop(peer_id, None)
         self._inbound_check_at.pop(peer_id, None)
         self._inbound_events.pop(peer_id, None)
+        self._inflight_batches.pop(peer_id, None)
         task = self._inbound_tasks.pop(peer_id, None)
         try:
             current = asyncio.current_task()

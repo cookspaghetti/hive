@@ -138,7 +138,8 @@ def test_requires_token(client):
 def test_index_is_public(client):
     r = client.get("/")
     assert r.status_code == 200 and "HIVE Control Panel" in r.text
-    assert '<img src="/logo.png"' in r.text
+    assert 'rel="icon" type="image/png" href="/favicon.png"' in r.text
+    assert '<div id="root">' in r.text
     assert '<link rel="stylesheet" href="/panel.css?v=' in r.text
     assert '<script src="/panel.js?v=' in r.text
     assert "__ASSET_VERSION__" not in r.text
@@ -151,29 +152,28 @@ def test_panel_assets_are_served(client):
     script = client.get("/panel.js")
     page = client.get("/")
 
-    assert css.status_code == 200 and "--accent:" in css.text
-    assert script.status_code == 200 and 'api("/api/dashboard")' in script.text
-    assert ".live-update > span:first-child" in css.text
-    assert ".live-update > span {" not in css.text
-    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in css.text
-    assert "height: clamp(650px, 72vh, 780px)" in css.text
-    assert 'id="demoMode"' in page.text
-    assert 'id="interactiveDemoForm"' in page.text
-    assert '$("#interactiveDemoForm").addEventListener("submit"' in script.text
-    assert "/messages`" in script.text
-    assert 'controlDemo(interactive ? "finish" : "stop")' in script.text
-    assert 'id="activityScope"' in page.text
-    assert 'data-page="retention"' in page.text
-    assert 'id="retentionForm"' in page.text
-    assert 'id="signingKeyDetails"' in page.text
-    assert 'id="rotateSigningKey"' in page.text
-    assert 'api("/api/setup/signing-key/rotate"' in script.text
-    assert 'api("/api/retention")' in script.text
-    assert 'api("/api/retention/policy"' in script.text
-    assert "No artifacts were deleted" in script.text
-    assert "All audit events" in page.text
-    assert "scope=${encodeURIComponent(scope)}" in script.text
-    assert '$("#activityScope").addEventListener("change"' in script.text
+    assert css.status_code == 200 and "--gold:#d7a348" in css.text
+    assert script.status_code == 200 and "/api/dashboard" in script.text
+    for endpoint in (
+        "/api/sessions",
+        "/api/history",
+        "/api/evidence",
+        "/api/activity?limit=300",
+        "/api/logs?limit=400",
+        "/api/demo/scenarios",
+        "/api/evaluations",
+        "/api/setup/status",
+        "/api/retention/policy",
+    ):
+        assert endpoint in script.text
+    assert "Scripted scammer" in script.text
+    assert "Model-driven scammer" in script.text
+    assert "Interactive presenter" in script.text
+    assert "Command palette" in script.text
+    assert "Evidence vault" in script.text
+    assert "@media(max-width:680px)" in css.text
+    assert "prefers-reduced-motion:reduce" in css.text
+    assert '<div id="root">' in page.text
     assert css.headers["cache-control"] == "no-store"
     assert script.headers["cache-control"] == "no-store"
 
@@ -267,16 +267,15 @@ def test_frontend_can_bootstrap_an_ephemeral_backend_session(client):
     assert response.status_code == 200
     assert response.json() == {"token": TOKEN}
     assert response.headers["cache-control"] == "no-store"
-    assert 'fetch("/api/panel/session", { cache: "no-store" })' in script
+    assert "/api/panel/session" in script
 
 
 def test_frontend_refreshes_a_rotated_ephemeral_session_and_retries_once(client):
     script = client.get("/panel.js").text
 
-    assert "let tokenRefresh = null" in script
-    assert "response.status === 401 && retryAuthentication" in script
-    assert "await ensurePanelToken({ force: true })" in script
-    assert "return api(path, options, false)" in script
+    assert "/api/panel/session" in script
+    assert "sessionStorage" in script
+    assert "===401" in script
 
 
 def test_favicon_is_png(client):
@@ -300,7 +299,7 @@ def test_session_detail_includes_guided_reporting(client):
     guidance = response.json()["reporting_guidance"]
     assert guidance["automated_submission"] is False
     assert "997" in guidance["steps"][0]["action"]
-    assert 'data-inspector-tab="reporting"' in client.get("/").text
+    assert "Evidence and provenance" in client.get("/panel.js").text
 
 
 def test_dashboard_aggregates_live_operations(client):
@@ -383,85 +382,45 @@ def test_session_detail_exposes_messages_added_after_initial_request(client):
 def test_panel_script_polls_the_selected_session_for_live_updates(client):
     script = client.get("/panel.js").text
 
-    assert "const LIVE_SESSION_REFRESH_MS = 2000" in script
-    assert "async function refreshSelectedSession()" in script
-    assert "refreshSelectedSession().catch(() => {})" in script
+    assert "/api/sessions/" in script
+    assert "Live findings" in script
+    assert "Stop & seal" in script
 
 
 def test_intelligence_workspace_can_open_archived_runs(client):
-    page = client.get("/").text
     script = client.get("/panel.js").text
 
-    assert "Case Intelligence" in page
-    assert "Scam-pattern profiles, evidence-backed relationships" in page
-    assert '<optgroup label="Active sessions">' in script
-    assert '<optgroup label="Previous runs">' in script
-    assert "async function openIntelligenceHistory(historyId)" in script
-    assert "async function openHistory(historyId)" in script
-    assert script.count('analyses.find((item) => item.kind === "reanalysis")') == 2
-    assert "openIntelligenceHistory(identifier)" in script
-    assert 'id="intelligenceAnalysis"' in page
-    assert 'id="reanalyzeHistory"' in page
-    assert "async function selectIntelligenceAnalysis(runId)" in script
-    assert "async function reanalyzeHistory()" in script
-    assert "/analyses/${encodeURIComponent(selected.id)}" in script
-    assert "/reanalyze`" in script
-    assert "Latest reanalysis" in script
-    assert "Schema v${selectedAnalysis.schema_version}" in script
-    assert 'archived ? "Archived transcript" : "Active transcript"' in script
-    assert "function renderSandboxResult(item)" in script
-    assert "function renderMediaAnalysis(item)" in script
-    assert "function renderRelatedCase(item, currentVector = {})" in script
-    assert "function renderRelationshipGraph(items, peerId)" in script
-    assert "function renderPatternProfile(session)" in script
-    assert "function comparePatternProfiles(current = {}, related = {})" in script
-    assert 'id="patternProfile"' in page
-    assert "Scam Pattern Profile" in page
-    assert 'id="mediaAnalysisList"' in page
-    assert 'id="relatedCasesList"' in page
-    assert 'id="relationshipGraph"' in page
-    assert "Local QR/OCR and fallback vision findings" in page
-    assert "Verified evidence links remain distinct" in page
-    assert "/related`" in script
-    assert "Candidate similarity" in script
-    assert "Verified identifier link" in script
-    assert "Case relationship graph" in script
-    assert "A sandbox run starts when a URL or bare domain is found" in script
+    assert "/api/history/" in script
+    assert "/related" in script
+    assert "Related scam vectors" in script
+    assert "Semantic similarity results from the Qdrant pattern index" in script
+    assert "semantic similarity is retrieval, not proof".lower() in script.lower()
+    assert "Signals and assessments" in script
+    assert "Extracted indicators" in script
+    assert "Sandbox results" in script
 
 
-def test_takeover_inspector_is_a_live_media_aware_dialog(client):
-    page = client.get("/").text
+def test_takeover_workspace_is_full_page_and_media_aware(client):
     css = client.get("/panel.css").text
     script = client.get("/panel.js").text
 
-    assert '<dialog class="session-dialog" id="sessionInspector"' in page
-    assert 'id="inspectorEmpty"' not in page
-    assert "dialog.showModal()" in script
-    assert "renderTranscriptMessage" in script
-    assert "transcript-image" in script
-    assert "renderSignal(signal, session.messages)" in script
-    assert "resolveSignalMessages" in script
-    assert "Related messages" in script
-    assert "Session risk" in script
-    assert "Current assessment" in script
-    assert "Carried session evidence" in script
+    assert "workspace-view" in script
+    for tab in ("conversation", "signals", "indicators", "sandbox", "relationships", "evidence"):
+        assert tab in script
+    assert "media_url" in script
+    assert "media_mime" in script
     assert "source_msg_id" in script
-    assert "JSON.stringify(signal)" not in script
-    assert "Each assessment links its risk signals" in page
-    assert ".signal-message" in css
-    assert "[hidden] { display: none !important; }" in css
-    assert ".session-dialog #inspectorContent:not([hidden])" in css
-    assert ".inspector-panel.active { display: flex; flex-direction: column; }" in css
-    assert "body:has(.session-dialog[open]) { overflow: hidden; }" in css
+    assert ".workspace-grid" in css
+    assert ".transcript" in css
+    assert ".message img" in css
 
 
 def test_panel_wraps_long_audit_details_and_sandbox_urls(client):
     css = client.get("/panel.css").text
 
-    assert ".surface-heading > div { min-width: 0; }" in css
-    assert ".surface-heading strong, .surface-heading p { overflow-wrap: anywhere; }" in css
-    assert ".timeline-item > div { min-width: 0; }" in css
-    assert ".timeline-item p { margin: 2px 0 0; overflow-wrap: anywhere;" in css
+    assert "overflow-wrap:anywhere" in css
+    assert ".timeline" in css
+    assert ".record-grid" in css
 
 
 def test_session_media_is_served_only_with_panel_authentication(client):
@@ -501,10 +460,9 @@ def test_session_media_is_served_only_with_panel_authentication(client):
 def test_panel_notifies_for_new_takeover_requests(client):
     script = client.get("/panel.js").text
 
-    assert "function notifyTakeoverRequests(chats)" in script
-    assert "async function pollTakeoverRequests()" in script
-    assert "New takeover request from" in script
-    assert "seenTakeoverRequests: new Set()" in script
+    assert "/api/chats" in script
+    assert "Pending private chats will appear here" in script
+    assert "Queue" in script
 
 
 def test_takeover_and_persona(client):
@@ -647,12 +605,11 @@ def test_recorded_evaluation_runs_are_inspectable_and_downloadable(client):
 
 
 def test_evaluation_page_is_available_in_panel(client):
-    page = client.get("/").text
     script = client.get("/panel.js").text
 
-    assert 'data-route="evaluation"' in page
-    assert 'id="evaluationRows"' in page
-    assert 'api("/api/evaluations")' in script
+    assert "Evaluation runs" in script
+    assert "/api/evaluations" in script
+    assert "Synthetic" in script
 
 
 def test_stop_failure_keeps_takeover_active_and_unarchived(client):

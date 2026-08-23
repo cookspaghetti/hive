@@ -32,7 +32,11 @@ def test_frontend_image_serves_assets_and_proxies_backend_apis():
     dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")
     nginx = (ROOT / "frontend" / "nginx.conf.template").read_text(encoding="utf-8")
 
+    assert "FROM node:22-alpine@sha256:" in dockerfile
     assert "FROM nginx:" in dockerfile
+    assert "npm ci --prefix frontend" in dockerfile
+    assert "npm run build --prefix frontend" in dockerfile
+    assert "COPY --from=build" in dockerfile
     assert "panel.js" in dockerfile and "panel.css" in dockerfile
     assert "sha256sum" in dockerfile
     assert "docker-20260823" not in dockerfile

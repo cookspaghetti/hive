@@ -11,6 +11,7 @@ export function ConsoleView({ navigate, openSetup }: { navigate: (route: string)
   const attention = data?.sessions?.find((item) => Number(item.score || 0) >= .85);
 
   async function runtimeAction(action: "start" | "restart" | "stop") {
+    if (action === "stop" && !window.confirm("Stop the HIVE runtime? Telegram delivery and live analysis will pause, while the local panel and stored evidence remain available.")) return;
     try {
       await post(`/api/runtime/${action}`);
       await refresh();

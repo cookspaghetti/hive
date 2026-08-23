@@ -335,6 +335,21 @@ See [docs/PRIVACY_AND_RETENTION.md](docs/PRIVACY_AND_RETENTION.md) for the
 default thresholds, data-flow disclosure, access/review procedure, and the
 decisions that remain before formal participant testing.
 
+### Operational verification
+
+After starting or restarting the Compose stack, run the live non-destructive
+checks:
+
+```powershell
+task services:verify
+task models:verify
+task sandbox:verify
+```
+
+See [docs/OPERATIONAL_RUNBOOK.md](docs/OPERATIONAL_RUNBOOK.md) for deployment
+acceptance, safe restart/recovery, incident triage, non-destructive evaluation
+reset, evidence integrity, and shutdown procedures.
+
 Build the forensic sandbox image:
 
 ```powershell

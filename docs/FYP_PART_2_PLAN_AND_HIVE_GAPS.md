@@ -242,6 +242,11 @@ Work that cannot be completed without operator/supervisor involvement remains:
 
 11. **Architecture corrected: Qdrant is for cross-case scam patterns, not active-session recall.**
     Active replies use the bounded transcript and deterministic validated facts. The deployed `hive_cases` index uses privacy-reduced pattern vectors; PostgreSQL remains authoritative for exact identifiers and case profiles. Qdrant results are candidate-only and cannot establish common ownership.
+    Embedding compatibility is now controlled at prototype scope: FastEmbed is
+    pinned, mean pooling is explicit, collection and point fingerprints prevent
+    mixed-vector retrieval, and an audited PostgreSQL-to-Qdrant reindex verifies
+    exact eligible-case coverage. A dimension-changing model migration remains
+    a separately approved operational procedure.
 
 12. **Privacy and retention controls are partially closed in report-only mode.**
     HIVE now inventories filesystem, PostgreSQL, and Qdrant artifact classes;
@@ -393,7 +398,6 @@ Complete if time permits, otherwise document honestly as limitations:
 - Rootless/dedicated-VM sandbox redesign.
 - Approved, backup-aware retention enforcement and secure-disposal UI (the
   report-only inventory and review policy are implemented).
-- Key rotation UI.
 - Multi-platform support and Bahasa Malaysia.
 
 ### Gap plan schedule
@@ -411,9 +415,9 @@ Complete if time permits, otherwise document honestly as limitations:
 - **1 Sep:** final documentation freeze, PDF/render inspection, poster/video/package preparation.
 - **2 Sep:** final checks and submission before 11:00 p.m.
 
-## Current verification baseline (22 August 2026, after gap implementation)
+## Current verification baseline (23 August 2026, after gap implementation)
 
-- Pytest: 313 passed, 1 skipped, 2 warnings.
+- Pytest: 352 passed, 1 skipped, 1 warning.
 - Ruff: passed.
 - JavaScript syntax: passed.
 - Docker Compose configuration: passed.

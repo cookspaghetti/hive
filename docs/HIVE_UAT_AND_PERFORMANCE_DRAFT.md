@@ -37,7 +37,7 @@ legal review, or an external Telegram conversation has already taken place.
 
 | Area | Current verification | Result / evidence |
 | --- | --- | --- |
-| Code quality and regression | Ruff, Python tests, JavaScript syntax, Compose configuration | Pass: 348 tests passed, one intentionally skipped; one deprecation warning |
+| Code quality and regression | Ruff, Python tests, JavaScript syntax, Compose configuration | Pass: 352 tests passed, one intentionally skipped; one deprecation warning |
 | HVI extraction | 64-case versioned synthetic corpus | Precision 0.9821, recall 0.9821, F1 0.9821; the retained failure is one Manglish person-name boundary case |
 | English and Mandarin extraction | Corpus results by language | Pass: F1 1.0 for English and Mandarin cases |
 | Manglish extraction | Corpus results by language | Partial: F1 0.9; document and discuss the known name-boundary error |
@@ -272,6 +272,7 @@ acceptance.
 | UAT-35 | Responsive/accessibility acceptance | Complete core tasks at desktop and narrow/mobile viewport using keyboard only where feasible | Content reflows without overlap, focus is visible, labels/status are perceivable, dialog/control order is logical and critical meaning is not colour-only |  |  |
 | UAT-36 | Review privacy and retention inventory | Open Retention, compare the displayed counts with the controlled test dataset, change one review threshold and rescan | Filesystem/database/vector classes and data flows are understandable; old reviewable items are flagged; evidence/audit/checkpoints remain protected; saving records an audit event and deletes nothing |  |  |
 | UAT-37 | Inspect and rotate an approved test signing key | Record the fingerprint, try rotation while the agent runs, stop the agent, rotate with a stated reason, restart, then verify packages signed before and after | Running-agent rotation is blocked; the new path/fingerprint is unique and audited; the old key is retained; old and new packages both verify with their embedded public keys; no key material is displayed |  |  |
+| UAT-38 | Reindex scam-pattern vectors after an embedding change | Record PostgreSQL/Qdrant counts, run the dry-run, execute the reindex, then run the privacy verifier and a labelled similarity query | Empty authoritative sources are refused; eligible PostgreSQL and compatible Qdrant case IDs match exactly; stale points are removed; collection and point fingerprints match; privacy verifier is valid; candidate labels remain explicit |  |  |
 
 ## 6. Usability and qualitative questionnaire
 

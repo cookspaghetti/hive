@@ -308,6 +308,20 @@ audit ledger retain provenance. Only corrected, validated extraction results
 enter relationship edges and the index. Person-name similarity never creates a
 network edge.
 
+Every point and the collection metadata carry a deterministic embedding
+fingerprint covering the FastEmbed version, model, pooling, prefixes,
+dimension, and distance. Retrieval rejects unversioned/incompatible indexes
+and filters out mismatched points. Rebuild the derived index safely from
+authoritative PostgreSQL after an embedding change:
+
+```powershell
+docker compose run --rm --no-deps --entrypoint /app/.venv/bin/python backend -m hive.case_reindex --dry-run
+docker compose run --rm --no-deps --entrypoint /app/.venv/bin/python backend -m hive.case_reindex
+```
+
+See [the case-vector reindex procedure](docs/CASE_VECTOR_REINDEX.md) for the
+verification and dependency-upgrade rules.
+
 ### Privacy and retention inventory
 
 The panel's **Retention** workspace inventories signed evidence, captured media,
@@ -549,7 +563,8 @@ Get-Content -Raw scripts/verify_case_vector_privacy.py | docker compose exec -T 
 
 Both scripts are self-cleaning/read-only with respect to authoritative case
 records. The privacy verifier exits non-zero for an unexpected collection,
-schema version, payload key, or exact-identifier leak.
+schema version, embedding fingerprint/metadata mismatch, payload key, or
+exact-identifier leak.
 
 Run the same deterministic lint, test, extraction-accuracy, panel-syntax, and
 Compose checks enforced in GitHub Actions with `task ci`.

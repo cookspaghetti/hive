@@ -5,7 +5,12 @@ import asyncio
 import pytest
 
 from hive.config import Settings
-from hive.runtime_manager import ActiveSessionsError, HiveRuntimeManager, RuntimeNotReadyError
+from hive.runtime_manager import (
+    ActiveSessionsError,
+    HiveRuntimeManager,
+    RuntimeNotReadyError,
+    probe_llm,
+)
 
 
 def _run(coro):
@@ -159,6 +164,73 @@ def test_runtime_records_failed_llm_probe(tmp_path):
 
     assert manager.state == "error"
     assert manager.snapshot()["components"]["llm"]["state"] == "error"
+
+
+def test_llm_probe_accepts_cloud_aliases_and_verifies_generation(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    settings.vision_model = "qwen3.5:cloud"
+
+    class ModelResponse:
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {
+                "data": [
+                    {"id": "glm-5.1"},
+                    {"id": "glm-5.2"},
+                    {"id": "qwen3.5:397b"},
+                ]
+            }
+
+    calls = []
+
+    class FakeBackend:
+        def __init__(self, *args, **kwargs):
+            calls.append((args, kwargs))
+
+        def chat(self, model, messages, **kwargs):
+            calls.append((model, messages, kwargs))
+            return {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": "READY"},
+                        "finish_reason": "stop",
+                    }
+                ]
+            }
+
+        def close(self):
+            calls.append("closed")
+
+    monkeypatch.setattr("hive.runtime_manager.httpx.get", lambda *args, **kwargs: ModelResponse())
+    monkeypatch.setattr("hive.runtime_manager.OllamaBackend", FakeBackend)
+
+    detail = probe_llm(settings)
+
+    assert "generation verified with glm-5.1:cloud" in detail
+    assert calls[-1] == "closed"
+
+
+def test_llm_probe_rejects_unadvertised_configured_model(monkeypatch, tmp_path):
+    settings = _settings(tmp_path)
+    settings.llm_model_strong = "missing-model:cloud"
+
+    class ModelResponse:
+        @staticmethod
+        def raise_for_status():
+            return None
+
+        @staticmethod
+        def json():
+            return {"data": [{"id": "glm-5.1"}, {"id": "qwen3.5"}]}
+
+    monkeypatch.setattr("hive.runtime_manager.httpx.get", lambda *args, **kwargs: ModelResponse())
+
+    with pytest.raises(RuntimeError, match="missing-model:cloud"):
+        probe_llm(settings)
 
 
 def test_restart_requires_force_when_takeovers_are_active(tmp_path):

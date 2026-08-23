@@ -15,6 +15,7 @@ from hive.active_takeovers import build_active_takeover_store
 from hive.case_intelligence import build_case_intelligence_store
 from hive.config import Settings, load_settings
 from hive.history import build_history_store
+from hive.llm.client import OllamaBackend, extract_chat_text
 from hive.logging_setup import get_logger
 from hive.runtime import build_engine
 from hive.security.session_store import load_session
@@ -36,8 +37,19 @@ _COMPONENTS = (
 )
 
 
+def _model_is_advertised(model: str, available: set[str]) -> bool:
+    if model in available:
+        return True
+    base = model
+    if base.endswith(":cloud"):
+        base = base.removesuffix(":cloud")
+    elif base.endswith("-cloud"):
+        base = base.removesuffix("-cloud")
+    return any(candidate == base or candidate.startswith(f"{base}:") for candidate in available)
+
+
 def probe_llm(settings: Settings) -> str:
-    """Validate LLM authentication and enumerate models without consuming tokens."""
+    """Validate authentication, configured model names, and real text generation."""
     url = settings.llm_base_url.rstrip("/") + "/models"
     response = httpx.get(
         url,
@@ -58,10 +70,22 @@ def probe_llm(settings: Settings) -> str:
         settings.llm_model_light,
         settings.vision_model,
     }
-    missing = sorted(model for model in configured if model not in available)
+    missing = sorted(model for model in configured if not _model_is_advertised(model, available))
     detail = f"endpoint reachable; {len(available)} model(s) advertised"
     if missing:
-        detail += f"; configured model(s) not advertised: {', '.join(missing)}"
+        raise RuntimeError(f"configured LLM model(s) not advertised: {', '.join(missing)}")
+    backend = OllamaBackend(settings.llm_base_url, settings.llm_api_key, timeout=30.0)
+    try:
+        raw = backend.chat(
+            settings.llm_model_cheap,
+            [{"role": "user", "content": "Reply with exactly READY."}],
+            temperature=0.0,
+            max_tokens=128,
+        )
+        extract_chat_text(raw)
+    finally:
+        backend.close()
+    detail += f"; generation verified with {settings.llm_model_cheap}"
     return detail
 
 

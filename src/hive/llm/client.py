@@ -12,6 +12,7 @@ run fully offline with a fake.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, cast
 
@@ -51,15 +52,55 @@ class ChatBackend(Protocol):
     ) -> dict[str, Any]: ...
 
 
+class LLMResponseError(RuntimeError):
+    """The provider replied successfully but did not return usable model text."""
+
+
+def extract_chat_text(raw: dict[str, Any]) -> str:
+    """Return assistant text or fail clearly on malformed/empty provider replies."""
+    choices = raw.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        raise LLMResponseError("LLM response did not contain a completion choice")
+    choice = choices[0]
+    message = choice.get("message")
+    text = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(text, str) or not text.strip():
+        reason = str(choice.get("finish_reason") or "unknown")
+        raise LLMResponseError(f"LLM returned empty assistant content (finish_reason={reason})")
+    return text
+
+
+def _is_loading_response(raw: dict[str, Any]) -> bool:
+    choices = raw.get("choices")
+    if not isinstance(choices, list) or not choices or not isinstance(choices[0], dict):
+        return False
+    choice = choices[0]
+    message = choice.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    return choice.get("finish_reason") == "load" and not str(content or "").strip()
+
+
 class OllamaBackend:
     """Real HTTP backend against Ollama Cloud's OpenAI-compatible endpoint."""
 
-    def __init__(self, base_url: str, api_key: str, timeout: float = 60.0) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        api_key: str,
+        timeout: float = 60.0,
+        *,
+        max_load_retries: int = 3,
+        load_retry_s: float = 1.0,
+        sleeper: Callable[[float], None] = time.sleep,
+    ) -> None:
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=timeout,
         )
+        self._max_load_retries = max(0, max_load_retries)
+        self._load_retry_s = max(0.0, load_retry_s)
+        self._sleeper = sleeper
 
     def chat(
         self,
@@ -67,12 +108,33 @@ class OllamaBackend:
         messages: list[dict[str, Any]],
         **kw: Any,
     ) -> dict[str, Any]:
-        resp = self._client.post(
-            "/chat/completions",
-            json={"model": model, "messages": messages, **kw},
+        for attempt in range(self._max_load_retries + 1):
+            resp = self._client.post(
+                "/chat/completions",
+                json={"model": model, "messages": messages, **kw},
+            )
+            resp.raise_for_status()
+            raw = cast(dict[str, Any], resp.json())
+            if not _is_loading_response(raw):
+                return raw
+            if attempt == self._max_load_retries:
+                break
+            delay = self._load_retry_s * (attempt + 1)
+            log.warning(
+                "LLM model loading: model=%s retry=%d/%d delay=%.1fs",
+                model,
+                attempt + 1,
+                self._max_load_retries,
+                delay,
+            )
+            self._sleeper(delay)
+        raise LLMResponseError(
+            f"LLM model {model!r} remained in provider loading state after "
+            f"{self._max_load_retries + 1} attempt(s)"
         )
-        resp.raise_for_status()
-        return cast(dict[str, Any], resp.json())
+
+    def close(self) -> None:
+        self._client.close()
 
 
 class LLMClient:
@@ -117,7 +179,7 @@ class LLMClient:
             raise
         latency = time.perf_counter() - started
 
-        text = raw["choices"][0]["message"]["content"]
+        text = extract_chat_text(raw)
         usage = raw.get("usage", {})
         pt = int(usage.get("prompt_tokens", 0))
         ct = int(usage.get("completion_tokens", 0))
@@ -192,7 +254,7 @@ class VisionClient:
             )
             log.error("vision call failed: model=%s err=%s", self._model, exc)
             raise
-        text = raw["choices"][0]["message"]["content"]
+        text = extract_chat_text(raw)
         audit_event(
             "vision_response",
             "vision_description_received",

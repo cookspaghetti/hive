@@ -13,7 +13,7 @@ COPY src/hive/webpanel/resources/panel.html /tmp/panel.html
 
 RUN sed \
       -e 's/__SESSION_TOKEN__//g' \
-      -e 's/__ASSET_VERSION__/docker/g' \
+      -e 's/__ASSET_VERSION__/docker-20260823c/g' \
       -e 's|__LOGO__|<span class="brandmark"><img src="/logo.png" alt=""></span>|g' \
       /tmp/panel.html > /usr/share/nginx/html/index.html \
     && rm /tmp/panel.html

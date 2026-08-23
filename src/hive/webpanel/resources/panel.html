@@ -22,17 +22,19 @@
         <p class="nav-group">Operate</p>
         <button class="nav-item active" type="button" data-route="overview"><span class="nav-key">01</span>Overview</button>
         <button class="nav-item" type="button" data-route="takeovers"><span class="nav-key">02</span>Takeovers <span class="nav-count" id="takeoverCount">0</span></button>
-        <button class="nav-item" type="button" data-route="intelligence"><span class="nav-key">03</span>Intelligence</button>
+        <button class="nav-item" type="button" data-route="intelligence"><span class="nav-key">03</span>Case Intelligence</button>
         <button class="nav-item" type="button" data-route="evidence"><span class="nav-key">04</span>Evidence</button>
+        <button class="nav-item" type="button" data-route="evaluation"><span class="nav-key">05</span>Evaluation</button>
+        <button class="nav-item" type="button" data-route="demo"><span class="nav-key">06</span>Demo lab</button>
 
         <p class="nav-group">Observe</p>
-        <button class="nav-item" type="button" data-route="activity"><span class="nav-key">05</span>Activity</button>
-        <button class="nav-item" type="button" data-route="logs"><span class="nav-key">06</span>Logs</button>
+        <button class="nav-item" type="button" data-route="activity"><span class="nav-key">07</span>Activity</button>
+        <button class="nav-item" type="button" data-route="logs"><span class="nav-key">08</span>Logs</button>
 
         <p class="nav-group">Configure</p>
-        <button class="nav-item" type="button" data-route="models"><span class="nav-key">07</span>Models</button>
-        <button class="nav-item" type="button" data-route="telegram"><span class="nav-key">08</span>Telegram</button>
-        <button class="nav-item" type="button" data-route="security"><span class="nav-key">09</span>Security</button>
+        <button class="nav-item" type="button" data-route="models"><span class="nav-key">09</span>Models</button>
+        <button class="nav-item" type="button" data-route="telegram"><span class="nav-key">10</span>Telegram</button>
+        <button class="nav-item" type="button" data-route="security"><span class="nav-key">11</span>Security</button>
       </nav>
 
       <div class="sidebar-footer">
@@ -132,10 +134,12 @@
                   <button class="active" type="button" role="tab" data-inspector-tab="transcript">Transcript</button>
                   <button type="button" role="tab" data-inspector-tab="signals">Signals</button>
                   <button type="button" role="tab" data-inspector-tab="indicators">Indicators</button>
+                  <button type="button" role="tab" data-inspector-tab="reporting">Report</button>
                 </div>
                 <div class="inspector-panel active" data-inspector-panel="transcript"><div class="transcript" id="inspectorTranscript"></div></div>
                 <div class="inspector-panel" data-inspector-panel="signals"><p class="signal-guide">Each assessment links its risk signals to the stranger messages behind them. Behavioral signals refer to the latest assessed message batch; extracted indicators retain their original message reference.</p><div class="signal-list" id="inspectorSignals"></div></div>
                 <div class="inspector-panel" data-inspector-panel="indicators"><div class="indicator-list" id="inspectorIndicators"></div></div>
+                <div class="inspector-panel" data-inspector-panel="reporting"><div class="reporting-guide" id="inspectorReporting"></div></div>
                 <div class="inspector-actions" id="inspectorActions"><button class="button danger" id="sealSession" type="button">Stop and seal evidence</button><button class="button secondary" type="button" data-route-link="intelligence">Open intelligence view</button></div>
               </div>
             </dialog>
@@ -144,19 +148,70 @@
         </section>
 
         <section class="page" data-page="intelligence" aria-labelledby="intelligenceTitle">
-          <div class="page-heading"><div><p class="context-line">Investigation</p><h1 id="intelligenceTitle">Intelligence workspace</h1><p>Extracted indicators and disposable-browser findings from active and previous takeover runs.</p></div><div class="intelligence-controls"><label class="inline-select"><span>Case</span><select id="intelligenceSession"></select></label><label class="inline-select"><span>Analysis</span><select id="intelligenceAnalysis" disabled><option>Live analysis</option></select></label><button class="button secondary compact" id="reanalyzeHistory" type="button" hidden>Reanalyse case</button><span class="inline-message" id="reanalysisStatus" role="status"></span></div></div>
+          <div class="page-heading"><div><p class="context-line">Investigation</p><h1 id="intelligenceTitle">Case Intelligence</h1><p>Scam-pattern profiles, evidence-backed relationships, and technical findings from active and archived cases.</p></div><div class="intelligence-controls"><label class="inline-select"><span>Case</span><select id="intelligenceSession"></select></label><label class="inline-select"><span>Analysis</span><select id="intelligenceAnalysis" disabled><option>Live analysis</option></select></label><button class="button secondary compact" id="reanalyzeHistory" type="button" hidden>Reanalyse case</button><span class="inline-message" id="reanalysisStatus" role="status"></span></div></div>
           <div class="intelligence-summary" id="intelligenceSummary"></div>
           <div class="intelligence-grid">
+            <article class="surface pattern-profile-surface"><div class="surface-heading"><div><h2>Scam Pattern Profile</h2><p>The human-readable, identifier-redacted profile used for semantic retrieval.</p></div><span class="status-chip neutral" id="patternProfileStatus">Awaiting case</span></div><div id="patternProfile"></div></article>
+            <article class="surface relationship-surface"><div class="surface-heading"><div><h2>Case Relationships</h2><p>Verified evidence links remain distinct from pattern-only candidates.</p></div><div class="relationship-legend"><span><i class="exact"></i>Verified</span><span><i class="candidate"></i>Candidate</span></div></div><div class="relationship-graph" id="relationshipGraph"></div><div class="related-case-list" id="relatedCasesList"></div></article>
+            <div class="intelligence-section-heading"><p class="context-line">Case findings</p><h2>Grounded technical evidence</h2><p>Raw findings remain available separately from HIVE's synthesized pattern profile.</p></div>
             <article class="surface data-surface"><div class="surface-heading"><div><h2>High-value indicators</h2><p>Copyable values linked to their source messages.</p></div></div><div class="table-scroll"><table><thead><tr><th>Type</th><th>Value</th><th>Confidence</th><th>Source</th></tr></thead><tbody id="hviRows"></tbody></table></div></article>
-            <article class="surface"><div class="surface-heading"><div><h2>Sandbox analysis</h2><p>Network and page signals produced in disposable containers.</p></div></div><div class="sandbox-list" id="sandboxList"></div></article>
-            <article class="surface media-intelligence"><div class="surface-heading"><div><h2>Media intelligence</h2><p>Local QR/OCR and fallback vision findings linked to the source message.</p></div></div><div class="sandbox-list" id="mediaAnalysisList"></div></article>
-            <article class="surface media-intelligence"><div class="surface-heading"><div><h2>Related cases</h2><p>Verified shared identifiers are distinct from candidate-only script similarity.</p></div></div><div class="relationship-graph" id="relationshipGraph"></div><div class="related-case-list" id="relatedCasesList"></div></article>
+            <article class="surface"><div class="surface-heading"><div><h2>Sandbox findings</h2><p>Network and page signals produced in disposable containers.</p></div></div><div class="sandbox-list" id="sandboxList"></div></article>
+            <article class="surface media-intelligence"><div class="surface-heading"><div><h2>Media findings</h2><p>Local QR/OCR and fallback vision findings linked to the source message.</p></div></div><div class="sandbox-list" id="mediaAnalysisList"></div></article>
           </div>
         </section>
 
         <section class="page" data-page="evidence" aria-labelledby="evidenceTitle">
-          <div class="page-heading"><div><p class="context-line">Evidence vault</p><h1 id="evidenceTitle">Sealed cases</h1><p>Generated PDF bundles with detached signature and SHA-256 identification.</p></div></div>
+          <div class="page-heading"><div><p class="context-line">Evidence vault</p><h1 id="evidenceTitle">Sealed cases</h1><p>Portable evidence packages contain the PDF, detached signatures, verification key, and signed checksum manifest.</p></div></div>
           <article class="surface data-surface"><div class="surface-heading"><div><h2>Evidence bundles</h2><p id="evidenceCount">Checking the vault</p></div></div><div class="table-scroll"><table><thead><tr><th>Peer</th><th>Created</th><th>Size</th><th>SHA-256</th><th>Signature</th><th><span class="sr-only">Download</span></th></tr></thead><tbody id="evidenceRows"></tbody></table></div></article>
+        </section>
+
+        <section class="page" data-page="evaluation" aria-labelledby="evaluationTitle">
+          <div class="page-heading"><div><p class="context-line">Controlled research</p><h1 id="evaluationTitle">Evaluation runs</h1><p>Recorded synthetic conversations and their model, extraction, verdict, detection, chain, and evidence results. These are kept separate from real takeover cases.</p></div></div>
+          <article class="surface data-surface"><div class="surface-heading"><div><h2>Red-team conversations</h2><p id="evaluationCount">Checking recorded runs</p></div></div><div class="table-scroll"><table><thead><tr><th>Scenario</th><th>Persona</th><th>Verdict</th><th>Score</th><th>Turns</th><th>Extraction F1</th><th>Evidence</th><th><span class="sr-only">Inspect</span></th></tr></thead><tbody id="evaluationRows"></tbody></table></div></article>
+          <dialog class="session-dialog" id="evaluationInspector" aria-labelledby="evaluationInspectorTitle">
+            <div class="evaluation-inspector"><div class="inspector-header"><div><span class="mono" id="evaluationInspectorMeta"></span><h2 id="evaluationInspectorTitle">Evaluation run</h2></div><button class="icon-button" id="closeEvaluationInspector" type="button" aria-label="Close evaluation inspector">×</button></div><div class="evaluation-summary" id="evaluationSummary"></div><div class="evaluation-detail-grid"><section><h3>Conversation</h3><div class="transcript evaluation-transcript" id="evaluationTranscript"></div></section><section><h3>Extracted indicators</h3><div class="indicator-list" id="evaluationIndicators"></div><h3>Run checks</h3><div class="definition-list" id="evaluationChecks"></div></section></div><div class="inspector-actions" id="evaluationActions"></div></div>
+          </dialog>
+        </section>
+
+        <section class="page" data-page="demo" aria-labelledby="demoTitle">
+          <div class="page-heading"><div><p class="context-line">Presentation mode</p><h1 id="demoTitle">Live demo lab</h1><p>Run a predefined synthetic conversation through HIVE’s real reply, extraction, verdict, and evidence pipeline while keeping Telegram and real case records disconnected.</p></div><div class="demo-safety"><span class="status-chip warning">Synthetic data</span><span class="status-chip success">Telegram disconnected</span></div></div>
+          <div class="demo-layout">
+            <form class="surface form-surface demo-launcher" id="demoForm">
+              <div class="surface-heading"><div><h2>Demo configuration</h2><p>All identifiers and URLs are reserved fixtures. URL analysis uses the deterministic no-network sandbox.</p></div></div>
+              <label class="field"><span>Demo mode</span><select id="demoMode" required></select></label>
+              <label class="field"><span>Scenario</span><select id="demoScenario" required></select></label>
+              <label class="field"><span>Victim persona</span><select id="demoPersona" required><option value="confused_elderly">Confused elderly</option><option value="naive_young_adult">Naive young adult</option><option value="overseas_worker">Overseas worker</option><option value="small_business_owner">Small business owner</option></select></label>
+              <label class="field"><span>Playback speed</span><select id="demoSpeed" required></select></label>
+              <div class="demo-scenario-copy" id="demoScenarioCopy"></div>
+              <div class="form-actions"><button class="button primary" id="startDemo" type="submit">Start live demo</button><span class="inline-message" id="demoMessage" role="status"></span></div>
+            </form>
+            <article class="surface demo-status-surface">
+              <div class="surface-heading"><div><h2>Run status</h2><p class="mono" id="demoRunId">No demo selected</p></div><span class="status-chip info" id="demoStatus">Idle</span></div>
+              <div class="demo-progress" aria-label="Demo progress"><span id="demoStage">Choose a scenario to begin.</span><progress id="demoProgress" value="0" max="3"></progress></div>
+              <div class="definition-list" id="demoMetrics"><div class="definition-row"><span>Mode</span><strong>Synthetic / isolated</strong></div><div class="definition-row"><span>Telegram</span><strong>Disconnected</strong></div></div>
+              <div class="demo-controls" id="demoControls">
+                <button class="button secondary" id="pauseDemo" type="button" disabled>Pause</button>
+                <button class="button secondary" id="resumeDemo" type="button" disabled>Resume</button>
+                <button class="button secondary" id="advanceDemo" type="button" disabled>Next exchange</button>
+                <button class="button danger-quiet" id="stopDemo" type="button" disabled>Stop</button>
+              </div>
+              <button class="button secondary demo-download" id="downloadDemoEvidence" type="button" hidden>Download verified demo evidence</button>
+            </article>
+            <article class="surface demo-conversation">
+              <div class="surface-heading"><div><h2>Live conversation</h2><p id="demoConversationCopy">Each line is shown as a separate mobile-chat message.</p></div><span class="live-update"><span aria-hidden="true"></span><span id="demoLiveLabel">Waiting</span></span></div>
+              <div class="transcript demo-transcript" id="demoTranscript"></div>
+              <form class="interactive-composer" id="interactiveDemoForm" hidden><label><span>Presenter scammer message</span><input id="interactiveDemoMessage" maxlength="500" autocomplete="off" placeholder="Send one synthetic scammer message" required></label><button class="button primary" id="sendInteractiveDemo" type="submit">Send message</button></form>
+            </article>
+            <article class="surface demo-intelligence">
+              <div class="surface-heading"><div><h2>Live findings</h2><p>Indicators and milestones update after each pipeline exchange.</p></div></div>
+              <h3>Extracted indicators</h3><div class="indicator-list" id="demoIndicators"></div>
+              <h3>Run timeline</h3><div class="timeline compact" id="demoTimeline"></div>
+            </article>
+            <article class="surface data-surface demo-history">
+              <div class="surface-heading"><div><h2>Previous demo runs</h2><p id="demoHistoryCount">No runs loaded</p></div></div>
+              <div class="table-scroll"><table><thead><tr><th>Run</th><th>Mode</th><th>Scenario</th><th>Status</th><th>Verdict</th><th>Messages</th><th>Evidence</th><th><span class="sr-only">Open</span></th></tr></thead><tbody id="demoHistoryRows"></tbody></table></div>
+            </article>
+          </div>
         </section>
 
         <section class="page" data-page="activity" aria-labelledby="activityTitle">

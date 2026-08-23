@@ -6,8 +6,10 @@
   const routes = [
     ["overview", "Overview", "Runtime posture, metrics, and current work"],
     ["takeovers", "Takeovers", "Pending requests and active engagements"],
-    ["intelligence", "Intelligence", "Indicators and sandbox findings"],
+    ["intelligence", "Case Intelligence", "Pattern profiles, relationships, and grounded findings"],
     ["evidence", "Evidence", "Sealed case bundles"],
+    ["evaluation", "Evaluation", "Recorded synthetic conversations and metrics"],
+    ["demo", "Demo lab", "Run a synthetic conversation through the live HIVE pipeline"],
     ["activity", "Audit ledger", "Permanent actions, messages, and decisions"],
     ["logs", "Logs", "Redacted live diagnostics"],
     ["models", "Models", "Endpoint and tier assignments"],
@@ -66,6 +68,11 @@
     selectedHistoryId: null,
     selectedAnalysisId: null,
     analysisRuns: [],
+    evaluations: [],
+    demoCatalog: null,
+    demoRuns: [],
+    demoRunId: null,
+    demoRefreshing: false,
     activity: [],
     logs: [],
     activityHiddenBefore: 0,
@@ -281,6 +288,8 @@
       if (route === "overview") await loadDashboard();
       if (["takeovers", "intelligence"].includes(route)) await loadOperations();
       if (route === "evidence") await loadEvidence();
+      if (route === "evaluation") await loadEvaluations();
+      if (route === "demo") await loadDemo();
       if (route === "activity") await loadActivity();
       if (route === "logs") await loadLogs();
       if (route === "models") await loadModels();
@@ -602,6 +611,8 @@
       const extractor = item.extractor && item.extractor !== "unknown" ? ` · ${titleCase(item.extractor)}` : "";
       return `<div class="indicator-item"><strong>${escapeHtml(titleCase(item.kind))}</strong><p class="mono">${escapeHtml(item.value)}</p><span>${Math.round(Number(item.confidence || 0) * 100)}% confidence${escapeHtml(extractor)}${escapeHtml(source)}</span></div>`;
     }).join("") : emptyState("No indicators extracted", "URLs, wallet addresses, accounts, and phone numbers will appear here.");
+    const guidance = session.reporting_guidance;
+    $("#inspectorReporting").innerHTML = guidance ? `<div class="signal-guide"><strong>${escapeHtml(guidance.title)}</strong><p>${escapeHtml(guidance.disclaimer)}</p></div>${guidance.steps.map((step, index) => `<article class="indicator-item"><strong>${index + 1}. ${escapeHtml(step.title)}</strong><p>${escapeHtml(step.action)}</p>${step.source_url ? `<a href="${escapeHtml(step.source_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(step.source_label)}</a>` : ""}</article>`).join("")}<p class="signal-guide">Reviewed ${escapeHtml(guidance.reviewed_date)}. Verify current official instructions before acting.</p>` : emptyState("No reporting guide", "Reporting guidance is unavailable.");
   }
 
   function renderIntelligenceSessionOptions() {
@@ -615,6 +626,9 @@
       $("#mediaAnalysisList").innerHTML = emptyState("No media findings", "No takeover run is available.");
       $("#relatedCasesList").innerHTML = emptyState("No related cases", "No takeover run is available.");
       $("#relationshipGraph").innerHTML = "";
+      $("#patternProfile").innerHTML = emptyState("No pattern profile", "Start and seal a takeover to build a privacy-reduced scam pattern.");
+      $("#patternProfileStatus").className = "status-chip neutral";
+      $("#patternProfileStatus").textContent = "Awaiting case";
       $("#intelligenceAnalysis").innerHTML = "<option>No analysis runs</option>";
       $("#intelligenceAnalysis").disabled = true;
       $("#reanalyzeHistory").hidden = true;
@@ -679,8 +693,46 @@
     $("#hviRows").innerHTML = session.hvi_items?.length ? session.hvi_items.map((item) => `<tr><td>${escapeHtml(titleCase(item.kind))}</td><td class="mono">${escapeHtml(item.value)}</td><td>${Math.round(Number(item.confidence || 0) * 100)}%</td><td>${item.source_msg_id != null ? `Message ${Number(item.source_msg_id)}` : archived ? "Archived transcript" : "Active transcript"}</td></tr>`).join("") : tableEmpty(4, "No high-value indicators", archived ? "No indicators were retained for this run." : "The extraction pipeline has not found a supported value.");
     $("#sandboxList").innerHTML = session.sandbox_results?.length ? session.sandbox_results.map(renderSandboxResult).join("") : emptyState("No sandbox analysis", "A sandbox run starts when a URL or bare domain is found in an incoming message.");
     $("#mediaAnalysisList").innerHTML = session.media_analysis?.length ? session.media_analysis.map(renderMediaAnalysis).join("") : emptyState("No media intelligence", "Captured images are checked locally for QR codes and text before optional vision analysis.");
-    $("#relatedCasesList").innerHTML = session.related_cases?.length ? session.related_cases.map(renderRelatedCase).join("") : emptyState("No related cases", "No verified identifier overlap or sufficiently similar historical script was found.");
+    renderPatternProfile(session);
+    $("#relatedCasesList").innerHTML = session.related_cases?.length ? session.related_cases.map((item) => renderRelatedCase(item, session.scam_vector)).join("") : emptyState("No related cases", "No verified identifier overlap or sufficiently similar historical pattern was found.");
     $("#relationshipGraph").innerHTML = renderRelationshipGraph(session.related_cases || [], session.peer_id);
+  }
+
+  function renderPatternTags(values, fallback) {
+    return values?.length
+      ? `<div class="pattern-tags">${values.map((value) => `<span>${escapeHtml(titleCase(value))}</span>`).join("")}</div>`
+      : `<span class="pattern-empty">${escapeHtml(fallback)}</span>`;
+  }
+
+  function renderPatternProfile(session) {
+    const vector = session.scam_vector || {};
+    const metadata = session.case_intelligence || {};
+    const hasProfile = ["method_labels", "indicator_kinds", "payment_channels", "sandbox_traits"].some((key) => vector[key]?.length) || Boolean(vector.redacted_script);
+    const status = $("#patternProfileStatus");
+    if (!hasProfile) {
+      status.className = "status-chip neutral";
+      status.textContent = "Insufficient signals";
+      $("#patternProfile").innerHTML = emptyState("No scam pattern yet", "The profile will develop as grounded tactics and technical findings are observed.");
+      return;
+    }
+    if (!metadata.semantic_matching) {
+      status.className = "status-chip neutral";
+      status.textContent = "Exact links only";
+    } else if (metadata.similarity_eligible) {
+      status.className = "status-chip ready";
+      status.textContent = "Similarity enabled";
+    } else {
+      status.className = "status-chip neutral";
+      status.textContent = "Not similarity eligible";
+    }
+    const modelName = String(metadata.embedding_model || "").split("/").pop();
+    const meta = [
+      `Schema v${Number(vector.schema_version || 1)}`,
+      metadata.semantic_matching ? `Threshold ${Math.round(Number(metadata.similarity_threshold || 0) * 100)}%` : "Semantic matching disabled",
+      modelName || "No embedding model",
+      "Identifiers redacted",
+    ];
+    $("#patternProfile").innerHTML = `<div class="pattern-field pattern-field-wide"><span>Observed tactics</span>${renderPatternTags(vector.method_labels, "No supported tactic classified")}</div><div class="pattern-facts"><div class="pattern-field"><span>Identifier types</span>${renderPatternTags(vector.indicator_kinds, "None retained")}</div><div class="pattern-field"><span>Payment channels</span>${renderPatternTags(vector.payment_channels, "None observed")}</div><div class="pattern-field pattern-field-wide"><span>Sandbox behaviour</span>${renderPatternTags(vector.sandbox_traits, "No sandbox traits observed")}</div></div><div class="pattern-field pattern-field-wide"><span>Redacted conversation pattern</span>${vector.redacted_script ? `<pre class="pattern-script">${escapeHtml(vector.redacted_script)}</pre>` : `<span class="pattern-empty">No stranger-authored pattern retained</span>`}</div><div class="pattern-meta">${meta.map((item) => `<span title="${escapeHtml(metadata.embedding_model || item)}">${escapeHtml(item)}</span>`).join("")}</div><p class="pattern-disclaimer">This profile supports retrieval and comparison. It does not prove that two cases involve the same actor.</p>`;
   }
 
   function renderRelationshipGraph(items, peerId) {
@@ -703,16 +755,35 @@
     return `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Case relationship graph"><g>${edges}</g><g class="relationship-node current" transform="translate(${cx} ${cy})"><circle r="38"></circle><text y="-2">Current</text><text y="14">Peer ${escapeHtml(peerId)}</text></g>${nodes}</svg>`;
   }
 
-  function renderRelatedCase(item) {
+  function comparePatternProfiles(current = {}, related = {}) {
+    const fields = [
+      ["method_keys", "Shared tactics"],
+      ["indicator_kinds", "Shared indicator types"],
+      ["payment_channels", "Shared payment channels"],
+      ["sandbox_traits", "Shared sandbox behaviour"],
+    ];
+    return fields.flatMap(([key, label]) => {
+      const relatedValues = new Set(related[key] || []);
+      const values = [...new Set(current[key] || [])].filter((value) => relatedValues.has(value));
+      return values.length ? [{ label, values }] : [];
+    });
+  }
+
+  function renderRelatedCase(item, currentVector = {}) {
     const exact = item.relationship === "shared_identifier";
     const label = exact ? "Verified identifier link" : "Candidate similarity";
-    const reasons = (item.reasons || []).map((reason) => {
+    const evidenceReasons = (item.reasons || []).filter((reason) => reason.kind !== "semantic_similarity").map((reason) => {
       const value = exact && reason.value ? ` · ${reason.value}` : "";
       return `<span>${escapeHtml(titleCase(reason.kind))}${escapeHtml(value)}</span>`;
-    }).join("");
+    });
+    const relatedVector = item.pattern_profile || {};
+    const overlaps = comparePatternProfiles(currentVector, relatedVector);
+    const overlapReasons = overlaps.map((overlap) => `<span title="${escapeHtml(overlap.label)}">${escapeHtml(overlap.label)} · ${escapeHtml(overlap.values.map(titleCase).join(", "))}</span>`);
+    const reasons = [...evidenceReasons, ...overlapReasons].join("") || `<span>Similar redacted conversation pattern</span>`;
     const methods = (item.methods || []).map((method) => method.label || titleCase(method.key)).join(", ");
     const historyId = item.related_history_id || item.related_case_id;
-    return `<div class="related-case"><div class="surface-heading"><div><strong>Peer ${escapeHtml(item.peer_id ?? "unknown")}</strong><p>${escapeHtml(methods || "No method label retained")}</p></div><span class="status-chip ${exact ? "likely_scam" : "neutral"}">${escapeHtml(label)}</span></div><div class="related-case-reasons">${reasons}</div><div class="signal-detail-row"><span>Match confidence</span><strong>${Math.round(Number(item.score || 0) * 100)}%</strong></div>${item.semantic_score != null ? `<div class="signal-detail-row"><span>Semantic candidate</span><strong>${Math.round(Number(item.semantic_score) * 100)}%</strong></div>` : ""}<button class="table-button" type="button" data-intelligence-history-id="${escapeHtml(historyId)}">Open case</button></div>`;
+    const comparison = `<details class="pattern-comparison"><summary>Compare pattern profiles</summary><div class="comparison-grid"><div><span>Current case</span>${renderPatternTags(currentVector.method_labels, "No classified tactics")}</div><div><span>Related case</span>${renderPatternTags(relatedVector.method_labels, "No classified tactics")}</div></div><div class="comparison-facts"><span>Related indicator types</span>${renderPatternTags(relatedVector.indicator_kinds, "None retained")}</div><p>${exact ? "This relationship is supported by exact retained evidence." : "This is a retrieval candidate based on the redacted pattern; it is not an attribution."}</p></details>`;
+    return `<div class="related-case"><div class="surface-heading"><div><strong>Peer ${escapeHtml(item.peer_id ?? "unknown")}</strong><p>${escapeHtml(methods || "No method label retained")}</p></div><span class="status-chip ${exact ? "likely_scam" : "info"}">${escapeHtml(label)}</span></div><div class="related-case-reasons">${reasons}</div><div class="signal-detail-row"><span>${exact ? "Relationship confidence" : "Pattern similarity"}</span><strong>${Math.round(Number(item.score || 0) * 100)}%</strong></div>${item.semantic_score != null ? `<div class="signal-detail-row"><span>Pattern similarity</span><strong>${Math.round(Number(item.semantic_score) * 100)}%</strong></div>` : ""}${comparison}<button class="table-button" type="button" data-intelligence-history-id="${escapeHtml(historyId)}">Open related case</button></div>`;
   }
 
   function renderMediaAnalysis(item) {
@@ -762,7 +833,188 @@
   async function loadEvidence() {
     const rows = await api("/api/evidence");
     $("#evidenceCount").textContent = `${rows.length} sealed bundle${rows.length === 1 ? "" : "s"}`;
-    $("#evidenceRows").innerHTML = rows.length ? rows.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${formatDate(item.created_ts)}</td><td>${formatBytes(item.size)}</td><td><div class="hash" title="${escapeHtml(item.sha256)}">${escapeHtml(item.sha256)}</div></td><td><span class="status-chip ${item.signature_present ? "success" : "error"}">${item.signature_present ? "Signed" : "Unsigned"}</span></td><td class="actions"><button class="table-button" type="button" data-download-evidence="${escapeHtml(item.download_url)}" data-evidence-filename="${escapeHtml(item.filename)}">Download PDF</button></td></tr>`).join("") : tableEmpty(6, "No evidence bundles", "Stop and seal a takeover to create the first case file.");
+    $("#evidenceRows").innerHTML = rows.length ? rows.map((item) => `<tr><td class="mono">${Number(item.peer_id)}</td><td>${formatDate(item.created_ts)}</td><td>${formatBytes(item.size)}</td><td><div class="hash" title="${escapeHtml(item.sha256)}">${escapeHtml(item.sha256)}</div></td><td><span class="status-chip ${item.signature_present && item.package_present ? "success" : "error"}">${item.signature_present && item.package_present ? "Packaged" : item.signature_present ? "PDF only" : "Unsigned"}</span></td><td class="actions"><button class="table-button" type="button" data-download-evidence="${escapeHtml(item.download_url)}" data-evidence-filename="${escapeHtml(item.filename)}">PDF</button>${item.package_present ? `<button class="table-button" type="button" data-download-evidence="${escapeHtml(item.package_download_url)}" data-evidence-filename="${escapeHtml(item.package_filename)}">Evidence ZIP</button>` : ""}</td></tr>`).join("") : tableEmpty(6, "No evidence bundles", "Stop and seal a takeover to create the first case file.");
+  }
+
+  async function loadEvaluations() {
+    const rows = await api("/api/evaluations");
+    state.evaluations = rows;
+    const verified = rows.filter((item) => item.evidence_verified && item.chain_valid).length;
+    $("#evaluationCount").textContent = `${rows.length} recorded run${rows.length === 1 ? "" : "s"} · ${verified} chain and evidence verified`;
+    $("#evaluationRows").innerHTML = rows.length ? rows.map((item) => `<tr><td><strong>${escapeHtml(titleCase(item.scenario || item.archetype))}</strong><br><span class="mono">${escapeHtml(item.run_group)}</span></td><td>${escapeHtml(personaLabels[item.persona] || titleCase(item.persona))}<br><span>${escapeHtml(item.language || "Unspecified")}</span></td><td><span class="status-chip ${chipClass(item.verdict)}">${escapeHtml(titleCase(item.verdict))}</span></td><td>${percentage(item.verdict_score)}</td><td>${Number(item.exchanges || item.turns || 0)}</td><td>${item.f1 == null ? "Needs annotation" : percentage(item.f1)}</td><td><span class="status-chip ${item.evidence_verified && item.chain_valid ? "success" : "error"}">${item.evidence_verified && item.chain_valid ? "Verified" : "Check failed"}</span></td><td class="actions"><button class="table-button" type="button" data-open-evaluation="${escapeHtml(item.id)}">Inspect</button></td></tr>`).join("") : tableEmpty(8, "No evaluation runs", "Run task evaluate:redteam to record synthetic conversations.");
+  }
+
+  async function openEvaluation(runId) {
+    try {
+      const run = await api(`/api/evaluations/${encodeURIComponent(runId)}`);
+      $("#evaluationInspectorTitle").textContent = titleCase(run.scenario || run.archetype);
+      $("#evaluationInspectorMeta").textContent = `${personaLabels[run.persona] || titleCase(run.persona)} · ${run.language || "Unspecified"} · ${run.run_group}`;
+      $("#evaluationSummary").innerHTML = [
+        ["Verdict", `${titleCase(run.verdict)} · ${percentage(run.verdict_score)}`],
+        ["Exchanges", run.exchanges || run.turns || 0],
+        ["Duration", formatDuration(Math.round(Number(run.duration_s || 0)))],
+        ["Extraction F1", run.extraction?.f1 == null ? "Needs annotation" : percentage(run.extraction.f1)],
+        ["Model tiers", (run.agent_tiers || []).map(titleCase).join(", ") || "None"],
+      ].map(([label, value]) => `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+      const transcript = (run.transcript || []).map(([speaker, text]) => ({ role: speaker === "victim" ? "agent" : "stranger", text, ts: null }));
+      $("#evaluationTranscript").innerHTML = transcript.length ? transcript.map(renderTranscriptMessage).join("") : emptyState("No transcript", "This run did not retain conversation messages.");
+      $("#evaluationIndicators").innerHTML = (run.hvi_items || []).length ? run.hvi_items.map((item) => `<div class="indicator-item"><strong>${escapeHtml(titleCase(item.kind))}</strong><p class="mono">${escapeHtml(item.value)}</p><span>${percentage(item.confidence)} · Message ${Number(item.source_msg_id)}</span></div>`).join("") : emptyState("No indicators", "No indicators were retained in this run.");
+      const checks = [
+        ["Expected verdict", run.verdict_correct],
+        ["Hash chain", run.chain_valid],
+        ["Evidence package", run.evidence_verified],
+        ["Guardrail flags", Number(run.guardrail_flags || 0)],
+        ["Bot probes", Number(run.bot_probes || 0)],
+        ["Explicit detection", run.bot_detected],
+        ["Sandbox runs", Number(run.sandbox_runs || 0)],
+      ];
+      $("#evaluationChecks").innerHTML = checks.map(([label, value]) => `<div class="definition-row"><span>${escapeHtml(label)}</span><strong>${typeof value === "boolean" ? value ? "Pass / yes" : "No" : escapeHtml(value)}</strong></div>`).join("");
+      $("#evaluationActions").innerHTML = run.package_available ? `<button class="button secondary" type="button" data-download-evidence="${escapeHtml(run.package_download_url)}" data-evidence-filename="${escapeHtml(run.package_filename)}">Download verified evidence ZIP</button>` : "";
+      const dialog = $("#evaluationInspector");
+      if (!dialog.open) dialog.showModal();
+    } catch (error) { toast(error.message, "error"); }
+  }
+
+  const activeDemoStatuses = new Set(["running", "paused", "processing", "awaiting_input", "sealing", "stopping"]);
+
+  function renderDemoScenarioCopy() {
+    const key = $("#demoScenario").value;
+    const scenario = state.demoCatalog?.scenarios?.find((item) => item.key === key);
+    const modeKey = $("#demoMode").value || "scripted";
+    const mode = state.demoCatalog?.modes?.find((item) => item.key === modeKey);
+    $("#demoScenarioCopy").innerHTML = scenario
+      ? `<strong>${escapeHtml(mode?.label || titleCase(modeKey))}${mode?.recommended ? " · Recommended" : ""}</strong>${escapeHtml(mode?.description || "Controlled synthetic conversation.")}<br><br><strong>${escapeHtml(scenario.title)}</strong>${escapeHtml(scenario.description)}<br>${escapeHtml(scenario.language)} · ${modeKey === "interactive" ? "presenter-controlled exchanges" : `${Number(scenario.exchanges)} planned exchanges`}`
+      : "Select a controlled scenario.";
+    if (modeKey === "interactive") {
+      $("#demoSpeed").value = "normal";
+      $("#demoSpeed").disabled = true;
+    } else if (!state.demoRuns.some((item) => activeDemoStatuses.has(item.status))) {
+      $("#demoSpeed").disabled = false;
+    }
+  }
+
+  function renderDemo(run = null) {
+    const status = run?.status || "idle";
+    const active = activeDemoStatuses.has(status);
+    const paused = status === "paused";
+    const mode = run?.mode || "scripted";
+    $("#demoRunId").textContent = run?.id || "No demo selected";
+    $("#demoStatus").textContent = titleCase(status);
+    $("#demoStatus").className = `status-chip ${status === "cancelled" || status === "interrupted" ? "warning" : chipClass(status)}`;
+    $("#demoStage").textContent = run?.stage || "Choose a scenario to begin.";
+    $("#demoProgress").max = Number(run?.total_exchanges || Math.max(3, Number(run?.current_exchange || 0) + 1));
+    $("#demoProgress").value = Number(run?.current_exchange || 0);
+    $("#demoLiveLabel").textContent = active ? paused ? "Paused" : "Live" : run ? "Recorded" : "Waiting";
+
+    const metrics = run ? [
+      ["Mode", state.demoCatalog?.modes?.find((item) => item.key === mode)?.label || titleCase(mode)],
+      ["Verdict", `${titleCase(run.verdict)} · ${percentage(run.verdict_score)}`],
+      ["Progress", mode === "interactive" ? `${Number(run.current_exchange || 0)} presenter exchange(s)` : `${Number(run.current_exchange || 0)} / ${Number(run.total_exchanges || 0)} exchanges`],
+      ["Messages", `${(run.messages || []).length} separate bubbles`],
+      ["Indicators", (run.hvi_items || []).length],
+      ["Sandbox", `${(run.sandbox_results || []).length} deterministic run(s)`],
+      ["Model tiers", (run.tiers || []).map(titleCase).join(", ") || "Waiting"],
+      ["Audit chain", run.audit?.valid === false ? "Check failed" : run.audit?.events ? `${run.audit.events} events · verified` : "Recording"],
+      ["Telegram", "Disconnected"],
+    ] : [["Mode", "Synthetic / isolated"], ["Telegram", "Disconnected"]];
+    $("#demoMetrics").innerHTML = metrics.map(([label, value]) => `<div class="definition-row"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("");
+
+    const transcript = $("#demoTranscript");
+    const follow = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80;
+    transcript.innerHTML = (run?.messages || []).length
+      ? run.messages.map(renderTranscriptMessage).join("")
+      : emptyState("No demo messages yet", mode === "interactive" ? "Send the presenter’s first scammer message below." : "Start a scenario to watch each scammer and HIVE message appear separately.");
+    if (follow) transcript.scrollTop = transcript.scrollHeight;
+    $("#demoIndicators").innerHTML = (run?.hvi_items || []).length
+      ? run.hvi_items.map((item) => `<div class="indicator-item"><strong>${escapeHtml(titleCase(item.kind))}</strong><p class="mono">${escapeHtml(item.value)}</p><span>${percentage(item.confidence)} · Message ${Number(item.source_msg_id)}</span></div>`).join("")
+      : emptyState("No indicators yet", "Findings will appear after each analysed exchange.");
+    $("#demoTimeline").innerHTML = renderActivity(run?.timeline || []);
+
+    $("#pauseDemo").disabled = mode === "interactive" || !active || paused || ["sealing", "stopping"].includes(status);
+    $("#resumeDemo").disabled = mode === "interactive" || !paused;
+    $("#advanceDemo").disabled = mode === "interactive" || !active || run?.speed !== "step" || ["sealing", "stopping"].includes(status);
+    $("#stopDemo").disabled = !active || status === "stopping";
+    $("#stopDemo").textContent = mode === "interactive" ? "End and seal" : "Stop";
+    const anyActive = state.demoRuns.some((item) => activeDemoStatuses.has(item.status));
+    $("#startDemo").disabled = anyActive;
+    ["#demoMode", "#demoScenario", "#demoPersona", "#demoSpeed"].forEach((selector) => { $(selector).disabled = anyActive || (selector === "#demoSpeed" && $("#demoMode").value === "interactive"); });
+    const composer = $("#interactiveDemoForm");
+    composer.hidden = mode !== "interactive" || !active;
+    $("#interactiveDemoMessage").disabled = status !== "awaiting_input";
+    $("#sendInteractiveDemo").disabled = status !== "awaiting_input";
+    $("#demoConversationCopy").textContent = mode === "interactive" ? "The presenter sends one scammer bubble at a time; HIVE responds through the live pipeline." : mode === "model_driven" ? "The fixed opener is followed by dynamically generated scammer bubbles." : "Fixed scammer bursts and HIVE replies are shown as separate mobile-chat messages.";
+    const download = $("#downloadDemoEvidence");
+    download.hidden = !run?.evidence_available;
+    download.dataset.downloadEvidence = run?.evidence_download_url || "";
+    download.dataset.evidenceFilename = run?.evidence_filename || "";
+    download.textContent = run?.evidence_verified ? "Download verified demo evidence" : "Download demo evidence";
+    setMessage("#demoMessage", run?.error || "", run?.error ? "error" : "");
+  }
+
+  function renderDemoHistory() {
+    const rows = state.demoRuns;
+    $("#demoHistoryCount").textContent = `${rows.length} isolated demo run${rows.length === 1 ? "" : "s"}`;
+    $("#demoHistoryRows").innerHTML = rows.length ? rows.map((run) => `<tr><td><strong class="mono">${escapeHtml(run.id)}</strong><br><span>${formatDate(run.created_ts)}</span></td><td>${escapeHtml(state.demoCatalog?.modes?.find((item) => item.key === (run.mode || "scripted"))?.label || titleCase(run.mode || "scripted"))}</td><td>${escapeHtml(run.scenario?.title || titleCase(run.scenario?.key))}<br><span>${escapeHtml(personaLabels[run.persona] || titleCase(run.persona))}</span></td><td><span class="status-chip ${run.status === "cancelled" || run.status === "interrupted" ? "warning" : chipClass(run.status)}">${escapeHtml(titleCase(run.status))}</span></td><td>${escapeHtml(titleCase(run.verdict))}<br><span>${percentage(run.verdict_score)}</span></td><td>${(run.messages || []).length}</td><td><span class="status-chip ${run.evidence_verified ? "success" : run.evidence_available ? "warning" : "info"}">${run.evidence_verified ? "Verified" : run.evidence_available ? "Created" : "None"}</span></td><td class="actions"><button class="table-button" type="button" data-open-demo="${escapeHtml(run.id)}">Open</button></td></tr>`).join("") : tableEmpty(8, "No demo runs", "Start a scenario to create the first isolated run.");
+  }
+
+  async function loadDemo() {
+    if (state.demoRefreshing) return;
+    state.demoRefreshing = true;
+    try {
+      const [catalog, runs] = await Promise.all([api("/api/demo/scenarios"), api("/api/demo/runs")]);
+      state.demoCatalog = catalog;
+      state.demoRuns = runs;
+      if (!$("#demoScenario").options.length) {
+        $("#demoMode").innerHTML = catalog.modes.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label)}${item.recommended ? " (recommended)" : ""}</option>`).join("");
+        $("#demoScenario").innerHTML = catalog.scenarios.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.title)}</option>`).join("");
+        $("#demoSpeed").innerHTML = catalog.speeds.map((item) => `<option value="${escapeHtml(item.key)}">${escapeHtml(item.label)}</option>`).join("");
+      }
+      renderDemoScenarioCopy();
+      const selected = runs.find((item) => item.id === state.demoRunId);
+      const active = runs.find((item) => activeDemoStatuses.has(item.status));
+      const run = selected || active || runs[0] || null;
+      if (run) state.demoRunId = run.id;
+      renderDemo(run);
+      renderDemoHistory();
+    } finally { state.demoRefreshing = false; }
+  }
+
+  async function startDemo(event) {
+    event.preventDefault();
+    await withLoading("demo-start", $("#startDemo"), async () => {
+      try {
+        const run = await api("/api/demo/runs", { method: "POST", body: JSON.stringify({ mode: $("#demoMode").value, scenario: $("#demoScenario").value, persona: $("#demoPersona").value, speed: $("#demoSpeed").value }) });
+        state.demoRunId = run.id;
+        toast("Synthetic live demo started.", "success");
+        await loadDemo();
+      } catch (error) { setMessage("#demoMessage", error.message, "error"); }
+    });
+  }
+
+  async function controlDemo(action) {
+    if (!state.demoRunId) return;
+    try {
+      const run = await api(`/api/demo/runs/${encodeURIComponent(state.demoRunId)}/${action}`, { method: "POST", body: "{}" });
+      const index = state.demoRuns.findIndex((item) => item.id === run.id);
+      if (index >= 0) state.demoRuns[index] = run;
+      renderDemo(run);
+      await loadDemo();
+    } catch (error) { toast(error.message, "error"); }
+  }
+
+  async function sendInteractiveDemo(event) {
+    event.preventDefault();
+    if (!state.demoRunId) return;
+    const input = $("#interactiveDemoMessage");
+    const text = input.value.trim();
+    if (!text) return;
+    await withLoading("demo-message", $("#sendInteractiveDemo"), async () => {
+      try {
+        await api(`/api/demo/runs/${encodeURIComponent(state.demoRunId)}/messages`, { method: "POST", body: JSON.stringify({ text }) });
+        input.value = "";
+        await loadDemo();
+      } catch (error) { toast(error.message, "error"); }
+    });
   }
 
   async function downloadEvidence(downloadUrl, filename) {
@@ -1001,6 +1253,22 @@
     });
     $("#intelligenceAnalysis").addEventListener("change", (event) => selectIntelligenceAnalysis(event.target.value));
     $("#reanalyzeHistory").addEventListener("click", reanalyzeHistory);
+    $("#closeEvaluationInspector").addEventListener("click", () => $("#evaluationInspector").close());
+    $("#demoForm").addEventListener("submit", startDemo);
+    $("#demoMode").addEventListener("change", renderDemoScenarioCopy);
+    $("#demoScenario").addEventListener("change", renderDemoScenarioCopy);
+    $("#interactiveDemoForm").addEventListener("submit", sendInteractiveDemo);
+    $("#pauseDemo").addEventListener("click", () => controlDemo("pause"));
+    $("#resumeDemo").addEventListener("click", () => controlDemo("resume"));
+    $("#advanceDemo").addEventListener("click", () => controlDemo("advance"));
+    $("#stopDemo").addEventListener("click", async () => {
+      const run = state.demoRuns.find((item) => item.id === state.demoRunId);
+      const interactive = (run?.mode || "scripted") === "interactive";
+      const confirmed = interactive
+        ? await confirmAction("End this interactive demo?", "HIVE will seal the conversation and create its evidence package.", "End and seal")
+        : await confirmAction("Stop this synthetic demo?", "The current run will stop after any in-progress model call and seal its partial evidence when possible.", "Stop demo");
+      if (confirmed) controlDemo(interactive ? "finish" : "stop");
+    });
     $("#activitySearch").addEventListener("input", renderActivityPage);
     $("#activityScope").addEventListener("change", () => loadActivity().catch((error) => toast(error.message, "error")));
     $("#activitySeverity").addEventListener("change", renderActivityPage);
@@ -1024,12 +1292,16 @@
       const historyId = event.target.closest("[data-history-id]")?.dataset.historyId;
       const intelligenceHistoryId = event.target.closest("[data-intelligence-history-id]")?.dataset.intelligenceHistoryId;
       const downloadButton = event.target.closest("[data-download-evidence]");
+      const evaluationId = event.target.closest("[data-open-evaluation]")?.dataset.openEvaluation;
+      const demoId = event.target.closest("[data-open-demo]")?.dataset.openDemo;
       if (route) navigate(route);
       if (takeover) beginTakeover(Number(takeover));
       if (peer) { if (state.route === "overview") navigate("takeovers"); openSession(Number(peer)); }
       if (historyId) openHistory(historyId);
       if (intelligenceHistoryId) { navigate("intelligence"); openIntelligenceHistory(intelligenceHistoryId); }
       if (downloadButton) downloadEvidence(downloadButton.dataset.downloadEvidence, downloadButton.dataset.evidenceFilename);
+      if (evaluationId) openEvaluation(evaluationId);
+      if (demoId) { state.demoRunId = demoId; renderDemo(state.demoRuns.find((item) => item.id === demoId)); }
     });
     document.addEventListener("keydown", (event) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") { event.preventDefault(); $("#openCommand").click(); }
@@ -1055,6 +1327,10 @@
       if (document.hidden || !["takeovers", "intelligence"].includes(state.route)) return;
       refreshSelectedSession().catch(() => {});
     }, LIVE_SESSION_REFRESH_MS);
+    setInterval(() => {
+      if (document.hidden || state.route !== "demo") return;
+      loadDemo().catch((error) => toast(error.message, "error"));
+    }, 900);
   }
 
   init();

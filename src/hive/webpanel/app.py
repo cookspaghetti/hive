@@ -28,12 +28,20 @@ from hive.case_intelligence import (
     CaseIntelligenceStore,
     build_case_intelligence_store,
     build_case_profile,
+    build_live_case_profile,
 )
 from hive.config import load_settings
+from hive.demo import (
+    DemoBusyError,
+    DemoNotFoundError,
+    DemoRuntimeError,
+    DemoService,
+)
 from hive.history import HistoryStore, build_history_store
 from hive.logging_setup import get_logger
 from hive.provisioning import EnvStore, TelethonLoginManager
 from hive.reanalysis_service import ReanalysisRunner, ReanalysisService
+from hive.reporting import reporting_guidance
 from hive.runtime_manager import ActiveSessionsError, RuntimeNotReadyError, probe_llm
 from hive.takeover import (
     TakeoverBusyError,
@@ -41,6 +49,7 @@ from hive.takeover import (
     TakeoverNotFoundError,
     TakeoverSealError,
 )
+from hive.vault.package import evidence_package_path, parse_evidence_package_name
 from hive.vault.paths import parse_bundle_name
 from hive.webpanel.assets import LOGO_PATH, PANEL_CSS_PATH, PANEL_JS_PATH
 from hive.webpanel.observability import get_observation_hub
@@ -109,6 +118,12 @@ def _session_summary(peer_id, session) -> dict:
 def _session_detail(peer_id, session) -> dict:
     detail = _session_summary(peer_id, session)
     detail["session_id"] = session.session_id
+    detail["peer_identity"] = {
+        "display_name": session.peer_display_name,
+        "username": session.peer_username,
+        "observed_ts": session.identity_observed_ts,
+        "platform": "telegram",
+    }
     detail["messages"] = [
         {
             "role": m.role,
@@ -121,6 +136,9 @@ def _session_detail(peer_id, session) -> dict:
             "media_size": m.media_size,
             "media_available": bool(m.media_path),
             "media_sha256": m.media_sha256,
+            "captured_ts": m.captured_ts,
+            "platform": m.platform,
+            "pre_takeover": m.pre_takeover,
             "media_url": (
                 f"/api/media/{session.session_id}/{m.msg_id}" if m.media_path else None
             ),
@@ -140,6 +158,7 @@ def _session_detail(peer_id, session) -> dict:
     detail["sandbox_results"] = session.sandbox_results
     detail["media_analysis"] = session.media_analysis
     detail["signal_trail"] = session.signal_trail[-20:]
+    detail["reporting_guidance"] = reporting_guidance()
     return detail
 
 
@@ -159,6 +178,7 @@ def _history_detail(record: dict[str, Any]) -> dict[str, Any]:
         )
         messages.append(message)
     detail["messages"] = messages
+    detail["reporting_guidance"] = reporting_guidance()
     return detail
 
 
@@ -196,6 +216,41 @@ def _history_with_analysis(
             detail[field] = analysis[field]
     detail["selected_analysis"] = analysis_summary(analysis)
     return detail
+
+
+def _safe_scam_vector(profile: dict[str, Any]) -> dict[str, Any]:
+    """Return the explainable pattern fields, never the numeric embedding."""
+    vector = profile.get("scam_vector") or {}
+    return {
+        "schema_version": int(vector.get("schema_version") or 1),
+        "method_keys": list(vector.get("method_keys") or []),
+        "method_labels": list(vector.get("method_labels") or []),
+        "indicator_kinds": list(vector.get("indicator_kinds") or []),
+        "payment_channels": list(vector.get("payment_channels") or []),
+        "sandbox_traits": list(vector.get("sandbox_traits") or []),
+        "redacted_script": str(vector.get("redacted_script") or ""),
+    }
+
+
+def _pattern_overlap(
+    current: dict[str, Any],
+    related: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Explain semantic proximity using the canonical, human-readable fields."""
+    current_vector = _safe_scam_vector(current)
+    related_vector = _safe_scam_vector(related)
+    fields = (
+        ("method_keys", "Shared tactics"),
+        ("indicator_kinds", "Shared indicator types"),
+        ("payment_channels", "Shared payment channels"),
+        ("sandbox_traits", "Shared sandbox behaviour"),
+    )
+    explanations = []
+    for key, label in fields:
+        values = sorted(set(current_vector[key]) & set(related_vector[key]))
+        if values:
+            explanations.append({"kind": key, "label": label, "values": values})
+    return explanations
 
 
 def _pending_takeover_requests(userbot: Any) -> list[dict[str, object]]:
@@ -380,6 +435,7 @@ def create_app(
     case_intelligence_store: CaseIntelligenceStore | None = None,
     reanalysis_runner: ReanalysisRunner | None = None,
     audit_ledger: AuditLedger | None = None,
+    demo_service: DemoService | None = None,
 ) -> FastAPI:
     """Create one panel that remains available across Telegram restarts."""
     if runtime_manager is None:
@@ -424,6 +480,37 @@ def create_app(
         case_intelligence=case_intelligence,
         **({"runner": reanalysis_runner} if reanalysis_runner is not None else {}),
     )
+    semantic_enabled = bool(getattr(configured, "use_case_similarity", False))
+    semantic_threshold = float(
+        getattr(configured, "case_similarity_threshold", 0.72)
+    )
+    semantic_model = str(
+        getattr(
+            configured,
+            "case_embedding_model",
+            "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        )
+    )
+
+    def attach_pattern_profile(
+        detail: dict[str, Any],
+        profile: dict[str, Any],
+        *,
+        source: str,
+    ) -> dict[str, Any]:
+        eligible = profile.get("verdict") != "likely_benign" and bool(
+            float(profile.get("score") or 0) >= 0.5 or profile.get("indicators")
+        )
+        detail["scam_vector"] = _safe_scam_vector(profile)
+        detail["case_intelligence"] = {
+            "source": source,
+            "semantic_matching": semantic_enabled,
+            "similarity_eligible": eligible,
+            "embedding_model": semantic_model if semantic_enabled else None,
+            "similarity_threshold": semantic_threshold if semantic_enabled else None,
+            "privacy_mode": "identifier_redacted",
+        }
+        return detail
     fallback_takeovers = (
         TakeoverCoordinator(
             runtime.engine,
@@ -439,6 +526,11 @@ def create_app(
     telethon_login = login_manager or TelethonLoginManager(store)
     observations = get_observation_hub()
     audit = audit_ledger or get_audit_ledger()
+    demos = demo_service or DemoService(
+        project_root / "evidence" / "demos",
+        project_root,
+        lambda: runtime,
+    )
     migrate_history_ids = getattr(history, "migrate_legacy_ids", None)
     if migrate_history_ids is not None:
         migrate_history_ids()
@@ -450,11 +542,20 @@ def create_app(
         if record is None or record.get("replay_of"):
             continue
         embedded = record.get("analysis") or {}
+        profile = build_case_profile(record)
         existing = case_intelligence.get(str(record["id"]))
-        if existing and existing.get("analysis_run_id") == embedded.get("id"):
-            continue
         try:
-            case_intelligence.index(build_case_profile(record))
+            current_schema = (existing or {}).get("scam_vector", {}).get("schema_version")
+            if (
+                existing
+                and existing.get("analysis_run_id") == embedded.get("id")
+                and current_schema == profile["scam_vector"]["schema_version"]
+            ):
+                backfill_vector = getattr(case_intelligence, "backfill_vector", None)
+                if backfill_vector is not None:
+                    backfill_vector(profile)
+                continue
+            case_intelligence.index(profile)
         except Exception:
             log.exception("case intelligence: startup backfill failed case=%s", record["id"])
     observations.event("runtime", "Control panel ready", "Local operator console initialized")
@@ -468,6 +569,7 @@ def create_app(
         if start_task is not None and not start_task.done():
             start_task.cancel()
         await telethon_login.close()
+        demos.shutdown()
         if auto_start:
             await runtime.stop(force=True)
 
@@ -681,6 +783,7 @@ def create_app(
             peer_id, bundle_id = parsed
             data = path.read_bytes()
             signature = Path(str(path) + ".sig")
+            package = evidence_package_path(path)
             stat = path.stat()
             rows.append(
                 {
@@ -693,9 +796,229 @@ def create_app(
                     "signature_present": signature.is_file(),
                     "signature_size": signature.stat().st_size if signature.is_file() else 0,
                     "download_url": f"/api/evidence/{path.name}",
+                    "package_present": package.is_file(),
+                    "package_filename": package.name if package.is_file() else None,
+                    "package_size": package.stat().st_size if package.is_file() else 0,
+                    "package_download_url": (
+                        f"/api/evidence-packages/{package.name}"
+                        if package.is_file()
+                        else None
+                    ),
                 }
             )
         return sorted(rows, key=lambda row: float(row["created_ts"]), reverse=True)
+
+    def evaluation_records() -> dict[str, dict[str, Any]]:
+        evaluation_root = (project_root / "evaluation" / "results").resolve()
+        if not evaluation_root.is_dir():
+            return {}
+        records: dict[str, dict[str, Any]] = {}
+        for source in evaluation_root.glob("**/redteam_runs.json"):
+            try:
+                payload = json.loads(source.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(payload, list):
+                continue
+            relative = source.relative_to(evaluation_root).as_posix()
+            for index, raw in enumerate(payload):
+                if not isinstance(raw, dict):
+                    continue
+                run_id = hashlib.sha256(f"{relative}:{index}".encode()).hexdigest()[:16]
+                # Evaluation artifacts may be produced on Windows and inspected
+                # from the Linux deployment container (or vice versa). Treat
+                # stored relative paths as portable, slash-separated paths.
+                package_value = str(raw.get("evidence_package") or "").replace(
+                    "\\", "/"
+                )
+                package = Path(package_value)
+                if not package.is_absolute():
+                    package = project_root / package
+                package = package.resolve()
+                package_available = (
+                    package.is_file()
+                    and evaluation_root in package.parents
+                    and parse_evidence_package_name(package.name) is not None
+                )
+                records[run_id] = {
+                    **raw,
+                    "id": run_id,
+                    "run_group": source.parent.relative_to(evaluation_root).as_posix(),
+                    "recorded_ts": source.stat().st_mtime,
+                    "package_available": package_available,
+                    "package_filename": package.name if package_available else None,
+                    "package_download_url": (
+                        f"/api/evaluations/{run_id}/evidence"
+                        if package_available
+                        else None
+                    ),
+                    "_package_path": package if package_available else None,
+                }
+        return records
+
+    @app.get("/api/evaluations", dependencies=[Depends(auth)])
+    def evaluation_index() -> list[dict[str, Any]]:
+        rows = []
+        for record in evaluation_records().values():
+            extraction = record.get("extraction") or {}
+            rows.append(
+                {
+                    key: value
+                    for key, value in record.items()
+                    if key
+                    in {
+                        "id",
+                        "run_group",
+                        "recorded_ts",
+                        "scenario",
+                        "archetype",
+                        "persona",
+                        "language",
+                        "turns",
+                        "exchanges",
+                        "duration_s",
+                        "verdict",
+                        "verdict_score",
+                        "verdict_correct",
+                        "bot_detected",
+                        "guardrail_flags",
+                        "chain_valid",
+                        "evidence_verified",
+                        "package_available",
+                        "package_filename",
+                        "package_download_url",
+                    }
+                }
+                | {
+                    "hvi_count": len(record.get("hvi_items") or []),
+                    "precision": extraction.get("precision"),
+                    "recall": extraction.get("recall"),
+                    "f1": extraction.get("f1"),
+                }
+            )
+        return sorted(rows, key=lambda row: float(row.get("recorded_ts") or 0), reverse=True)
+
+    @app.get("/api/evaluations/{run_id}", dependencies=[Depends(auth)])
+    def evaluation_detail(run_id: str) -> dict[str, Any]:
+        record = evaluation_records().get(run_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="evaluation run not found")
+        return {key: value for key, value in record.items() if not key.startswith("_")}
+
+    @app.get("/api/evaluations/{run_id}/evidence")
+    def evaluation_evidence(
+        run_id: str,
+        token: str = "",
+        x_hive_token: str = Header(default=""),
+    ) -> FileResponse:
+        if not authorised(x_hive_token or token):
+            raise HTTPException(status_code=401, detail="unauthorised")
+        record = evaluation_records().get(run_id)
+        path = record.get("_package_path") if record else None
+        if not isinstance(path, Path) or not path.is_file():
+            raise HTTPException(status_code=404, detail="evaluation evidence not found")
+        return FileResponse(path, media_type="application/zip", filename=path.name)
+
+    @app.get("/api/demo/scenarios", dependencies=[Depends(auth)])
+    def demo_scenarios() -> dict[str, Any]:
+        return demos.catalog()
+
+    @app.get("/api/demo/runs", dependencies=[Depends(auth)])
+    def demo_runs() -> list[dict[str, Any]]:
+        return demos.list()
+
+    @app.get("/api/demo/runs/{run_id}", dependencies=[Depends(auth)])
+    def demo_run(run_id: str) -> dict[str, Any]:
+        try:
+            return demos.get(run_id)
+        except DemoNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="demo run not found") from exc
+
+    @app.post("/api/demo/runs", dependencies=[Depends(auth)])
+    def demo_start(payload: Annotated[dict, Body()]) -> dict[str, Any]:
+        scenario = str(payload.get("scenario") or "investment")
+        persona = str(payload.get("persona") or "confused_elderly")
+        speed = str(payload.get("speed") or "normal")
+        mode = str(payload.get("mode") or "scripted")
+        if persona not in VALID_PERSONAS:
+            raise HTTPException(status_code=400, detail="unknown persona")
+        try:
+            result = demos.start(scenario, persona, speed, mode)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except (DemoBusyError, DemoRuntimeError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        observations.event(
+            "demo",
+            "Synthetic demo started",
+            f"{mode} · {scenario} · {persona} · {speed}",
+            severity="success",
+        )
+        return result
+
+    def demo_control(run_id: str, action: str) -> dict[str, Any]:
+        try:
+            return getattr(demos, action)(run_id)
+        except DemoNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="demo run not found") from exc
+
+    @app.post("/api/demo/runs/{run_id}/pause", dependencies=[Depends(auth)])
+    def demo_pause(run_id: str) -> dict[str, Any]:
+        return demo_control(run_id, "pause")
+
+    @app.post("/api/demo/runs/{run_id}/resume", dependencies=[Depends(auth)])
+    def demo_resume(run_id: str) -> dict[str, Any]:
+        return demo_control(run_id, "resume")
+
+    @app.post("/api/demo/runs/{run_id}/advance", dependencies=[Depends(auth)])
+    def demo_advance(run_id: str) -> dict[str, Any]:
+        return demo_control(run_id, "advance")
+
+    @app.post("/api/demo/runs/{run_id}/stop", dependencies=[Depends(auth)])
+    def demo_stop(run_id: str) -> dict[str, Any]:
+        result = demo_control(run_id, "stop")
+        observations.event(
+            "demo",
+            "Synthetic demo stop requested",
+            run_id,
+            severity="warning",
+        )
+        return result
+
+    @app.post("/api/demo/runs/{run_id}/finish", dependencies=[Depends(auth)])
+    def demo_finish(run_id: str) -> dict[str, Any]:
+        try:
+            return demo_control(run_id, "finish")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/demo/runs/{run_id}/messages", dependencies=[Depends(auth)])
+    def demo_message(
+        run_id: str,
+        payload: Annotated[dict, Body()],
+    ) -> dict[str, Any]:
+        try:
+            return demos.submit_message(run_id, str(payload.get("text") or ""))
+        except DemoNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="demo run not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except DemoBusyError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/demo/runs/{run_id}/evidence")
+    def demo_evidence(
+        run_id: str,
+        token: str = "",
+        x_hive_token: str = Header(default=""),
+    ) -> FileResponse:
+        if not authorised(x_hive_token or token):
+            raise HTTPException(status_code=401, detail="unauthorised")
+        try:
+            path = demos.evidence_path(run_id)
+        except DemoNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="demo evidence not found") from exc
+        return FileResponse(path, media_type="application/zip", filename=path.name)
 
     @app.get("/api/history", dependencies=[Depends(auth)])
     def takeover_history() -> list[dict[str, Any]]:
@@ -706,7 +1029,11 @@ def create_app(
         record = history.get(history_id)
         if record is None:
             raise HTTPException(status_code=404, detail="takeover history not found")
-        return _history_detail(record)
+        return attach_pattern_profile(
+            _history_detail(record),
+            build_case_profile(record),
+            source="archived_analysis",
+        )
 
     @app.get("/api/history/{history_id}/analyses", dependencies=[Depends(auth)])
     def takeover_analysis_runs(history_id: str) -> list[dict[str, Any]]:
@@ -716,7 +1043,10 @@ def create_app(
         embedded = _embedded_analysis(record)
         return ([embedded] if embedded else []) + analysis_runs.list(str(record["id"]))
 
-    def enrich_case_matches(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    def enrich_case_matches(
+        rows: list[dict[str, Any]],
+        current_profile: dict[str, Any],
+    ) -> list[dict[str, Any]]:
         enriched = []
         for row in rows:
             related = case_intelligence.get(str(row.get("related_case_id") or "")) or {}
@@ -729,6 +1059,8 @@ def create_app(
                     "case_score": related.get("score"),
                     "created_ts": related.get("created_ts"),
                     "methods": related.get("methods") or [],
+                    "pattern_profile": _safe_scam_vector(related),
+                    "pattern_overlap": _pattern_overlap(current_profile, related),
                 }
             )
         return enriched
@@ -738,7 +1070,13 @@ def create_app(
         record = history.get(history_id)
         if record is None:
             raise HTTPException(status_code=404, detail="takeover history not found")
-        return enrich_case_matches(case_intelligence.related(str(record["id"])))
+        current_profile = case_intelligence.get(str(record["id"])) or build_case_profile(
+            record
+        )
+        return enrich_case_matches(
+            case_intelligence.related(str(record["id"])),
+            current_profile,
+        )
 
     @app.get(
         "/api/history/{history_id}/analyses/{run_id}",
@@ -751,11 +1089,19 @@ def create_app(
         canonical_id = str(record["id"])
         embedded = _embedded_analysis(record)
         if embedded and embedded["id"] == run_id:
-            return _history_with_analysis(record, embedded)
+            return attach_pattern_profile(
+                _history_with_analysis(record, embedded),
+                build_case_profile(record),
+                source="original_analysis",
+            )
         analysis = analysis_runs.get(canonical_id, run_id)
         if analysis is None:
             raise HTTPException(status_code=404, detail="analysis run not found")
-        return _history_with_analysis(record, analysis)
+        return attach_pattern_profile(
+            _history_with_analysis(record, analysis),
+            build_case_profile(record, analysis),
+            source="versioned_reanalysis",
+        )
 
     @app.post(
         "/api/history/{history_id}/reanalyze",
@@ -821,6 +1167,21 @@ def create_app(
         if not path.is_file():
             raise HTTPException(status_code=404, detail="no sealed bundle")
         return FileResponse(path, media_type="application/pdf", filename=filename)
+
+    @app.get("/api/evidence-packages/{filename}")
+    def evidence_package_file(
+        filename: str,
+        token: str = "",
+        x_hive_token: str = Header(default=""),
+    ):
+        if not authorised(x_hive_token or token):
+            raise HTTPException(status_code=401, detail="unauthorised")
+        if parse_evidence_package_name(filename) is None:
+            raise HTTPException(status_code=404, detail="no evidence package")
+        path = project_root / "evidence" / filename
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no evidence package")
+        return FileResponse(path, media_type="application/zip", filename=filename)
 
     @app.get("/api/panel/session")
     def panel_session() -> JSONResponse:
@@ -968,12 +1329,20 @@ def create_app(
         entry = current_userbot._sessions.get(peer_id)
         if entry is None:
             raise HTTPException(status_code=404, detail="no active takeover")
-        detail = _session_detail(peer_id, entry[0])
-        detail["related_cases"] = enrich_case_matches(entry[0].related_cases)
+        profile = build_live_case_profile(entry[0])
+        detail = attach_pattern_profile(
+            _session_detail(peer_id, entry[0]),
+            profile,
+            source="live_session",
+        )
+        detail["related_cases"] = enrich_case_matches(
+            entry[0].related_cases,
+            profile,
+        )
         return detail
 
     @app.post("/api/takeover", dependencies=[Depends(auth)])
-    def takeover(payload: Annotated[dict, Body()]) -> dict:
+    async def takeover(payload: Annotated[dict, Body()]) -> dict:
         _engine, current_userbot, current_settings = live()
         peer_id = payload.get("peer_id")
         persona = payload.get("persona") or current_settings.default_persona
@@ -982,6 +1351,7 @@ def create_app(
         if persona not in VALID_PERSONAS:
             raise HTTPException(status_code=400, detail=f"unknown persona: {persona}")
         current_userbot.begin_takeover(peer_id, persona)
+        await current_userbot.process_pending_takeover(peer_id)
         observations.event(
             "takeover",
             "Takeover started",

@@ -1,5 +1,6 @@
 """Web control panel tests (FastAPI TestClient), fully offline."""
 
+import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -59,6 +60,9 @@ class FakeUserbot:
     def begin_takeover(self, peer_id, persona):
         s = SessionState(peer_id=peer_id, persona=persona, phase=Phase.ACTIVE)
         self._sessions[peer_id] = (s, HashChain())
+
+    async def process_pending_takeover(self, peer_id):
+        return 0
 
     def end_takeover(self, peer_id):
         return self._sessions.pop(peer_id, None)
@@ -128,6 +132,15 @@ def test_panel_assets_are_served(client):
 
     assert css.status_code == 200 and "--accent:" in css.text
     assert script.status_code == 200 and 'api("/api/dashboard")' in script.text
+    assert ".live-update > span:first-child" in css.text
+    assert ".live-update > span {" not in css.text
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in css.text
+    assert "height: clamp(650px, 72vh, 780px)" in css.text
+    assert 'id="demoMode"' in page.text
+    assert 'id="interactiveDemoForm"' in page.text
+    assert '$("#interactiveDemoForm").addEventListener("submit"' in script.text
+    assert "/messages`" in script.text
+    assert 'controlDemo(interactive ? "finish" : "stop")' in script.text
     assert 'id="activityScope"' in page.text
     assert "All audit events" in page.text
     assert "scope=${encodeURIComponent(scope)}" in script.text
@@ -167,6 +180,16 @@ def test_list_sessions(client):
     assert r.status_code == 200
     rows = r.json()
     assert rows[0]["peer_id"] == 100 and rows[0]["verdict"] == "likely_scam"
+
+
+def test_session_detail_includes_guided_reporting(client):
+    response = client.get("/api/sessions/100", headers=_h())
+
+    assert response.status_code == 200
+    guidance = response.json()["reporting_guidance"]
+    assert guidance["automated_submission"] is False
+    assert "997" in guidance["steps"][0]["action"]
+    assert 'data-inspector-tab="reporting"' in client.get("/").text
 
 
 def test_dashboard_aggregates_live_operations(client):
@@ -228,6 +251,10 @@ def test_session_detail(client):
     assert d["hvi_items"][0]["source_msg_id"] == 0
     assert d["messages"][0]["role"] == "stranger"
     assert d["media_analysis"] == []
+    assert d["scam_vector"]["schema_version"] == 2
+    assert "transfer to Maybank" in d["scam_vector"]["redacted_script"]
+    assert d["case_intelligence"]["privacy_mode"] == "identifier_redacted"
+    assert "embedding_text" not in d
 
 
 def test_session_detail_exposes_messages_added_after_initial_request(client):
@@ -254,7 +281,8 @@ def test_intelligence_workspace_can_open_archived_runs(client):
     page = client.get("/").text
     script = client.get("/panel.js").text
 
-    assert "findings from active and previous takeover runs" in page
+    assert "Case Intelligence" in page
+    assert "Scam-pattern profiles, evidence-backed relationships" in page
     assert '<optgroup label="Active sessions">' in script
     assert '<optgroup label="Previous runs">' in script
     assert "async function openIntelligenceHistory(historyId)" in script
@@ -272,13 +300,17 @@ def test_intelligence_workspace_can_open_archived_runs(client):
     assert 'archived ? "Archived transcript" : "Active transcript"' in script
     assert "function renderSandboxResult(item)" in script
     assert "function renderMediaAnalysis(item)" in script
-    assert "function renderRelatedCase(item)" in script
+    assert "function renderRelatedCase(item, currentVector = {})" in script
     assert "function renderRelationshipGraph(items, peerId)" in script
+    assert "function renderPatternProfile(session)" in script
+    assert "function comparePatternProfiles(current = {}, related = {})" in script
+    assert 'id="patternProfile"' in page
+    assert "Scam Pattern Profile" in page
     assert 'id="mediaAnalysisList"' in page
     assert 'id="relatedCasesList"' in page
     assert 'id="relationshipGraph"' in page
     assert "Local QR/OCR and fallback vision findings" in page
-    assert "Verified shared identifiers are distinct" in page
+    assert "Verified evidence links remain distinct" in page
     assert "/related`" in script
     assert "Candidate similarity" in script
     assert "Verified identifier link" in script
@@ -402,6 +434,95 @@ def test_stop_seals_and_removes(client):
     assert (client._root / "evidence" / "cases" / f"{history[0]['id']}.json").is_file()
 
 
+def test_evidence_index_and_package_download(client):
+    evidence = client._root / "evidence"
+    evidence.mkdir()
+    pdf = evidence / "bundle_100_1.pdf"
+    signature = evidence / "bundle_100_1.pdf.sig"
+    package = evidence / "bundle_100_1.evidence.zip"
+    pdf.write_bytes(b"%PDF-test")
+    signature.write_bytes(b"signature")
+    package.write_bytes(b"PK-test")
+
+    response = client.get("/api/evidence", headers=_h())
+
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["package_present"] is True
+    assert row["package_filename"] == package.name
+    assert row["package_download_url"] == f"/api/evidence-packages/{package.name}"
+    downloaded = client.get(row["package_download_url"], headers=_h())
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"PK-test"
+    assert client.get("/api/evidence-packages/../secret", headers=_h()).status_code == 404
+
+
+def test_recorded_evaluation_runs_are_inspectable_and_downloadable(client):
+    run_directory = client._root / "evaluation" / "results" / "smoke" / "case-one"
+    evidence_directory = run_directory / "evidence"
+    evidence_directory.mkdir(parents=True)
+    package = evidence_directory / "bundle_1_1.evidence.zip"
+    package.write_bytes(b"PK-evaluation")
+    record = {
+        "scenario": "investment_en_bank_link",
+        "archetype": "investment",
+        "persona": "confused_elderly",
+        "language": "English",
+        "turns": 3,
+        "exchanges": 3,
+        "duration_s": 12.5,
+        "transcript": [["scammer", "Transfer now"], ["victim", "Which account?"]],
+        "hvi_items": [
+            {
+                "kind": "bank_account",
+                "value": "1234567890",
+                "confidence": 0.9,
+                "source_msg_id": 0,
+                "extractor": "regex",
+            }
+        ],
+        "extraction": {"precision": 1.0, "recall": 1.0, "f1": 1.0},
+        "verdict": "likely_scam",
+        "verdict_score": 0.91,
+        "verdict_correct": True,
+        "chain_valid": True,
+        "evidence_verified": True,
+        # Deliberately use Windows separators to cover Linux container reads.
+        "evidence_package": package.relative_to(client._root).as_posix().replace(
+            "/", "\\"
+        ),
+    }
+    (run_directory / "redteam_runs.json").write_text(
+        json.dumps([record]),
+        encoding="utf-8",
+    )
+
+    response = client.get("/api/evaluations", headers=_h())
+
+    assert response.status_code == 200
+    row = response.json()[0]
+    assert row["scenario"] == "investment_en_bank_link"
+    assert row["f1"] == 1.0
+    assert row["package_available"] is True
+    detail = client.get(f"/api/evaluations/{row['id']}", headers=_h())
+    assert detail.status_code == 200
+    assert detail.json()["transcript"][1][1] == "Which account?"
+    assert "_package_path" not in detail.json()
+    downloaded = client.get(row["package_download_url"], headers=_h())
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"PK-evaluation"
+    assert client.get("/api/evaluations/not-a-run", headers=_h()).status_code == 404
+
+
+def test_evaluation_page_is_available_in_panel(client):
+    page = client.get("/").text
+    script = client.get("/panel.js").text
+
+    assert 'data-route="evaluation"' in page
+    assert 'id="evaluationRows"' in page
+    assert 'api("/api/evaluations")' in script
+
+
 def test_stop_failure_keeps_takeover_active_and_unarchived(client):
     client._engine.fail_seal = True
 
@@ -479,6 +600,15 @@ def test_related_case_api_explains_exact_identifier_link(client):
     assert related[0]["reasons"][0]["value"] == "12345678"
     assert related[0]["reasons"][0]["current_source_message_ids"] == [0]
     assert related[0]["reasons"][0]["related_source_message_ids"] == [8]
+    assert related[0]["pattern_profile"]["schema_version"] == 2
+    assert "redacted_script" in related[0]["pattern_profile"]
+    assert "embedding_text" not in related[0]
+
+    analyses = client.get(f"/api/history/{first}/analyses", headers=_h()).json()
+    original = client.get(
+        f"/api/history/{first}/analyses/{analyses[0]['id']}", headers=_h()
+    ).json()
+    assert original["scam_vector"]["indicator_kinds"] == ["bank_account"]
 
 
 def test_detail_404_when_missing(client):

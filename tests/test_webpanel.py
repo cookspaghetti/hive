@@ -11,6 +11,8 @@ from fastapi.testclient import TestClient
 from hive.analysis_runs import analysis_run_record
 from hive.state import HVI, Message, Phase, SessionState
 from hive.vault.hashchain import HashChain
+from hive.vault.package import build_evidence_package
+from hive.vault.signer import generate_keypair, sign_bytes
 from hive.webpanel import create_app
 
 TOKEN = "s3cret"
@@ -32,6 +34,7 @@ class FakeSettings:
     tg_api_hash: str = "hash"
     control_bot_token: str = "bot-token"
     operator_id: int = 456
+    operator_name: str = "Test Operator"
 
 
 class FakeEngine:
@@ -87,6 +90,16 @@ class FakeUserbot:
 
     def update_persona(self, peer_id, persona):
         self._sessions[peer_id][0].persona = persona
+
+    def dismiss_takeover_request(self, peer_id):
+        for chat in self._observed_chats:
+            if chat.get("peer_id") == peer_id and chat.get("request_pending"):
+                chat["request_pending"] = False
+                return True
+        return False
+
+    def checkpoint_takeover(self, peer_id):
+        self.last_checkpointed_peer = peer_id
 
 
 def fake_reanalysis(record, engine, settings):
@@ -171,6 +184,10 @@ def test_panel_assets_are_served(client):
     assert "Interactive presenter" in script.text
     assert "Command palette" in script.text
     assert "Evidence vault" in script.text
+    assert "Save and restart agent" in script.text
+    assert "What broke" in script.text
+    assert "Open peer" in script.text
+    assert "Safe package structure" in script.text
     assert "@media(max-width:680px)" in css.text
     assert "prefers-reduced-motion:reduce" in css.text
     assert '<div id="root">' in page.text
@@ -354,6 +371,19 @@ def test_chat_endpoint_returns_only_pending_takeover_requests(client):
     assert [chat["peer_id"] for chat in response.json()] == [200]
 
 
+def test_panel_can_dismiss_pending_takeover_request(client):
+    client._userbot._observed_chats = [
+        {"peer_id": 200, "active": False, "request_pending": True},
+    ]
+
+    dismissed = client.post("/api/chats/200/dismiss", headers=_h())
+
+    assert dismissed.status_code == 200
+    assert dismissed.json() == {"ok": True, "peer_id": 200, "dismissed": True}
+    assert client.get("/api/chats", headers=_h()).json() == []
+    assert client.post("/api/chats/200/dismiss", headers=_h()).status_code == 404
+
+
 def test_session_detail(client):
     r = client.get("/api/sessions/100", headers=_h())
     d = r.json()
@@ -367,6 +397,48 @@ def test_session_detail(client):
     assert "embedding_text" not in d
 
 
+def test_panel_can_correct_live_indicator_with_provenance(client):
+    corrected = client.patch(
+        "/api/sessions/100/indicators/0",
+        headers=_h(),
+        json={
+            "kind": "bank_account",
+            "value": "12345678",
+            "reason": "Checked against the source message",
+        },
+    )
+
+    assert corrected.status_code == 200
+    assert corrected.json()["indicator"]["value"] == "12345678"
+    assert corrected.json()["indicator"]["extractor"] == "operator_review"
+    session = client._userbot._sessions[100][0]
+    assert session.hvis[0].confidence == 1.0
+    assert session.indicator_reviews[0]["original"]["value"] == "123"
+    assert client._userbot.last_checkpointed_peer == 100
+    assert client.get("/api/sessions/100", headers=_h()).json()["hvi_items"][0][
+        "value"
+    ] == "12345678"
+
+
+def test_indicator_correction_validates_reason_and_index(client):
+    assert (
+        client.patch(
+            "/api/sessions/100/indicators/0",
+            headers=_h(),
+            json={"kind": "bank_account", "value": "12345678", "reason": "x"},
+        ).status_code
+        == 400
+    )
+    assert (
+        client.patch(
+            "/api/sessions/100/indicators/99",
+            headers=_h(),
+            json={"kind": "bank_account", "value": "12345678", "reason": "checked"},
+        ).status_code
+        == 404
+    )
+
+
 def test_session_detail_exposes_messages_added_after_initial_request(client):
     initial = client.get("/api/sessions/100", headers=_h()).json()
     client._userbot._sessions[100][0].messages.append(
@@ -377,6 +449,51 @@ def test_session_detail_exposes_messages_added_after_initial_request(client):
 
     assert len(updated["messages"]) == len(initial["messages"]) + 1
     assert updated["messages"][-1]["text"] == "Which account should I use?"
+
+
+def test_session_summary_marks_pipeline_analysis_as_pending(client):
+    session = client._userbot._sessions[100][0]
+    session.phase = Phase.PROBING
+
+    listed = client.get("/api/sessions", headers=_h()).json()
+    detail = client.get("/api/sessions/100", headers=_h()).json()
+
+    assert listed[0]["analysis_pending"] is True
+    assert detail["analysis_pending"] is True
+
+
+def test_sandbox_captures_are_authenticated_and_never_expose_paths(client):
+    capture = client._root / "evidence" / "sandbox" / "capture.png"
+    capture.parent.mkdir(parents=True)
+    capture.write_bytes(b"fake-png")
+    client._userbot._sessions[100][0].sandbox_results = [
+        {"url": "https://example.test", "screenshot_path": str(capture)}
+    ]
+
+    detail = client.get("/api/sessions/100", headers=_h()).json()
+    result = detail["sandbox_results"][0]
+
+    assert result["capture_available"] is True
+    assert result["capture_url"] == "/api/sandbox-captures/live/100/0"
+    assert "screenshot_path" not in result
+    assert client.get(result["capture_url"]).status_code == 401
+    downloaded = client.get(result["capture_url"], headers=_h())
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"fake-png"
+    assert downloaded.headers["content-type"].startswith("image/png")
+
+
+def test_sandbox_capture_rejects_files_outside_capture_root(client):
+    outside = client._root / "not-evidence.png"
+    outside.write_bytes(b"private")
+    client._userbot._sessions[100][0].sandbox_results = [
+        {"url": "https://example.test", "screenshot_path": str(outside)}
+    ]
+
+    detail = client.get("/api/sessions/100", headers=_h()).json()
+
+    assert detail["sandbox_results"][0]["capture_available"] is False
+    assert client.get("/api/sandbox-captures/live/100/0", headers=_h()).status_code == 404
 
 
 def test_panel_script_polls_the_selected_session_for_live_updates(client):
@@ -463,6 +580,16 @@ def test_panel_notifies_for_new_takeover_requests(client):
     assert "/api/chats" in script
     assert "Pending private chats will appear here" in script
     assert "Queue" in script
+    assert "Dismiss request" in script
+
+
+def test_panel_exposes_operator_indicator_review_workflow(client):
+    script = client.get("/panel.js").text
+
+    assert "/indicators/" in script
+    assert "Record correction" in script
+    assert "Operator reviewed" in script
+    assert "signed evidence bundle retains the originally extracted value" in script
 
 
 def test_takeover_and_persona(client):
@@ -521,7 +648,37 @@ def test_stop_seals_and_removes(client):
 
     detail = client.get(f"/api/history/{history[0]['id']}", headers=_h()).json()
     assert detail["messages"][0]["text"] == "transfer to Maybank 123"
+    assert detail["operator_name"] == "Test Operator"
     assert (client._root / "evidence" / "cases" / f"{history[0]['id']}.json").is_file()
+
+
+def test_panel_can_correct_sealed_indicator_without_rewriting_bundle(client):
+    sealed = client.post("/api/sessions/100/stop", headers=_h()).json()
+    history_id = sealed["history_id"]
+
+    corrected = client.patch(
+        f"/api/history/{history_id}/indicators/0",
+        headers=_h(),
+        json={
+            "kind": "bank_account",
+            "value": "87654321",
+            "reason": "Operator verified the account from the captured transcript",
+        },
+    )
+
+    assert corrected.status_code == 200
+    payload = corrected.json()
+    assert payload["indicator"]["value"] == "87654321"
+    assert payload["review"]["signed_bundle_modified"] is False
+    detail = client.get(f"/api/history/{history_id}", headers=_h()).json()
+    assert detail["hvi_items"][0]["value"] == "87654321"
+    assert detail["indicator_reviews"][0]["original"]["value"] == "123"
+    profile = json.loads(
+        (client._root / "evidence" / "cases" / f"{history_id}.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert profile["indicators"][0]["normalized_value"] == "87654321"
 
 
 def test_evidence_index_and_package_download(client):
@@ -541,10 +698,32 @@ def test_evidence_index_and_package_download(client):
     assert row["package_present"] is True
     assert row["package_filename"] == package.name
     assert row["package_download_url"] == f"/api/evidence-packages/{package.name}"
+    assert row["metadata_url"] == f"/api/evidence-metadata/{pdf.name}"
     downloaded = client.get(row["package_download_url"], headers=_h())
     assert downloaded.status_code == 200
     assert downloaded.content == b"PK-test"
     assert client.get("/api/evidence-packages/../secret", headers=_h()).status_code == 404
+
+
+def test_evidence_metadata_runs_real_package_and_custody_verification(client):
+    evidence = client._root / "evidence"
+    evidence.mkdir()
+    pdf = evidence / "bundle_100_2.pdf"
+    key = client._root / "signing.pem"
+    pdf.write_bytes(b"%PDF-verifiable")
+    generate_keypair(str(key), bits=2048)
+    Path(str(pdf) + ".sig").write_bytes(sign_bytes(pdf.read_bytes(), str(key)))
+    build_evidence_package(pdf, key)
+
+    response = client.get(f"/api/evidence-metadata/{pdf.name}", headers=_h())
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["operator_name"] == "Test Operator"
+    assert payload["verification"]["ok"] is True
+    assert all(payload["verification"]["checks"].values())
+    assert payload["verification"]["manifest"]["signing_key_fingerprint"]
+    assert isinstance(payload["custody"], list)
 
 
 def test_recorded_evaluation_runs_are_inspectable_and_downloadable(client):

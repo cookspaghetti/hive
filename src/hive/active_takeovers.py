@@ -78,6 +78,7 @@ def _session_from_dict(value: dict[str, Any]) -> SessionState:
         phase=Phase(value.get("phase", Phase.IDLE)),
         messages=[_message_from_dict(item) for item in value.get("messages", [])],
         hvis=[_hvi_from_dict(item) for item in value.get("hvis", [])],
+        indicator_reviews=list(value.get("indicator_reviews", [])),
         sandbox_results=list(value.get("sandbox_results", [])),
         verdict_score=float(value.get("verdict_score", 0.0)),
         verdict=value.get("verdict", "inconclusive"),

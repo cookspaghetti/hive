@@ -64,6 +64,7 @@ class SessionState:
     phase: Phase = Phase.IDLE
     messages: list[Message] = field(default_factory=list)
     hvis: list[HVI] = field(default_factory=list)
+    indicator_reviews: list[dict[str, Any]] = field(default_factory=list)
     sandbox_results: list[dict[str, Any]] = field(default_factory=list)
     verdict_score: float = 0.0
     verdict: Verdict = "inconclusive"

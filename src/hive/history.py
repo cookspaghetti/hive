@@ -111,6 +111,7 @@ def _record(
             }
             for item in session.hvis
         ],
+        "indicator_reviews": list(session.indicator_reviews),
         "sandbox_results": session.sandbox_results,
         "signal_trail": session.signal_trail,
         "replay_of": session.replay_of,

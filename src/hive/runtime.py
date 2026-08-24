@@ -423,7 +423,9 @@ def build_engine(settings: Settings, *, load_ner: bool = True) -> HiveEngine:
             "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
         ),
     )
-    runner = configured_sandbox_runner()
+    # Captures are evidence-adjacent artifacts and must survive container rebuilds.
+    # Compose mounts ./evidence at this path; the panel serves only validated images.
+    runner = configured_sandbox_runner(out_dir="evidence/sandbox")
     ner = get_default_backend() if load_ner else None
     ensure_case_index = getattr(case_intelligence, "ensure_ready", None)
     if getattr(settings, "use_case_similarity", False) and ensure_case_index is not None:

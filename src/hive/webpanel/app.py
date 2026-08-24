@@ -57,7 +57,11 @@ from hive.takeover import (
     TakeoverNotFoundError,
     TakeoverSealError,
 )
-from hive.vault.package import evidence_package_path, parse_evidence_package_name
+from hive.vault.package import (
+    evidence_package_path,
+    parse_evidence_package_name,
+    verify_evidence_package,
+)
 from hive.vault.paths import parse_bundle_name
 from hive.webpanel.assets import LOGO_PATH, PANEL_CSS_PATH, PANEL_JS_PATH
 from hive.webpanel.observability import get_observation_hub
@@ -67,6 +71,7 @@ log = get_logger(__name__)
 VALID_PERSONAS = set(PERSONAS)
 _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1", "testserver"}
 _SESSION_ID = re.compile(r"^[a-f0-9]{32}$")
+_INDICATOR_KIND = re.compile(r"^[a-z][a-z0-9_]{1,63}$")
 _IMPORTANT_ACTIVITY_TYPES = frozenset(
     {
         "budget",
@@ -76,6 +81,7 @@ _IMPORTANT_ACTIVITY_TYPES = frozenset(
         "llm_error",
         "media_capture",
         "operator_event",
+        "indicator_review",
         "retention_policy",
         "reply_delivery",
         "reply_steering",
@@ -112,10 +118,12 @@ def _session_summary(
     recovery_status: str = "active",
 ) -> dict[str, object]:
     started = session.started_ts
+    phase = session.phase.value if hasattr(session.phase, "value") else str(session.phase)
     return {
         "peer_id": peer_id,
         "persona": session.persona,
-        "phase": session.phase.value if hasattr(session.phase, "value") else str(session.phase),
+        "phase": phase,
+        "analysis_pending": phase in {"probing", "closing"},
         "verdict": session.verdict,
         "score": round(session.verdict_score, 3),
         "turns": session.turn_count,
@@ -198,6 +206,26 @@ def _history_detail(record: dict[str, Any]) -> dict[str, Any]:
     detail["messages"] = messages
     detail["reporting_guidance"] = reporting_guidance()
     return detail
+
+
+def _validated_indicator_correction(
+    payload: dict[str, Any],
+    *,
+    default_operator: str,
+) -> tuple[str, str, str, str]:
+    kind = str(payload.get("kind") or "").strip().lower().replace(" ", "_")
+    value = str(payload.get("value") or "").strip()
+    reason = str(payload.get("reason") or "").strip()
+    operator = str(payload.get("operator") or default_operator or "Panel operator").strip()
+    if not _INDICATOR_KIND.fullmatch(kind):
+        raise HTTPException(status_code=400, detail="indicator kind is invalid")
+    if not value or len(value) > 2048:
+        raise HTTPException(status_code=400, detail="indicator value must be 1 to 2048 characters")
+    if len(reason) < 3 or len(reason) > 500:
+        raise HTTPException(status_code=400, detail="review reason must be 3 to 500 characters")
+    if len(operator) > 160:
+        raise HTTPException(status_code=400, detail="operator name is too long")
+    return kind, value, reason, operator
 
 
 def _embedded_analysis(record: dict[str, Any]) -> dict[str, Any] | None:
@@ -284,6 +312,8 @@ def _important_activity(row: dict[str, Any]) -> bool:
     action = str(row.get("action", ""))
     payload = row.get("payload") or {}
     if event_type == "operator_event":
+        return True
+    if event_type == "indicator_review":
         return True
     if event_type in {"configuration", "signing_key", "telegram_authorisation"}:
         return True
@@ -397,6 +427,7 @@ def _audit_activity(
                 "detail": _activity_detail(row, exhaustive=not important_only),
                 "peer_id": row.get("peer_id"),
                 "severity": _activity_severity(row),
+                "hash": row.get("event_hash"),
             }
         )
     return items[-max(1, min(limit, 1000)) :]
@@ -582,6 +613,81 @@ def create_app(
             database_url=getattr(configured, "database_url", ""),
             qdrant_url=getattr(configured, "qdrant_url", ""),
         )
+
+    sandbox_capture_root = (project_root / "evidence" / "sandbox").resolve()
+
+    def sandbox_capture_path(result: dict[str, Any]) -> Path | None:
+        raw = str(result.get("screenshot_path") or "").strip()
+        if not raw:
+            return None
+        candidate = Path(raw)
+        if not candidate.is_absolute():
+            candidate = project_root / candidate
+        candidate = candidate.resolve()
+        if (
+            sandbox_capture_root not in candidate.parents
+            or candidate.suffix.lower() not in {".png", ".jpg", ".jpeg", ".webp"}
+            or not candidate.is_file()
+        ):
+            return None
+        return candidate
+
+    def attach_sandbox_captures(
+        detail: dict[str, Any],
+        *,
+        source: str,
+        case_id: str,
+    ) -> dict[str, Any]:
+        results = []
+        for index, raw in enumerate(detail.get("sandbox_results") or []):
+            result = dict(raw)
+            if sandbox_capture_path(result) is not None:
+                result["capture_url"] = (
+                    f"/api/sandbox-captures/{source}/{case_id}/{index}"
+                )
+                result["capture_available"] = True
+            else:
+                result["capture_available"] = False
+            result.pop("screenshot_path", None)
+            results.append(result)
+        detail["sandbox_results"] = results
+        return detail
+
+    def history_record_for_evidence(filename: str) -> dict[str, Any] | None:
+        for summary in history.list():
+            record = history.get(str(summary["id"]))
+            if record and record.get("evidence_filename") == filename:
+                return record
+        return None
+
+    def attach_sealed_evidence(
+        detail: dict[str, Any],
+        record: dict[str, Any],
+    ) -> dict[str, Any]:
+        filename = str(record.get("evidence_filename") or "")
+        if not filename or parse_bundle_name(filename) is None:
+            return detail
+        pdf = project_root / "evidence" / filename
+        package = evidence_package_path(pdf)
+        detail["operator_name"] = str(
+            record.get("operator_name")
+            or getattr(configured, "operator_name", "")
+            or "Responsible operator"
+        )
+        detail["evidence_download_url"] = (
+            f"/api/evidence/{filename}" if pdf.is_file() else None
+        )
+        detail["package_download_url"] = (
+            f"/api/evidence-packages/{package.name}" if package.is_file() else None
+        )
+        if package.is_file():
+            verification = verify_evidence_package(package)
+            detail["evidence_verification"] = {
+                "ok": verification.get("ok", False),
+                "checks": verification.get("checks", {}),
+                "errors": verification.get("errors", []),
+            }
+        return detail
     migrate_history_ids = getattr(history, "migrate_legacy_ids", None)
     if migrate_history_ids is not None:
         migrate_history_ids()
@@ -909,9 +1015,101 @@ def create_app(
                         if package.is_file()
                         else None
                     ),
+                    "metadata_url": f"/api/evidence-metadata/{path.name}",
                 }
             )
         return sorted(rows, key=lambda row: cast(float, row["created_ts"]), reverse=True)
+
+    @app.get(
+        "/api/evidence-metadata/{filename}",
+        dependencies=[Depends(auth)],
+    )
+    def evidence_metadata(filename: str) -> dict[str, Any]:
+        if parse_bundle_name(filename) is None:
+            raise HTTPException(status_code=404, detail="no sealed bundle")
+        pdf = project_root / "evidence" / filename
+        if not pdf.is_file():
+            raise HTTPException(status_code=404, detail="no sealed bundle")
+        package = evidence_package_path(pdf)
+        verification = (
+            verify_evidence_package(package)
+            if package.is_file()
+            else {
+                "ok": False,
+                "checks": {},
+                "errors": ["portable evidence package is missing"],
+            }
+        )
+        record = history_record_for_evidence(filename)
+        parsed = parse_bundle_name(filename)
+        if parsed is None:  # guarded above; keeps the parser contract explicit
+            raise HTTPException(status_code=404, detail="no sealed bundle")
+        peer_id = int(record["peer_id"]) if record else int(parsed[0])
+        session_id = str(record.get("session_id") or "") if record else ""
+        audit_rows = audit.list(limit=1000, peer_id=peer_id)
+        if session_id:
+            scoped = [
+                row
+                for row in audit_rows
+                if row.get("session_id") == session_id
+                or filename in json.dumps(row.get("payload") or {}, default=str)
+            ]
+            if scoped:
+                audit_rows = scoped
+        custody_types = {
+            "session_lifecycle",
+            "takeover",
+            "takeover_history",
+            "case_intelligence",
+            "indicator_review",
+        }
+        custody = []
+        for row in audit_rows:
+            if row.get("event_type") not in custody_types:
+                continue
+            action = str(row.get("action") or row.get("event_type") or "event")
+            custody.append(
+                {
+                    "ts": row.get("ts"),
+                    "category": row.get("event_type"),
+                    "title": action.replace("_", " ").capitalize(),
+                    "detail": _activity_detail(row, exhaustive=False),
+                    "hash": row.get("event_hash"),
+                }
+            )
+        operator = str(
+            (record or {}).get("operator_name")
+            or next(
+                (
+                    (row.get("payload") or {}).get("operator_name")
+                    for row in audit_rows
+                    if row.get("action") == "session_seal_started"
+                    and (row.get("payload") or {}).get("operator_name")
+                ),
+                "",
+            )
+            or getattr(configured, "operator_name", "")
+            or "Responsible operator"
+        )
+        raw_checks = verification.get("checks")
+        checks = dict(raw_checks) if isinstance(raw_checks, dict) else {}
+        raw_errors = verification.get("errors")
+        checks["hash_chain"] = bool(audit.status().get("valid", False))
+        return {
+            "filename": filename,
+            "history_id": (record or {}).get("id"),
+            "session_id": session_id or None,
+            "peer_id": peer_id,
+            "operator_name": operator,
+            "sealed_ts": (record or {}).get("ended_ts") or pdf.stat().st_mtime,
+            "verification": {
+                "ok": bool(verification.get("ok")) and checks["hash_chain"],
+                "checks": checks,
+                "errors": list(raw_errors) if isinstance(raw_errors, list) else [],
+                "manifest": verification.get("manifest") or {},
+            },
+            "custody": custody[-12:],
+        }
 
     def evaluation_records() -> dict[str, dict[str, Any]]:
         evaluation_root = (project_root / "evaluation" / "results").resolve()
@@ -1134,11 +1332,96 @@ def create_app(
         record = history.get(history_id)
         if record is None:
             raise HTTPException(status_code=404, detail="takeover history not found")
+        detail = attach_sealed_evidence(
+            attach_sandbox_captures(
+                _history_detail(record),
+                source="history",
+                case_id=str(record["id"]),
+            ),
+            record,
+        )
         return attach_pattern_profile(
-            _history_detail(record),
+            detail,
             build_case_profile(record),
             source="archived_analysis",
         )
+
+    @app.patch(
+        "/api/history/{history_id}/indicators/{indicator_index}",
+        dependencies=[Depends(auth)],
+    )
+    def correct_history_indicator(
+        history_id: str,
+        indicator_index: int,
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, Any]:
+        record = history.get(history_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="takeover history not found")
+        items = [dict(item) for item in record.get("hvi_items") or []]
+        if indicator_index < 0 or indicator_index >= len(items):
+            raise HTTPException(status_code=404, detail="indicator not found")
+        kind, value, reason, operator = _validated_indicator_correction(
+            payload,
+            default_operator=str(getattr(configured, "operator_name", "") or ""),
+        )
+        original = dict(items[indicator_index])
+        review_id = secrets.token_hex(12)
+        reviewed_ts = time.time()
+        corrected = {
+            **original,
+            "kind": kind,
+            "value": value,
+            "confidence": 1.0,
+            "extractor": "operator_review",
+            "review_id": review_id,
+            "review_status": "corrected",
+            "reviewed_ts": reviewed_ts,
+        }
+        review = {
+            "id": review_id,
+            "scope": "history",
+            "history_id": str(record["id"]),
+            "indicator_index": indicator_index,
+            "original": original,
+            "corrected": corrected,
+            "reason": reason,
+            "operator": operator,
+            "reviewed_ts": reviewed_ts,
+            "signed_bundle_modified": False,
+        }
+        items[indicator_index] = corrected
+        record["hvi_items"] = items
+        record["indicator_reviews"] = [*(record.get("indicator_reviews") or []), review]
+        history.import_record(record)
+        index_updated = True
+        try:
+            case_intelligence.index(build_case_profile(record))
+        except Exception:
+            index_updated = False
+            log.exception("indicator review: case reindex failed case=%s", record["id"])
+        audit.append(
+            "indicator_review",
+            "sealed_indicator_corrected",
+            component="webpanel.indicators",
+            payload=review | {"index_updated": index_updated},
+            peer_id=int(record["peer_id"]),
+            session_id=str(record.get("session_id") or "") or None,
+            level="warning" if not index_updated else "info",
+        )
+        observations.event(
+            "indicator_review",
+            "Sealed indicator corrected",
+            f"{original.get('kind', 'indicator')} reviewed; signed bundle unchanged",
+            peer_id=int(record["peer_id"]),
+            severity="success" if index_updated else "warning",
+        )
+        return {
+            "ok": True,
+            "indicator": corrected,
+            "review": review,
+            "index_updated": index_updated,
+        }
 
     @app.get("/api/history/{history_id}/analyses", dependencies=[Depends(auth)])
     def takeover_analysis_runs(history_id: str) -> list[dict[str, Any]]:
@@ -1194,16 +1477,32 @@ def create_app(
         canonical_id = str(record["id"])
         embedded = _embedded_analysis(record)
         if embedded and embedded["id"] == run_id:
+            detail = attach_sealed_evidence(
+                attach_sandbox_captures(
+                    _history_with_analysis(record, embedded),
+                    source="history",
+                    case_id=canonical_id,
+                ),
+                record,
+            )
             return attach_pattern_profile(
-                _history_with_analysis(record, embedded),
+                detail,
                 build_case_profile(record),
                 source="original_analysis",
             )
         analysis = analysis_runs.get(canonical_id, run_id)
         if analysis is None:
             raise HTTPException(status_code=404, detail="analysis run not found")
+        detail = attach_sealed_evidence(
+            attach_sandbox_captures(
+                _history_with_analysis(record, analysis),
+                source="history",
+                case_id=canonical_id,
+            ),
+            record,
+        )
         return attach_pattern_profile(
-            _history_with_analysis(record, analysis),
+            detail,
             build_case_profile(record, analysis),
             source="versioned_reanalysis",
         )
@@ -1272,6 +1571,45 @@ def create_app(
         if not path.is_file():
             raise HTTPException(status_code=404, detail="no sealed bundle")
         return FileResponse(path, media_type="application/pdf", filename=filename)
+
+    @app.get("/api/sandbox-captures/{source}/{case_id}/{result_index}")
+    def sandbox_capture(
+        source: str,
+        case_id: str,
+        result_index: int,
+        token: str = "",
+        x_hive_token: str = Header(default=""),
+    ) -> FileResponse:
+        if not authorised(x_hive_token or token):
+            raise HTTPException(status_code=401, detail="unauthorised")
+        if source == "live":
+            try:
+                peer_id = int(case_id)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="capture not found") from exc
+            try:
+                _engine, current_userbot, _settings = live()
+            except HTTPException as exc:
+                raise HTTPException(status_code=404, detail="capture not found") from exc
+            entry = current_userbot._sessions.get(peer_id)
+            results = entry[0].sandbox_results if entry else []
+        elif source == "history":
+            record = history.get(case_id)
+            results = record.get("sandbox_results") or [] if record else []
+        else:
+            raise HTTPException(status_code=404, detail="capture not found")
+        if result_index < 0 or result_index >= len(results):
+            raise HTTPException(status_code=404, detail="capture not found")
+        path = sandbox_capture_path(dict(results[result_index]))
+        if path is None:
+            raise HTTPException(status_code=404, detail="capture not found")
+        media_type = mimetypes.guess_type(path.name)[0] or "image/png"
+        return FileResponse(
+            path,
+            media_type=media_type,
+            content_disposition_type="inline",
+            headers={"Cache-Control": "private, max-age=60"},
+        )
 
     @app.get("/api/evidence-packages/{filename}")
     def evidence_package_file(
@@ -1438,6 +1776,25 @@ def create_app(
         _engine, current_userbot, _settings = live()
         return _pending_takeover_requests(current_userbot)
 
+    @app.post("/api/chats/{peer_id}/dismiss", dependencies=[Depends(auth)])
+    def dismiss_chat(peer_id: int) -> dict[str, object]:
+        _engine, current_userbot, _settings = live()
+        dismiss = getattr(current_userbot, "dismiss_takeover_request", None)
+        if not callable(dismiss):
+            raise HTTPException(status_code=409, detail="takeover dismissal is unavailable")
+        if not dismiss(peer_id):
+            if peer_id in current_userbot._sessions:
+                raise HTTPException(status_code=409, detail="takeover is already active")
+            raise HTTPException(status_code=404, detail="pending takeover request not found")
+        observations.event(
+            "takeover_request",
+            "Takeover request dismissed",
+            "No reply was sent; a future inbound message can create a new request",
+            peer_id=peer_id,
+            severity="warning",
+        )
+        return {"ok": True, "peer_id": peer_id, "dismissed": True}
+
     @app.get("/api/sessions/{peer_id}", dependencies=[Depends(auth)])
     def get_session(peer_id: int) -> dict[str, Any]:
         _engine, current_userbot, _settings = live()
@@ -1456,11 +1813,96 @@ def create_app(
             profile,
             source="live_session",
         )
+        attach_sandbox_captures(detail, source="live", case_id=str(peer_id))
         detail["related_cases"] = enrich_case_matches(
             entry[0].related_cases,
             profile,
         )
         return detail
+
+    @app.patch(
+        "/api/sessions/{peer_id}/indicators/{indicator_index}",
+        dependencies=[Depends(auth)],
+    )
+    def correct_live_indicator(
+        peer_id: int,
+        indicator_index: int,
+        payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, Any]:
+        _engine, current_userbot, current_settings = live()
+        entry = current_userbot._sessions.get(peer_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="no active takeover")
+        session = entry[0]
+        if indicator_index < 0 or indicator_index >= len(session.hvis):
+            raise HTTPException(status_code=404, detail="indicator not found")
+        kind, value, reason, operator = _validated_indicator_correction(
+            payload,
+            default_operator=str(getattr(current_settings, "operator_name", "") or ""),
+        )
+        item = session.hvis[indicator_index]
+        original = {
+            "kind": item.kind,
+            "value": item.value,
+            "confidence": item.confidence,
+            "source_msg_id": item.source_msg_id,
+            "extractor": item.extractor,
+        }
+        review_id = secrets.token_hex(12)
+        reviewed_ts = time.time()
+        item.kind = kind
+        item.value = value
+        item.confidence = 1.0
+        item.extractor = "operator_review"
+        corrected = {
+            "kind": item.kind,
+            "value": item.value,
+            "confidence": item.confidence,
+            "source_msg_id": item.source_msg_id,
+            "extractor": item.extractor,
+            "review_id": review_id,
+            "review_status": "corrected",
+            "reviewed_ts": reviewed_ts,
+        }
+        review = {
+            "id": review_id,
+            "scope": "live",
+            "peer_id": peer_id,
+            "session_id": session.session_id,
+            "indicator_index": indicator_index,
+            "original": original,
+            "corrected": corrected,
+            "reason": reason,
+            "operator": operator,
+            "reviewed_ts": reviewed_ts,
+        }
+        session.indicator_reviews.append(review)
+        checkpoint = getattr(current_userbot, "checkpoint_takeover", None)
+        if callable(checkpoint):
+            checkpoint(peer_id)
+        try:
+            session.related_cases = case_intelligence.match(
+                build_live_case_profile(session),
+                limit=5,
+            )
+        except Exception:
+            log.exception("indicator review: live relationship refresh failed peer=%s", peer_id)
+        audit.append(
+            "indicator_review",
+            "live_indicator_corrected",
+            component="webpanel.indicators",
+            payload=review,
+            peer_id=peer_id,
+            session_id=session.session_id,
+        )
+        observations.event(
+            "indicator_review",
+            "Live indicator corrected",
+            f"{original['kind']} reviewed before sealing",
+            peer_id=peer_id,
+            severity="success",
+        )
+        return {"ok": True, "indicator": corrected, "review": review}
 
     @app.post("/api/takeover", dependencies=[Depends(auth)])
     async def takeover(

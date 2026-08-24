@@ -99,6 +99,10 @@ class TakeoverCoordinator:
                     evidence_path=sealed_path,
                     analysis_models=model_manifest(self.settings),
                 )
+                record["operator_name"] = str(
+                    getattr(self.settings, "operator_name", "") or ""
+                )
+                self.history.import_record(record)
                 self._index_case(record)
             except Exception as exc:
                 session.phase = previous_phase

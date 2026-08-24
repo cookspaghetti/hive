@@ -31,7 +31,7 @@ export function EmptyState({ title, copy, action }: { title: string; copy: strin
 }
 
 export function LoadingState({ label = "Loading" }: { label?: string }) {
-  return <div className="loading-state"><span aria-hidden="true" /><span>{label}</span></div>;
+  return <div className="skeleton-state" role="status" aria-label={label}><span/><span/><span/><span className="sr-only">{label}</span></div>;
 }
 
 export function ErrorState({ message, retry }: { message: string; retry?: () => void }) {
@@ -78,6 +78,17 @@ export function verdictTone(verdict?: string): string {
 export function Score({ value }: { value?: number }) {
   const score = typeof value === "number" ? value : 0;
   return <span className={`score ${score >= .75 ? "high" : score >= .45 ? "medium" : "low"}`}>{typeof value === "number" ? score.toFixed(2) : "—"}</span>;
+}
+
+export function RiskBar({ value, compact = false }: { value?: number; compact?: boolean }) {
+  const valid = typeof value === "number";
+  const score = valid ? Math.max(0, Math.min(1, value)) : 0;
+  const level = score >= .75 ? "high" : score >= .45 ? "medium" : "low";
+  return <span className={`risk-bar ${compact ? "compact" : ""} ${level}`}><i><b style={{width: valid ? `${Math.max(2, score * 100)}%` : "0%"}}/></i><strong>{valid ? score.toFixed(2) : "—"}</strong></span>;
+}
+
+export function Segmented<T extends string>({ value, items, onChange, label }: { value: T; items: Array<{value:T;label:string;count?:number}>; onChange:(value:T)=>void; label:string }) {
+  return <div className="segmented" role="group" aria-label={label}>{items.map(item => <button key={item.value} className={value === item.value ? "active" : ""} aria-pressed={value === item.value} onClick={() => onChange(item.value)}>{item.label}{typeof item.count === "number" && <span>{item.count}</span>}</button>)}</div>;
 }
 
 export function IndicatorList({ items = [], compact = false }: { items?: Indicator[]; compact?: boolean }) {

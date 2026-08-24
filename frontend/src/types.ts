@@ -46,6 +46,7 @@ export interface CaseSummary extends JsonRecord {
   hvis?: number;
   sandbox?: number;
   recovery_status?: string;
+  analysis_pending?: boolean;
   started_ts?: number;
   ended_ts?: number;
   last_message_ts?: number;
@@ -81,6 +82,7 @@ export interface MessageItem extends JsonRecord {
   media_name?: string;
   media_url?: string;
   media_mime?: string;
+  media_sha256?: string;
 }
 
 export interface Indicator extends JsonRecord {
@@ -89,6 +91,9 @@ export interface Indicator extends JsonRecord {
   confidence?: number;
   source_msg_id?: number;
   extractor?: string;
+  review_id?: string;
+  review_status?: string;
+  reviewed_ts?: number;
 }
 
 export interface CaseDetail extends CaseSummary {
@@ -96,6 +101,7 @@ export interface CaseDetail extends CaseSummary {
   messages?: MessageItem[];
   hvi_items?: Indicator[];
   signals?: JsonRecord[];
+  signal_trail?: JsonRecord[];
   assessment_history?: JsonRecord[];
   sandbox_results?: JsonRecord[];
   media_analysis?: JsonRecord[];
@@ -103,6 +109,12 @@ export interface CaseDetail extends CaseSummary {
   case_intelligence?: JsonRecord;
   reporting_guidance?: JsonRecord;
   selected_analysis?: JsonRecord;
+  peer_identity?: JsonRecord;
+  related_cases?: RelatedCase[];
+  operator_name?: string;
+  evidence_download_url?: string;
+  package_download_url?: string;
+  evidence_verification?: JsonRecord;
 }
 
 export interface RelatedCase extends JsonRecord {
@@ -126,6 +138,7 @@ export interface EvidenceRow extends JsonRecord {
   package_present?: boolean;
   package_filename?: string;
   package_download_url?: string;
+  metadata_url?: string;
 }
 
 export interface EvaluationRow extends JsonRecord {

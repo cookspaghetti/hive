@@ -110,7 +110,16 @@ def test_runner_error_propagates():
 
 
 def test_result_shape_is_sandbox_entry():
-    f = RawFindings(final_url="http://x.example/", body_len=8000, title="Hi", dest_ip="1.2.3.4")
+    f = RawFindings(
+        final_url="https://x.example/",
+        body_len=8000,
+        title="Hi",
+        dest_ip="1.2.3.4",
+        http_status=200,
+        certificate_age_days=17,
+        runtime_ms=1234,
+        fetcher="scrapling_stealthy",
+    )
     r = analyze_url("http://x.example/", FakeRunner(f))
     # keys the Verdict Engine / Evidence Vault rely on
     for key in (
@@ -121,5 +130,12 @@ def test_result_shape_is_sandbox_entry():
         "screenshot_path",
         "screenshot_error",
         "blocked_requests",
+        "http_status",
+        "certificate_age_days",
+        "certificate_error",
+        "runtime_ms",
+        "fetcher",
     ):
         assert key in r
+    assert r["certificate_age_days"] == 17
+    assert r["runtime_ms"] == 1234

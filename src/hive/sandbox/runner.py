@@ -20,6 +20,7 @@ import json
 import os
 import socket
 import subprocess
+import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -54,6 +55,9 @@ class RawFindings:
     body_len: int = 0
     blocked_requests: list[str] = field(default_factory=list)
     http_status: int = 0
+    certificate_age_days: int | None = None
+    certificate_error: str = ""
+    runtime_ms: int = 0
     fetcher: str = ""
     access_state: str = ""
     challenge_detected: bool = False
@@ -99,7 +103,9 @@ _SCRAPLING_SCRIPT = r"""
 import ipaddress
 import json
 import socket
+import ssl
 import sys
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -133,6 +139,27 @@ def ensure_public(raw):
         addresses = list({ipaddress.ip_address(item[4][0]) for item in resolved})
     if not addresses or any(not address.is_global for address in addresses):
         raise ValueError(f"blocked non-public destination: {hostname}")
+    return sorted(str(address) for address in addresses)
+
+
+def certificate_age_days(raw):
+    parsed = urlsplit(raw)
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return None
+    addresses = ensure_public(raw)
+    context = ssl.create_default_context()
+    with socket.create_connection(
+        (addresses[0], parsed.port or 443), timeout=10
+    ) as connection:
+        with context.wrap_socket(
+            connection, server_hostname=parsed.hostname
+        ) as tls_connection:
+            certificate = tls_connection.getpeercert()
+    not_before = certificate.get("notBefore")
+    if not not_before:
+        raise ValueError("TLS certificate did not report notBefore")
+    issued_at = ssl.cert_time_to_seconds(not_before)
+    return max(0, int((time.time() - issued_at) // 86400))
 
 
 def page_setup(page):
@@ -263,6 +290,14 @@ try:
     observed["redirect_chain"] = chain
     observed["blocked_requests"] = list(dict.fromkeys(blocked))
     observed["fetcher"] = "scrapling_stealthy"
+    try:
+        observed["certificate_age_days"] = certificate_age_days(
+            observed.get("final_url") or url
+        )
+        observed["certificate_error"] = ""
+    except Exception as certificate_exc:
+        observed["certificate_age_days"] = None
+        observed["certificate_error"] = str(certificate_exc)
     print(json.dumps(observed, ensure_ascii=False))
 except Exception as exc:
     print(json.dumps({
@@ -301,7 +336,10 @@ class ScraplingDockerRunner:
         run_timeout_s: int = 90,
     ) -> None:
         self.image = image
-        self.out_dir = out_dir
+        # Docker treats a relative `-v` source as a named volume. Resolve the
+        # evidence directory at the runner boundary so nested Docker always
+        # receives a valid host bind path (for example /app/evidence/sandbox).
+        self.out_dir = str(Path(out_dir).expanduser().resolve())
         self.network = network
         self.dns = dns
         self.memory_limit = memory_limit
@@ -331,6 +369,7 @@ class ScraplingDockerRunner:
         if self.memory_limit:
             resource_limits = ["--memory", self.memory_limit, *resource_limits]
         identity = ["--name", container_name] if container_name else []
+        mount_source = Path(output_dir or self.out_dir).expanduser().resolve()
         return [
             "docker", "run", "--rm",
             *identity,
@@ -342,7 +381,7 @@ class ScraplingDockerRunner:
             "--security-opt", "no-new-privileges",
             *resource_limits,
             "--dns", self.dns,
-            "-v", f"{output_dir or self.out_dir}:/out",
+            "-v", f"{mount_source}:/out",
             self.image, "python", "-c", _SCRAPLING_SCRIPT, url,
         ]
 
@@ -359,6 +398,13 @@ class ScraplingDockerRunner:
             body_len=int(data.get("body_len") or 0),
             blocked_requests=list(data.get("blocked_requests") or []),
             http_status=int(data.get("http_status") or 0),
+            certificate_age_days=(
+                int(data["certificate_age_days"])
+                if data.get("certificate_age_days") is not None
+                else None
+            ),
+            certificate_error=str(data.get("certificate_error") or ""),
+            runtime_ms=int(data.get("runtime_ms") or 0),
             fetcher=str(data.get("fetcher") or "scrapling_stealthy"),
             access_state=str(data.get("access_state") or "error"),
             challenge_detected=bool(data.get("challenge_detected")),
@@ -367,6 +413,7 @@ class ScraplingDockerRunner:
         )
 
     def run(self, url: str) -> RawFindings:
+        started = time.monotonic()
         container_name = f"hive-sandbox-{uuid.uuid4().hex[:12]}"
         output_dir = Path(self.out_dir) / container_name
         try:
@@ -381,8 +428,14 @@ class ScraplingDockerRunner:
                 timeout=self.run_timeout_s,
             )
         except ValueError as exc:
-            log.warning("L4 sandbox: destination rejected: %s", exc)
-            return RawFindings(error=str(exc), blocked_requests=[url])
+            detail = str(exc)
+            log.warning("L4 sandbox: preflight failed: %s", detail)
+            return RawFindings(
+                error=detail,
+                blocked_requests=[url] if detail.startswith("sandbox blocked") else [],
+                runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+                access_state="preflight_failed",
+            )
         except subprocess.TimeoutExpired:
             try:
                 subprocess.run(
@@ -402,20 +455,36 @@ class ScraplingDockerRunner:
                 progress = None
             if isinstance(progress, dict):
                 progress["error"] = error
+                progress["runtime_ms"] = max(
+                    0, round((time.monotonic() - started) * 1000)
+                )
                 return self._findings_from_data(progress, output_dir)
-            return RawFindings(error=error)
+            return RawFindings(
+                error=error,
+                runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+            )
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             log.error("L4 sandbox: container run failed: %s", exc)
-            return RawFindings(error=str(exc))
+            return RawFindings(
+                error=str(exc),
+                runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+            )
         if proc.returncode != 0:
             error = proc.stderr.strip() or proc.stdout.strip() or "no container output"
             log.error("L4 sandbox: container exited %d: %s", proc.returncode, error)
-            return RawFindings(error=f"container exited {proc.returncode}: {error[:1000]}")
+            return RawFindings(
+                error=f"container exited {proc.returncode}: {error[:1000]}",
+                runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+            )
         try:
             data = json.loads(proc.stdout.strip().splitlines()[-1])
         except (ValueError, IndexError):
             detail = proc.stderr.strip() or proc.stdout.strip() or "empty output"
-            return RawFindings(error=f"unparseable output: {detail[:1000]}")
+            return RawFindings(
+                error=f"unparseable output: {detail[:1000]}",
+                runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+            )
+        data["runtime_ms"] = max(0, round((time.monotonic() - started) * 1000))
         return self._findings_from_data(data, output_dir)
 
 

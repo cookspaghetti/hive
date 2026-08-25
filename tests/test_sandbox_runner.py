@@ -47,9 +47,26 @@ def test_docker_cmd_hardening_flags_present():
     )
     assert "--rm" in cmd
     assert cmd[cmd.index("--name") + 1] == "hive-sandbox-test"
-    assert "/tmp/hive-sandbox/test:/out" in cmd
+    mount = cmd[cmd.index("-v") + 1]
+    assert mount.endswith(":/out")
+    assert Path(mount.removesuffix(":/out")).is_absolute()
     assert "ALL" in cmd  # --cap-drop ALL
     assert "no-new-privileges" in cmd
+
+
+def test_relative_output_directory_becomes_absolute_bind_mount(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    runner = ScraplingDockerRunner(out_dir="evidence/sandbox")
+
+    cmd = runner._docker_cmd(
+        "http://x.example/",
+        "hive-sandbox-test",
+        "evidence/sandbox/hive-sandbox-test",
+    )
+    mount = cmd[cmd.index("-v") + 1]
+
+    assert Path(runner.out_dir).is_absolute()
+    assert mount == f"{tmp_path / 'evidence/sandbox/hive-sandbox-test'}:/out"
 
 
 def test_docker_cmd_is_configurable():
@@ -96,6 +113,9 @@ def test_scrapling_script_enables_stealth_and_preserves_request_guards():
     assert 'access_state="challenge"' in _SCRAPLING_SCRIPT
     assert "request.frame == page.main_frame" in _SCRAPLING_SCRIPT
     assert 'full_page=False' in _SCRAPLING_SCRIPT
+    assert "ssl.create_default_context" in _SCRAPLING_SCRIPT
+    assert "ssl.cert_time_to_seconds" in _SCRAPLING_SCRIPT
+    assert 'observed["certificate_age_days"]' in _SCRAPLING_SCRIPT
 
 
 def test_public_url_validation_rejects_local_and_private_targets():
@@ -136,14 +156,19 @@ def test_run_ensures_network_before_docker_run(tmp_path):
         runner, "ensure_network"
     ) as ensure, mock.patch("subprocess.run") as run:
         run.return_value = mock.Mock(
-            stdout='{"final_url":"http://x/","redirect_chain":[],"body_len":1000}\n',
+            stdout=(
+                '{"final_url":"https://x/","redirect_chain":[],"body_len":1000,'
+                '"certificate_age_days":9,"certificate_error":""}\n'
+            ),
             stderr="",
             returncode=0,
         )
-        result = runner.run("http://x/")
+        result = runner.run("https://x/")
         ensure.assert_called_once_with("custom-net")
         assert run.call_count == 1
-        assert result.final_url == "http://x/"
+        assert result.final_url == "https://x/"
+        assert result.certificate_age_days == 9
+        assert result.runtime_ms >= 0
         assert "hive-sandbox-" in result.screenshot_path
 
 
@@ -157,6 +182,32 @@ def test_run_returns_error_when_network_setup_fails(tmp_path):
         result = runner.run("http://x/")
         assert "docker" in result.error
         run.assert_not_called()
+
+
+def test_dns_preflight_failure_is_not_counted_as_a_blocked_request(tmp_path):
+    runner = ScraplingDockerRunner(out_dir=str(tmp_path))
+    with mock.patch(
+        "hive.sandbox.runner.validate_public_url",
+        side_effect=ValueError("sandbox could not resolve hostname: missing.example"),
+    ), mock.patch.object(runner, "ensure_network") as ensure:
+        result = runner.run("https://missing.example/")
+
+    assert result.access_state == "preflight_failed"
+    assert result.blocked_requests == []
+    assert result.runtime_ms >= 0
+    ensure.assert_not_called()
+
+
+def test_blocked_preflight_destination_is_counted(tmp_path):
+    runner = ScraplingDockerRunner(out_dir=str(tmp_path))
+    with mock.patch(
+        "hive.sandbox.runner.validate_public_url",
+        side_effect=ValueError("sandbox blocked local hostname: localhost"),
+    ):
+        result = runner.run("https://localhost/")
+
+    assert result.access_state == "preflight_failed"
+    assert result.blocked_requests == ["https://localhost/"]
 
 
 def test_run_reports_nonzero_container_exit_with_stderr(tmp_path):

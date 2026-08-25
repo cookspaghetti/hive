@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { api, authenticatedUrl, post } from "../api";
+import { compareCasesNewestFirst } from "../caseOrder";
 import { Button, Chip, EmptyState, ErrorState, LoadingState, PageHeading, RiskBar, Segmented, Surface, SurfaceHeader, Timeline, titleCase, verdictTone } from "../components";
 import { confirmAction, notify } from "../feedback";
 import { useNow, usePolling } from "../hooks";
@@ -14,7 +15,7 @@ export function ConsoleView({navigate,openSetup}:{navigate:(route:string)=>void;
   const attention=useMemo(()=>[...(data?.sessions||[])].sort((a,b)=>Number(b.score||0)-Number(a.score||0)).find(item=>Number(item.score||0)>=.85&&!item.analysis_pending),[data]);
   const oldestQueue=useMemo(()=>[...(data?.chats||[])].sort((a,b)=>Number(a.last_message_at||0)-Number(b.last_message_at||0))[0],[data]);
   const components=runtime?.components||{};const telethon=Object.entries(components).find(([key])=>/telethon|userbot|data/i.test(key));const degraded=Boolean(runtime?.running&&telethon&&!["up","ready","running","healthy","connected"].includes(String(telethon[1].state||"").toLowerCase()));
-  const caseRows=filter==="live"?(data?.sessions||[]):filter==="queue"?[]:filter==="sealed"?(history.data||[]):[...(data?.sessions||[]),...(history.data||[])];
+  const caseRows=(filter==="live"?(data?.sessions||[]):filter==="queue"?[]:filter==="sealed"?(history.data||[]):[...(data?.sessions||[]),...(history.data||[])]).slice().sort(compareCasesNewestFirst);
   async function runtimeAction(action:"start"|"restart"|"stop"){
     if(action==="stop"&&!await confirmAction({title:"Stop the HIVE runtime?",copy:"Telegram delivery and live analysis will pause.",confirmLabel:"Stop runtime",consequences:[{tone:"error",title:"Replies stop",detail:"Active personas stop sending messages until the runtime restarts."},{tone:"warning",title:"Stored evidence remains",detail:"The local panel and existing sealed bundles stay available."}]}))return;
     try{await post(`/api/runtime/${action}`);notify({title:`Runtime ${action} requested`,detail:"Readiness will update when the operation completes.",kind:"success"});await refresh();}catch(reason){notify({title:"Runtime action failed",detail:message(reason),kind:"error"});}

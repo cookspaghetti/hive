@@ -1,6 +1,8 @@
+import { useEffect, useId, useRef } from "react";
 import type { ButtonHTMLAttributes, PropsWithChildren, ReactNode } from "react";
 import type { ActivityItem, Indicator, MessageItem } from "./types";
 import { authenticatedUrl } from "./api";
+import { CloseIcon, EmptyIcon } from "./icons";
 
 export function Logo() {
   return <img className="hive-logo" src="/logo.png" alt="" />;
@@ -8,6 +10,11 @@ export function Logo() {
 
 export function Button({ className = "", tone = "secondary", ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { tone?: "primary" | "secondary" | "danger" | "quiet" }) {
   return <button className={`button ${tone} ${className}`} type="button" {...props} />;
+}
+
+export function IconButton({ label, className = "", children, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+  const tooltipId = useId();
+  return <span className="tooltip"><button className={`icon-button ${className}`} type="button" aria-label={label} aria-describedby={tooltipId} {...props}>{children}</button><span id={tooltipId} role="tooltip">{label}</span></span>;
 }
 
 export function Chip({ children, tone = "neutral" }: PropsWithChildren<{ tone?: string }>) {
@@ -27,7 +34,7 @@ export function PageHeading({ eyebrow, title, copy, actions }: { eyebrow?: strin
 }
 
 export function EmptyState({ title, copy, action }: { title: string; copy: string; action?: ReactNode }) {
-  return <div className="empty-state"><span className="empty-mark" aria-hidden="true">◇</span><h3>{title}</h3><p>{copy}</p>{action}</div>;
+  return <div className="empty-state"><span className="empty-mark"><EmptyIcon size={22}/></span><h3>{title}</h3><p>{copy}</p>{action}</div>;
 }
 
 export function LoadingState({ label = "Loading" }: { label?: string }) {
@@ -39,7 +46,30 @@ export function ErrorState({ message, retry }: { message: string; retry?: () => 
 }
 
 export function Modal({ title, copy, children, actions, onClose, danger = false }: PropsWithChildren<{ title: string; copy?: string; actions?: ReactNode; onClose: () => void; danger?: boolean }>) {
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className={`modal ${danger ? "danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby="modal-title"><header><div><p className="eyebrow">{danger ? "Irreversible action" : "HIVE"}</p><h2 id="modal-title">{title}</h2>{copy && <p>{copy}</p>}</div><button className="icon-button" type="button" aria-label="Close dialog" onClick={onClose}>×</button></header><div className="modal-body">{children}</div>{actions && <footer>{actions}</footer>}</section></div>;
+  const dialogRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+  const titleId = useId();
+  const descriptionId = useId();
+  onCloseRef.current = onClose;
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || []).filter(element => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+    const initial = dialog?.querySelector<HTMLElement>('[data-initial-focus], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), footer button:not([disabled]):not(.danger)') || focusable()[0] || dialog;
+    window.requestAnimationFrame(() => initial?.focus());
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onCloseRef.current(); return; }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) { event.preventDefault(); dialog?.focus(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => { document.removeEventListener("keydown", handleKeyDown); previousFocus?.focus(); };
+  }, []);
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={dialogRef} className={`modal ${danger ? "danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={copy ? descriptionId : undefined} tabIndex={-1}><header><div><p className="eyebrow">{danger ? "Irreversible action" : "HIVE"}</p><h2 id={titleId}>{title}</h2>{copy && <p id={descriptionId}>{copy}</p>}</div><IconButton label="Close dialog" onClick={onClose}><CloseIcon/></IconButton></header><div className="modal-body">{children}</div>{actions && <footer>{actions}</footer>}</section></div>;
 }
 
 export function formatDate(timestamp?: number, includeTime = false): string {
@@ -102,8 +132,21 @@ export function Timeline({ items = [], emptyCopy = "No activity recorded." }: { 
 }
 
 export function Transcript({ messages = [], thinking = false }: { messages?: MessageItem[]; thinking?: boolean }) {
+  const transcriptRef = useRef<HTMLDivElement>(null);
+  const followLatest = useRef(true);
+
+  useEffect(() => {
+    const transcript = transcriptRef.current;
+    if (transcript && followLatest.current) {
+      transcript.scrollTo({ top: transcript.scrollHeight, behavior: "smooth" });
+    }
+  }, [messages.length, thinking]);
+
   if (!messages.length) return <EmptyState title="No messages yet" copy="The transcript will update when the first exchange is recorded." />;
-  return <div className="transcript">{messages.map((message, index) => {
+  return <div className="transcript" ref={transcriptRef} role="log" aria-label="Conversation transcript" aria-live="polite" tabIndex={0} onScroll={(event) => {
+    const transcript = event.currentTarget;
+    followLatest.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80;
+  }}>{messages.map((message, index) => {
     const agent = ["agent", "assistant", "hive", "victim"].includes((message.role || "").toLowerCase());
     return <article className={`message ${agent ? "agent" : "stranger"}`} key={`${message.msg_id ?? index}-${message.timestamp || message.ts}`}><p>{message.text || (message.media_kind ? `${titleCase(message.media_kind)} attachment` : "Empty message")}</p>{message.media_url && message.media_mime?.startsWith("image/") && <img src={authenticatedUrl(message.media_url)} alt={message.media_name || "Captured message attachment"} />}<footer>{agent ? "HIVE" : "Stranger"}<span>·</span>{formatTime(message.timestamp || message.ts)}{message.media_kind && <><span>·</span>{titleCase(message.media_kind)}</>}</footer></article>;
   })}{thinking && <div className="thinking">HIVE is thinking <span>•••</span></div>}</div>;

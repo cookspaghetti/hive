@@ -1,13 +1,18 @@
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useId, useRef, useState } from "react";
 import { api, post, put } from "./api";
-import { Button, Chip, ErrorState, LoadingState, titleCase } from "./components";
+import { Button, Chip, ErrorState, IconButton, LoadingState, titleCase } from "./components";
 import { confirmAction, notify } from "./feedback";
+import { ChevronDownIcon, CloseIcon } from "./icons";
 import type { JsonRecord } from "./types";
 
 const sections = ["models", "control_bot", "telethon", "signing_key", "panel", "privacy"] as const;
 type Section = typeof sections[number];
 
 export function SetupDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const drawerRef = useRef<HTMLElement>(null);
+  const onCloseRef = useRef(onClose);
+  const titleId = useId();
+  onCloseRef.current = onClose;
   const [active, setActive] = useState<Section>("models");
   const [status, setStatus] = useState<JsonRecord | null>(null);
   const [form, setForm] = useState<Record<string,string>>({});
@@ -29,7 +34,24 @@ export function SetupDrawer({ open, onClose }: { open: boolean; onClose: () => v
     } catch (reason) { setError(message(reason)); }
   }
   useEffect(() => { if (open) void refresh(); }, [open]);
-  useEffect(() => { if (!open) return; const handler = (event:KeyboardEvent) => { if(event.key === "Escape") onClose(); }; window.addEventListener("keydown",handler); return () => window.removeEventListener("keydown",handler); }, [open,onClose]);
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const drawer = drawerRef.current;
+    const focusable = () => Array.from(drawer?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || []).filter(element => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+    window.requestAnimationFrame(() => (focusable()[0] || drawer)?.focus());
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onCloseRef.current(); return; }
+      if (event.key !== "Tab") return;
+      const items = focusable();
+      if (!items.length) { event.preventDefault(); drawer?.focus(); return; }
+      const first = items[0], last = items[items.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown",handler);
+    return () => { document.removeEventListener("keydown",handler); previousFocus?.focus(); };
+  }, [open]);
   if (!open) return null;
   const checks=(status?.checks || {}) as Record<string,boolean>;
   const readyCount=Object.values(checks).filter(Boolean).length;
@@ -46,7 +68,7 @@ export function SetupDrawer({ open, onClose }: { open: boolean; onClose: () => v
   async function savePanelToken(event:FormEvent){event.preventDefault();await run(async()=>{if(!form.panel_token?.trim())throw new Error("Enter a replacement panel token.");await put("/api/setup/config",{HIVE_PANEL_TOKEN:form.panel_token.trim()});setNotice("Panel token saved. Refresh after the runtime reloads configuration.");});}
   async function saveRetention(event:FormEvent){event.preventDefault();await run(async()=>{await put("/api/retention/policy",{media_days:Number(form.media_days||30),demo_days:Number(form.demo_days||90),evaluation_days:Number(form.evaluation_days||180),active_checkpoint_review_days:Number(form.active_checkpoint_review_days||7)});setNotice("Retention policy saved. This report-only policy does not delete artifacts.");});}
 
-  return <div className="drawer-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)onClose();}}><aside className="setup-drawer" role="dialog" aria-modal="true" aria-label="Setup"><header><div><p className="eyebrow">Readiness</p><h2>{total&&readyCount===total?"All checks passing":`${readyCount} of ${total||5} checks passing`}</h2><p>Expand a readiness check to review or update its configuration.</p></div><button className="icon-button" onClick={onClose} aria-label="Close setup">×</button></header><nav aria-label="Readiness checks">{sections.map(section=><button key={section} className={active===section?"active":""} aria-expanded={active===section} aria-controls="setup-check-detail" onClick={()=>setActive(section)}><span className={`status-dot ${sectionReady(section,checks)?"healthy":"warning"}`}/><span><strong>{titleCase(section)}</strong><small>{sectionCopy(section)}</small></span><Chip tone={sectionReady(section,checks)?"success":"warning"}>{sectionReady(section,checks)?"Ready":"Review"}</Chip><b aria-hidden="true">{active===section?"⌃":"⌄"}</b></button>)}</nav><div className="drawer-content" id="setup-check-detail">{!status&&!error&&<LoadingState label="Checking setup"/>}{error&&<ErrorState message={error}/>} {notice&&<div className="inline-notice">{notice}</div>}
+  return <div className="drawer-backdrop" onMouseDown={event=>{if(event.target===event.currentTarget)onClose();}}><aside ref={drawerRef} className="setup-drawer" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}><header><div><p className="eyebrow">Readiness</p><h2 id={titleId}>{total&&readyCount===total?"All checks passing":`${readyCount} of ${total||5} checks passing`}</h2><p>Expand a readiness check to review or update its configuration.</p></div><IconButton label="Close setup" onClick={onClose}><CloseIcon/></IconButton></header><nav aria-label="Readiness checks">{sections.map(section=><button key={section} className={active===section?"active":""} aria-expanded={active===section} aria-controls="setup-check-detail" onClick={()=>setActive(section)}><span className={`status-dot ${sectionReady(section,checks)?"healthy":"warning"}`}/><span><strong>{titleCase(section)}</strong><small>{sectionCopy(section)}</small></span><Chip tone={sectionReady(section,checks)?"success":"warning"}>{sectionReady(section,checks)?"Ready":"Review"}</Chip><b className={active===section?"expanded":""} aria-hidden="true"><ChevronDownIcon size={14}/></b></button>)}</nav><div className="drawer-content" id="setup-check-detail">{!status&&!error&&<LoadingState label="Checking setup"/>}{error&&<ErrorState message={error}/>} {notice&&<div className="inline-notice">{notice}</div>}
     {status&&active==="models"&&<form onSubmit={saveModels}><h3>Model routing</h3><p>Assign each task to the configured compatible model endpoint.</p><div className="form-grid"><Field label="API base URL" name="HIVE_LLM_BASE_URL" form={form} setForm={setForm}/><Field label="New API key (optional)" name="HIVE_LLM_API_KEY" type="password" form={form} setForm={setForm}/><Field label="Cheap model" name="HIVE_LLM_MODEL_CHEAP" form={form} setForm={setForm}/><Field label="Strong model" name="HIVE_LLM_MODEL_STRONG" form={form} setForm={setForm}/><Field label="Verdict model" name="HIVE_LLM_MODEL_LIGHT" form={form} setForm={setForm}/><Field label="Vision model" name="HIVE_VISION_MODEL" form={form} setForm={setForm}/></div><div className="button-stack"><Button tone="primary" disabled={busy} type="submit">Save and restart agent</Button><Button disabled={busy} onClick={()=>void probeModels()}>Test endpoint</Button></div></form>}
     {status&&active==="control_bot"&&<form onSubmit={verifyBot}><h3>Control bot</h3><p>Verify the bot used for operator approvals and evidence delivery.</p><div className="form-grid"><Field label="Bot token" name="bot_token" type="password" form={form} setForm={setForm}/><Field label="Operator ID" name="operator_id" form={form} setForm={setForm}/><Field label="Operator name" name="operator_name" form={form} setForm={setForm}/></div><Button tone="primary" disabled={busy} type="submit">Verify control bot</Button></form>}
     {status&&active==="telethon"&&<div className="setup-stack"><form onSubmit={startLogin}><h3>Telegram data plane</h3><p>Authorise the approved research account. The encryption passphrase has no recovery path.</p><div className="form-grid"><Field label="API ID" name="api_id" form={form} setForm={setForm}/><Field label="API hash" name="api_hash" type="password" form={form} setForm={setForm}/><Field label="Phone" name="phone" form={form} setForm={setForm}/><Field label="Encryption passphrase" name="passphrase" type="password" form={form} setForm={setForm}/><Field label="Session path" name="session_path" form={form} setForm={setForm}/></div><Button tone="primary" disabled={busy} type="submit">Send login code</Button></form>{attempt&&loginState!=="ready"&&<form onSubmit={loginState==="password_required"?submitPassword:submitCode}><h3>{loginState==="password_required"?"Two-step verification":"Login code"}</h3><Field label={loginState==="password_required"?"Telegram password":"Code"} name={loginState==="password_required"?"tg_password":"login_code"} type={loginState==="password_required"?"password":"text"} form={form} setForm={setForm}/><Button tone="primary" disabled={busy} type="submit">Continue</Button></form>}</div>}

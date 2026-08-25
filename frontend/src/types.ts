@@ -46,6 +46,7 @@ export interface CaseSummary extends JsonRecord {
   hvis?: number;
   sandbox?: number;
   recovery_status?: string;
+  processing?: boolean;
   analysis_pending?: boolean;
   started_ts?: number;
   ended_ts?: number;

@@ -116,6 +116,7 @@ def _session_summary(
     peer_id: int,
     session: SessionState,
     recovery_status: str = "active",
+    processing: bool = False,
 ) -> dict[str, object]:
     started = session.started_ts
     phase = session.phase.value if hasattr(session.phase, "value") else str(session.phase)
@@ -134,6 +135,7 @@ def _session_summary(
         "duration_s": max(0, round(time.time() - started)) if started else None,
         "last_message_ts": session.messages[-1].ts if session.messages else None,
         "recovery_status": recovery_status,
+        "processing": processing,
     }
 
 
@@ -141,8 +143,9 @@ def _session_detail(
     peer_id: int,
     session: SessionState,
     recovery_status: str = "active",
+    processing: bool = False,
 ) -> dict[str, Any]:
-    detail = _session_summary(peer_id, session, recovery_status)
+    detail = _session_summary(peer_id, session, recovery_status, processing)
     detail["session_id"] = session.session_id
     detail["peer_identity"] = {
         "display_name": session.peer_display_name,
@@ -1767,6 +1770,9 @@ def create_app(
                 current_userbot.recovery_status(peer_id)
                 if callable(getattr(current_userbot, "recovery_status", None))
                 else "active",
+                current_userbot.is_processing(peer_id)
+                if callable(getattr(current_userbot, "is_processing", None))
+                else False,
             )
             for peer_id, (session, _chain) in current_userbot._sessions.items()
         ]
@@ -1809,6 +1815,9 @@ def create_app(
                 current_userbot.recovery_status(peer_id)
                 if callable(getattr(current_userbot, "recovery_status", None))
                 else "active",
+                current_userbot.is_processing(peer_id)
+                if callable(getattr(current_userbot, "is_processing", None))
+                else False,
             ),
             profile,
             source="live_session",

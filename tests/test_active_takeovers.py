@@ -194,6 +194,33 @@ def test_terminal_checkpoint_is_removed_instead_of_restored(tmp_path):
     assert store.list() == []
 
 
+def test_premature_benign_closing_checkpoint_is_restored_as_active(tmp_path):
+    store = FileActiveTakeoverStore(tmp_path)
+    session = SessionState(
+        peer_id=81,
+        persona="confused_elderly",
+        phase=Phase.CLOSING,
+        verdict="likely_benign",
+        exchange_count=3,
+        turn_count=6,
+    )
+    store.save(session, HashChain())
+    engine = RecoveryEngine()
+    engine.early_exit_min_turns = 10
+
+    transport = UserbotTransport(
+        1,
+        "hash",
+        "session",
+        engine,
+        checkpoint_store=store,
+    )
+
+    assert transport._sessions[81][0].phase is Phase.ACTIVE
+    assert transport.recovery_status(81) == PAUSED_AFTER_RESTART
+    assert store.list()[0].session.phase is Phase.ACTIVE
+
+
 def test_checkpoint_keeps_inflight_and_newly_buffered_messages(tmp_path):
     class BlockingEngine(RecoveryEngine):
         def __init__(self):

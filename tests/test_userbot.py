@@ -14,7 +14,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from hive.runtime import TurnOutput
-from hive.state import Message
+from hive.state import Message, Phase
 from hive.transports.userbot import UserbotTransport
 
 
@@ -32,6 +32,8 @@ class FakeEngine:
         return SessionState(peer_id=peer_id, persona=persona), HashChain()
 
     def process_turn(self, session, chain, inbound):
+        if self._handed_back:
+            session.phase = Phase.CLOSING
         return TurnOutput(
             text=None if self._handed_back else "hi",
             handed_back=self._handed_back,
@@ -71,6 +73,18 @@ def test_benign_handback_ends_takeover_and_notifies():
     assert fired.get("peer") == 555         # operator notified
 
 
+def test_handback_notification_failure_does_not_restore_takeover():
+    async def broken_notification(peer_id, session):
+        raise RuntimeError("control bot unavailable")
+
+    ub = _transport(FakeEngine(handed_back=True), on_handback=broken_notification)
+    ub.begin_takeover(556, "confused_elderly")
+
+    _run(ub.on_message(556, "ok bye thanks", 1, 0.0))
+
+    assert 556 not in ub._sessions
+
+
 def test_active_conversation_keeps_session():
     ub = _transport(FakeEngine(handed_back=False))
     ub.begin_takeover(777, "naive_young_adult")
@@ -87,6 +101,22 @@ def test_on_message_ignores_unknown_peer():
     # no takeover started for this peer -> no error, no state
     _run(ub.on_message(999, "hello", 1, 0.0))
     assert 999 not in ub._sessions
+
+
+def test_processing_status_tracks_queued_and_inflight_messages():
+    ub = _transport(FakeEngine(handed_back=False))
+    assert ub.is_processing(321) is False
+
+    message = Message("stranger", "hello", 1.0, 1)
+    ub._inbound_buffers[321] = [message]
+    assert ub.is_processing(321) is True
+
+    ub._inbound_buffers.clear()
+    ub._inflight_batches[321] = [message]
+    assert ub.is_processing(321) is True
+
+    ub._inflight_batches.clear()
+    assert ub.is_processing(321) is False
 
 
 def test_media_analysis_overlaps_debounce_and_reaches_batch_processor(tmp_path):

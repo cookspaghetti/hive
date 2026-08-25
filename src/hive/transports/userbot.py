@@ -110,7 +110,30 @@ class UserbotTransport:
         restored = 0
         for checkpoint in self.checkpoint_store.list():
             session = checkpoint.session
-            if session.phase in {Phase.CLOSING, Phase.SEALED}:
+            if session.phase is Phase.CLOSING:
+                minimum = int(getattr(self.engine, "early_exit_min_turns", 10))
+                recoverable_benign_handback = (
+                    session.verdict == "likely_benign"
+                    and session.exchange_count < minimum
+                )
+                if recoverable_benign_handback:
+                    session.phase = Phase.ACTIVE
+                    audit_event(
+                        "takeover_recovery",
+                        "premature_benign_handback_recovered",
+                        component="transport.userbot",
+                        payload={
+                            "exchanges": session.exchange_count,
+                            "minimum_exchanges": minimum,
+                        },
+                        peer_id=session.peer_id,
+                        session_id=session.session_id,
+                        level="warning",
+                    )
+                else:
+                    self.checkpoint_store.delete(session.session_id)
+                    continue
+            elif session.phase is Phase.SEALED:
                 self.checkpoint_store.delete(session.session_id)
                 continue
             if session.peer_id in self._sessions:
@@ -139,6 +162,15 @@ class UserbotTransport:
 
     def recovery_status(self, peer_id: int) -> str:
         return PAUSED_AFTER_RESTART if peer_id in self._paused_recoveries else ACTIVE
+
+    def is_processing(self, peer_id: int) -> bool:
+        """Return whether an inbound batch is queued, analysed, or being delivered."""
+        task = self._inbound_tasks.get(peer_id)
+        return bool(
+            self._inbound_buffers.get(peer_id)
+            or self._inflight_batches.get(peer_id)
+            or (task is not None and not task.done())
+        )
 
     def _checkpoint_messages(self, peer_id: int) -> list[Message]:
         messages = [
@@ -1038,8 +1070,6 @@ class UserbotTransport:
         self._inflight_batches.pop(peer_id, None)
         self._checkpoint(peer_id)
         log.info("userbot: processing peer=%s inbound_batch=%d", peer_id, len(batch))
-        if session.phase in {Phase.CLOSING, Phase.SEALED} or peer_id not in self._sessions:
-            return
         if out.handed_back or out.terminated:
             # Stop intercepting this peer. handed_back = benign safeguard;
             # terminated = turn/duration budget exhausted (fyp.txt S8). Either
@@ -1049,7 +1079,19 @@ class UserbotTransport:
                 "userbot: ending takeover peer=%s (reason=%s)", peer_id, out.reason or "benign"
             )
             if self.on_handback is not None:
-                await self.on_handback(peer_id, session)
+                try:
+                    await self.on_handback(peer_id, session)
+                except Exception:
+                    log.exception("userbot: hand-back notification failed peer=%s", peer_id)
+                    audit_event(
+                        "control_message",
+                        "handback_notification_failed",
+                        component="transport.userbot",
+                        payload={"reason": out.reason or "benign"},
+                        peer_id=peer_id,
+                        session_id=session.session_id,
+                        level="error",
+                    )
             audit_event(
                 "takeover",
                 "takeover_automatically_ended",
@@ -1058,6 +1100,8 @@ class UserbotTransport:
                 peer_id=peer_id,
                 session_id=session.session_id,
             )
+            return
+        if session.phase in {Phase.CLOSING, Phase.SEALED} or peer_id not in self._sessions:
             return
         messages = out.messages or ((out.text,) if out.text else ())
         delays = out.message_delays_s or ((out.delay_s,) if messages else ())

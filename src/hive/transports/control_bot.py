@@ -112,10 +112,34 @@ class ControlBot:
         No evidence bundle is sealed (the verdict is benign); we just inform the
         operator that control has returned to them for this chat.
         """
-        self.history.archive(session, status="handed_back")
+        try:
+            self.history.archive(session, status="handed_back")
+        except Exception:
+            log.exception("control bot: hand-back history archive failed peer=%s", peer_id)
+            audit_event(
+                "takeover_history",
+                "handback_archive_failed",
+                component="transport.control_bot",
+                peer_id=peer_id,
+                session_id=session.session_id,
+                level="error",
+            )
+        display_name = session.peer_display_name or f"Peer {peer_id}"
+        account = (
+            f"{display_name} (@{session.peer_username})"
+            if session.peer_username
+            else display_name
+        )
+        exchanges = getattr(session, "exchange_count", session.turn_count)
         text = (
-            f"↩️ Handed back chat {peer_id} — assessed as {session.verdict} "
-            f"after {session.turn_count} turn(s). You are back in control.\n\n"
+            "↩️ HIVE handed the chat back\n\n"
+            f"Chat: {account}\n"
+            f"Peer ID: {peer_id}\n"
+            f"Decision: {session.verdict.replace('_', ' ').title()}\n"
+            f"Analysed exchanges: {exchanges}\n"
+            f"Messages observed: {session.turn_count}\n\n"
+            "HIVE has stopped replying. You can continue the conversation manually "
+            "in Telegram.\n\n"
             f"{self.engine.summary(session)}"
         )
         if self._app is not None:

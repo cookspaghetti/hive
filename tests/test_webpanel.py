@@ -57,6 +57,7 @@ class FakeUserbot:
         self._sessions = {}
         self._observed_chats = []
         self._paused_recoveries = set()
+        self._processing_peers = set()
 
     def list_observed_chats(self):
         return self._observed_chats
@@ -73,6 +74,9 @@ class FakeUserbot:
 
     def recovery_status(self, peer_id):
         return "paused_after_restart" if peer_id in self._paused_recoveries else "active"
+
+    def is_processing(self, peer_id):
+        return peer_id in self._processing_peers
 
     async def resume_recovery(self, peer_id):
         if peer_id not in self._sessions:
@@ -307,6 +311,7 @@ def test_list_sessions(client):
     assert r.status_code == 200
     rows = r.json()
     assert rows[0]["peer_id"] == 100 and rows[0]["verdict"] == "likely_scam"
+    assert rows[0]["processing"] is False
 
 
 def test_session_detail_includes_guided_reporting(client):
@@ -385,6 +390,7 @@ def test_panel_can_dismiss_pending_takeover_request(client):
 
 
 def test_session_detail(client):
+    client._userbot._processing_peers.add(100)
     r = client.get("/api/sessions/100", headers=_h())
     d = r.json()
     assert d["hvi_items"][0]["value"] == "123"
@@ -394,6 +400,7 @@ def test_session_detail(client):
     assert d["scam_vector"]["schema_version"] == 2
     assert "transfer to Maybank" in d["scam_vector"]["redacted_script"]
     assert d["case_intelligence"]["privacy_mode"] == "identifier_redacted"
+    assert d["processing"] is True
     assert "embedding_text" not in d
 
 

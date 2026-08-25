@@ -65,7 +65,7 @@ class HiveEngine:
     vision_client: VisionDescriber | None = None
     case_intelligence: CaseIntelligenceStore | None = None
     enable_early_exit: bool = True
-    early_exit_min_turns: int = 3   # don't bail before we've seen enough
+    early_exit_min_turns: int = 10  # require sustained benign evidence before hand-back
     max_turns: int = 60             # 0 disables; else terminate past this
     max_session_minutes: int = 120  # 0 disables; else terminate past this
     _compiled: Any = None           # cached compiled LangGraph turn graph

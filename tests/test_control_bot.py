@@ -238,6 +238,35 @@ def test_handback_archives_takeover_history(tmp_path):
     assert store.list()[0]["message_count"] == 1
 
 
+def test_handback_notifies_operator_bot_that_manual_control_resumed(tmp_path):
+    sent = []
+
+    class TelegramBot:
+        async def send_message(self, **kwargs):
+            sent.append(kwargs)
+
+    class App:
+        bot = TelegramBot()
+
+    bot = _bot(TakeoverHistoryStore(tmp_path))
+    bot._app = App()
+    session = SessionState(peer_id=555, persona="confused_elderly")
+    session.peer_display_name = "Sender"
+    session.peer_username = "sender"
+    session.verdict = "likely_benign"
+    session.exchange_count = 10
+    session.turn_count = 20
+
+    _run(bot._on_handback(555, session))
+
+    assert sent[0]["chat_id"] == 42
+    assert "HIVE handed the chat back" in sent[0]["text"]
+    assert "Sender (@sender)" in sent[0]["text"]
+    assert "Analysed exchanges: 10" in sent[0]["text"]
+    assert "HIVE has stopped replying" in sent[0]["text"]
+    assert "continue the conversation manually" in sent[0]["text"]
+
+
 def test_takeover_request_is_pushed_to_operator_bot():
     sent = []
 

@@ -36,6 +36,16 @@ def test_normal_turn_produces_reply():
     assert len(chain.entries) >= 2  # msg_in + msg_out
 
 
+def test_default_benign_handback_requires_ten_exchanges():
+    engine = HiveEngine(
+        agent_client=fake_client("ok"),
+        sandbox_runner=_CleanRunner(),
+        enable_early_exit=True,
+    )
+
+    assert engine.early_exit_min_turns == 10
+
+
 def test_burst_preserves_each_inbound_and_records_each_reply_bubble():
     eng = HiveEngine(
         agent_client=fake_client("wait ah ||| which bank account?"),

@@ -9,6 +9,8 @@ __pycache__
 .pytest_cache
 .ruff_cache
 .mypy_cache
+.playwright-cli/
+.firecrawl/
 
 # Secrets / credentials (never bake into an image)
 .env
@@ -23,6 +25,7 @@ keys/
 
 # Runtime output
 evidence/
+evaluation/results/
 *.evidence.pdf
 qdrant_storage/
 *.sqlite3

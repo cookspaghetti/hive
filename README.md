@@ -536,10 +536,12 @@ English, Mandarin, and Manglish regression corpus:
 task evaluate
 ```
 
-The versioned synthetic corpus contains 64 English, Mandarin, Manglish, and
-mixed-language cases, including hard negatives, multi-message context, and
-synthetic QR/OCR-derived indicators. Results are broken down by indicator,
-language, category, and development/evaluation split.
+The versioned synthetic corpus contains 71 English, Mandarin, Manglish, and
+mixed-language cases, including hard negatives, multi-message context, images,
+inert document/APK fixtures, and synthetic QR/OCR-derived indicators. Results
+are broken down by indicator, language, category, attachment kind, and
+development/evaluation split. Fixture validation rejects executable/archive
+magic, active SVG content, oversized files, and non-reserved URLs.
 
 Run the model-driven full-pipeline red-team matrix only when you are ready to
 use the configured LLM and retain evaluation evidence:
@@ -548,12 +550,11 @@ use the configured LLM and retain evaluation evidence:
 task evaluate:redteam -- --output evaluation/results/redteam
 ```
 
-The default matrix is 15 scenarios across all four personas (60 runs). Each
+The default matrix is 19 scenarios across all four personas (76 runs). Each
 run uses the complete HIVE graph and seals/verifies an evidence package; raw
-JSON, flat CSV, aggregate metrics, and run metadata are retained. Detection is
-counted only when the simulated scammer explicitly asserts that the
-counterparty is a bot/AI; questions such as “are you a bot?” are recorded as
-probes but do not count as detection. Remote model outputs can vary, so retain
+JSON, flat CSV, aggregate metrics, and run metadata are retained. Objective 3
+now measures character-break rate instead of engagement time or bot accusations.
+Remote model outputs can vary, so retain
 every final run rather than presenting the command as bit-for-bit deterministic.
 The recorder treats every non-empty line in scammer model output as a separate
 inbound chat bubble, processes adjacent bubbles as one phone-check burst, and
@@ -566,6 +567,40 @@ they are not automatically misclassified as false positives.
 Synthetic scenario URLs use a deterministic sandbox stub by default so the
 model evaluation is safe and repeatable. Add `--live-sandbox` only with a
 controlled, authorised URL set and a ready disposable-browser environment.
+Multimodal openers use the same checksum-addressed fixture registry as Demo Lab;
+captured fixture files are included in the signed evidence package manifest.
+
+### Character-break measurement (Objective 3)
+
+The runner defaults to 20 HIVE response turns (`--max-turns` changes the horizon).
+Adjacent delivered reply bubbles count as one turn. The configured strong model
+assesses the complete transcript **after outbound safeguards**, using the
+versioned `hive-character-v1` rubric: identity disclosure, role abandonment,
+persona contradiction, history contradiction, instruction compliance, and
+sustained persona drift. The exact persona prompt, source hash, judge model,
+raw judgment, turn decisions, quoted evidence and explanations are retained.
+This is a provisional automated assessment, potentially using the same model
+family as HIVE, not independent human validation or real-scammer recognition.
+
+New results contain session/response break rates, first-break turn, assessment
+coverage, uncertain turns and per-horizon aggregates. A zero denominator is
+unavailable, not 0%. Session rates exclude short, unassessed, failed and uncertain
+runs. Different horizons are not pooled. Counts and denominators are retained.
+`--no-character-judge` skips the model call and marks the run unassessed.
+Model/network/schema errors are recorded as assessment errors, never passes.
+Runtime and planned reply latency remain operational diagnostics; neither is
+reported as scammer engagement.
+
+In **Evaluation runs**, open a record, inspect **Character consistency**, and
+choose **Review character**. Review every turn, provide a reviewer name and note,
+and cite an exact HIVE response for each break. Safe refusals, bot denials,
+scammer accusations, natural emotion and appropriate language changes alone are
+not breaks. Unclear cases remain uncertain. Reviewer revisions are saved under
+`evidence/evaluation_reviews/`, with transcript binding and stale-edit detection;
+they never overwrite the original result or its signed evidence. Reviewed rates
+and provisional automated rates are shown separately. Historical runs stay
+unassessed until explicitly reviewed; a missing historical persona snapshot is
+labelled as such. Human review in the panel is not a blinded participant study.
 
 With the Compose stack running, `task services:verify` creates transient test
 records in PostgreSQL and an isolated Qdrant collection, verifies exact and

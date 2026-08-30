@@ -76,7 +76,7 @@ These cannot honestly be marked as passed by the developer audit:
 - an end-to-end Telegram exchange with an authorised test account, including a
   real inbound trigger, takeover approval, reply delivery and hand-back;
 - live image/QR/OCR attachment handling through Telegram;
-- the complete 15-scenario × four-persona model-driven evaluation matrix;
+- the complete 19-scenario × four-persona model-driven evaluation matrix;
 - UAT/SUS with at least three intended users and confirmed ethics coverage;
 - blind persona-realism and explicit agent-detection ratings;
 - mobile/responsive and accessibility testing with intended users;

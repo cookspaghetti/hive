@@ -45,7 +45,7 @@ export function ErrorState({ message, retry }: { message: string; retry?: () => 
   return <div className="error-state" role="alert"><div><strong>Could not load this view</strong><p>{message}</p></div>{retry && <Button onClick={retry}>Try again</Button>}</div>;
 }
 
-export function Modal({ title, copy, children, actions, onClose, danger = false }: PropsWithChildren<{ title: string; copy?: string; actions?: ReactNode; onClose: () => void; danger?: boolean }>) {
+export function Modal({ title, copy, children, actions, onClose, danger = false, className = "", backdropClassName = "" }: PropsWithChildren<{ title: string; copy?: string; actions?: ReactNode; onClose: () => void; danger?: boolean; className?: string; backdropClassName?: string }>) {
   const dialogRef = useRef<HTMLElement>(null);
   const onCloseRef = useRef(onClose);
   const titleId = useId();
@@ -55,8 +55,9 @@ export function Modal({ title, copy, children, actions, onClose, danger = false 
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
     const focusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || []).filter(element => !element.hidden && element.getAttribute("aria-hidden") !== "true");
-    const initial = dialog?.querySelector<HTMLElement>('[data-initial-focus], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), footer button:not([disabled]):not(.danger)') || focusable()[0] || dialog;
-    window.requestAnimationFrame(() => initial?.focus());
+    // Read-only dialogs start at the header, not a distant footer action.
+    const initial = dialog?.querySelector<HTMLElement>('[data-initial-focus]') || dialog?.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea:not([disabled])') || focusable()[0] || dialog;
+    const focusFrame = window.requestAnimationFrame(() => initial?.focus({ preventScroll: true }));
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onCloseRef.current(); return; }
       if (event.key !== "Tab") return;
@@ -67,9 +68,9 @@ export function Modal({ title, copy, children, actions, onClose, danger = false 
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
     };
     document.addEventListener("keydown", handleKeyDown);
-    return () => { document.removeEventListener("keydown", handleKeyDown); previousFocus?.focus(); };
+    return () => { window.cancelAnimationFrame(focusFrame); document.removeEventListener("keydown", handleKeyDown); previousFocus?.focus({ preventScroll: true }); };
   }, []);
-  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={dialogRef} className={`modal ${danger ? "danger" : ""}`} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={copy ? descriptionId : undefined} tabIndex={-1}><header><div><p className="eyebrow">{danger ? "Irreversible action" : "HIVE"}</p><h2 id={titleId}>{title}</h2>{copy && <p id={descriptionId}>{copy}</p>}</div><IconButton label="Close dialog" onClick={onClose}><CloseIcon/></IconButton></header><div className="modal-body">{children}</div>{actions && <footer>{actions}</footer>}</section></div>;
+  return <div className={`modal-backdrop ${backdropClassName}`.trim()} role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section ref={dialogRef} className={`modal ${danger ? "danger" : ""} ${className}`.trim()} role="dialog" aria-modal="true" aria-labelledby={titleId} aria-describedby={copy ? descriptionId : undefined} tabIndex={-1}><header><div><p className="eyebrow">{danger ? "Irreversible action" : "HIVE"}</p><h2 id={titleId}>{title}</h2>{copy && <p id={descriptionId}>{copy}</p>}</div><IconButton label="Close dialog" onClick={onClose}><CloseIcon/></IconButton></header><div className="modal-body">{children}</div>{actions && <footer>{actions}</footer>}</section></div>;
 }
 
 export function formatDate(timestamp?: number, includeTime = false): string {
@@ -131,23 +132,30 @@ export function Timeline({ items = [], emptyCopy = "No activity recorded." }: { 
   return <div className="timeline">{items.map((item, index) => <article key={`${item.id ?? index}-${item.title}`}><time>{item.time || formatTime(item.timestamp || item.ts)}</time><span className={`timeline-dot ${item.severity || "info"}`} /><div><strong>{item.title || item.category || "Event"}</strong>{item.detail && <p>{item.detail}</p>}</div></article>)}</div>;
 }
 
-export function Transcript({ messages = [], thinking = false }: { messages?: MessageItem[]; thinking?: boolean }) {
+export function Transcript({ messages = [], thinking = false, initialScroll = "end" }: { messages?: MessageItem[]; thinking?: boolean; initialScroll?: "start" | "end" }) {
   const transcriptRef = useRef<HTMLDivElement>(null);
-  const followLatest = useRef(true);
+  const followLatest = useRef(initialScroll === "end");
 
   useEffect(() => {
     const transcript = transcriptRef.current;
+    if (transcript && initialScroll === "start") {
+      transcript.scrollTop = 0;
+      return;
+    }
     if (transcript && followLatest.current) {
       transcript.scrollTo({ top: transcript.scrollHeight, behavior: "smooth" });
     }
-  }, [messages.length, thinking]);
+  }, [messages.length, thinking, initialScroll]);
 
   if (!messages.length) return <EmptyState title="No messages yet" copy="The transcript will update when the first exchange is recorded." />;
   return <div className="transcript" ref={transcriptRef} role="log" aria-label="Conversation transcript" aria-live="polite" tabIndex={0} onScroll={(event) => {
+    if (initialScroll === "start") return;
     const transcript = event.currentTarget;
     followLatest.current = transcript.scrollHeight - transcript.scrollTop - transcript.clientHeight < 80;
   }}>{messages.map((message, index) => {
     const agent = ["agent", "assistant", "hive", "victim"].includes((message.role || "").toLowerCase());
-    return <article className={`message ${agent ? "agent" : "stranger"}`} key={`${message.msg_id ?? index}-${message.timestamp || message.ts}`}><p>{message.text || (message.media_kind ? `${titleCase(message.media_kind)} attachment` : "Empty message")}</p>{message.media_url && message.media_mime?.startsWith("image/") && <img src={authenticatedUrl(message.media_url)} alt={message.media_name || "Captured message attachment"} />}<footer>{agent ? "HIVE" : "Stranger"}<span>·</span>{formatTime(message.timestamp || message.ts)}{message.media_kind && <><span>·</span>{titleCase(message.media_kind)}</>}</footer></article>;
+    const mediaUrl = message.media_url ? authenticatedUrl(message.media_url) : "";
+    const image = Boolean(mediaUrl && message.media_mime?.startsWith("image/"));
+    return <article className={`message ${agent ? "agent" : "stranger"}`} key={`${message.msg_id ?? index}-${message.timestamp || message.ts}`}><p>{message.text || (message.media_kind ? `${titleCase(message.media_kind)} attachment` : "Empty message")}</p>{image && <a className="message-image" href={mediaUrl} target="_blank" rel="noreferrer"><img src={mediaUrl} alt={message.media_name || "Captured message attachment"} /></a>}{mediaUrl && !image && <a className="message-attachment" href={mediaUrl} target="_blank" rel="noreferrer"><span>{message.media_kind === "document" ? "PDF" : "FILE"}</span><div><strong>{message.media_name || `${titleCase(message.media_kind)} attachment`}</strong><small>{message.media_mime || "Unknown type"}{message.media_size ? ` · ${Math.ceil(Number(message.media_size) / 1024)} KB` : ""}</small></div><b>Download</b></a>}<footer>{agent ? "HIVE" : "Stranger"}<span>·</span>{formatTime(message.timestamp || message.ts)}{(message.media_kind || (message.content_type && message.content_type !== "text")) && <><span>·</span>{titleCase(message.media_kind || message.content_type)}</>}</footer></article>;
   })}{thinking && <div className="thinking">HIVE is thinking <span>•••</span></div>}</div>;
 }

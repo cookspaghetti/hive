@@ -84,6 +84,8 @@ export interface MessageItem extends JsonRecord {
   media_url?: string;
   media_mime?: string;
   media_sha256?: string;
+  media_size?: number;
+  content_type?: string;
 }
 
 export interface Indicator extends JsonRecord {
@@ -101,10 +103,10 @@ export interface CaseDetail extends CaseSummary {
   session_id?: string;
   messages?: MessageItem[];
   hvi_items?: Indicator[];
+  sandbox_results?: JsonRecord[];
   signals?: JsonRecord[];
   signal_trail?: JsonRecord[];
   assessment_history?: JsonRecord[];
-  sandbox_results?: JsonRecord[];
   media_analysis?: JsonRecord[];
   scam_vector?: JsonRecord;
   case_intelligence?: JsonRecord;
@@ -142,6 +144,35 @@ export interface EvidenceRow extends JsonRecord {
   metadata_url?: string;
 }
 
+export interface CharacterTurnScore {
+  turn: number;
+  verdict: "pass" | "break" | "uncertain";
+  reason: string;
+  findings: Array<{category: string; quote: string; reason: string}>;
+}
+
+export interface CharacterAssessment {
+  rubric_version: string;
+  status: string;
+  source_sha256: string;
+  target_turns: number | null;
+  observed_turns: number;
+  turns: CharacterTurnScore[];
+  error?: string | null;
+  judge_model?: string;
+}
+
+export interface CharacterMetrics {
+  eligible: boolean;
+  assessed_turns: number;
+  uncertain_turns: number;
+  break_turns: number;
+  first_break_turn: number | null;
+  response_break_rate: number | null;
+  session_break: boolean | null;
+  break_free_completion: boolean | null;
+}
+
 export interface EvaluationRow extends JsonRecord {
   id: string;
   run_group?: string;
@@ -151,8 +182,31 @@ export interface EvaluationRow extends JsonRecord {
   language?: string;
   verdict?: string;
   verdict_score?: number;
+  verdict_correct?: boolean;
   turns?: number;
+  exchanges?: number;
+  duration_s?: number;
+  character_status?: string;
+  character_target_turns?: number | null;
+  character_metrics?: CharacterMetrics;
+  character_assessment?: CharacterAssessment;
+  character_automated_assessment?: CharacterAssessment;
+  character_response_turns?: Array<{turn:number; messages:string[]; transcript_indices:number[]}>;
+  character_rubric?: {categories:Record<string,string>; instructions:string};
+  character_persona?: string;
+  character_review?: {id:string; reviewer:string; note:string; reviewed_utc:string} | null;
+  planned_response_delay_s?: number;
+  mean_response_latency_s?: number;
+  response_latencies_s?: number[];
+  agent_language?: string;
+  language_match?: boolean;
+  hvi_count?: number;
   f1?: number;
+  bot_detected?: boolean;
+  bot_probes?: number;
+  seed_bot_probes?: number;
+  seed_bot_detected?: boolean;
+  outbound_guardrail_flags?: number;
   evidence_verified?: boolean;
   package_available?: boolean;
   package_download_url?: string;
@@ -169,6 +223,9 @@ export interface DemoScenario extends JsonRecord {
   language?: string;
   archetype?: string;
   exchanges?: number;
+  attachments?: number;
+  attachment_types?: string[];
+  content_types?: string[];
 }
 
 export interface DemoRun extends JsonRecord {
@@ -188,6 +245,7 @@ export interface DemoRun extends JsonRecord {
   total_exchanges?: number;
   messages?: MessageItem[];
   hvi_items?: Indicator[];
+  sandbox_results?: JsonRecord[];
   timeline?: ActivityItem[];
   evidence_download_url?: string;
 }

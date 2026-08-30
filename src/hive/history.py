@@ -113,6 +113,7 @@ def _record(
         ],
         "indicator_reviews": list(session.indicator_reviews),
         "sandbox_results": session.sandbox_results,
+        "threat_intelligence": list(session.threat_intelligence),
         "signal_trail": session.signal_trail,
         "replay_of": session.replay_of,
         "media_analysis": session.media_analysis,
@@ -123,6 +124,8 @@ def _record(
 
 
 def _summary(record: dict[str, Any]) -> dict[str, Any]:
+    identity = record.get("peer_identity") or {}
+    showcase = record.get("showcase") or {}
     return {
         key: record.get(key)
         for key in (
@@ -143,6 +146,10 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
     } | {
         "message_count": len(record.get("messages", [])),
         "hvis": len(record.get("hvi_items", [])),
+        "threat_intelligence_items": len(record.get("threat_intelligence", [])),
+        "name": identity.get("display_name") or None,
+        "showcase": bool(showcase),
+        "showcase_label": showcase.get("label") or None,
         "analysis_run_id": (record.get("analysis") or {}).get("id"),
         "analysis_schema_version": (record.get("analysis") or {}).get("schema_version"),
     }

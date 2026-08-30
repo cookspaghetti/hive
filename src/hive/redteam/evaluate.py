@@ -20,6 +20,7 @@ from hive.redteam.runner import (
 from hive.redteam.scammer import ARCHETYPES
 from hive.redteam.scenarios import DEFAULT_SCENARIOS
 from hive.runtime import build_engine
+from hive.threat_intelligence import build_synthetic_threat_intelligence_service
 
 
 def timestamped_output_directory(root: str | Path, created: datetime) -> Path:
@@ -82,6 +83,7 @@ def main() -> None:
     )
     engine = build_engine(evaluation_settings, load_ner=not args.regex_only)
     engine.case_intelligence = None
+    engine.threat_intelligence = build_synthetic_threat_intelligence_service()
     engine.enable_early_exit = False
     engine.max_turns = 0  # The harness counts response exchanges, not inbound bubbles.
     engine.max_session_minutes = 0
@@ -135,6 +137,7 @@ def main() -> None:
             if args.live_sandbox
             else "deterministic_stub"
         ),
+        "threat_intelligence_mode": "deterministic_no_network_fixture",
         "models": {
             "cheap": settings.llm_model_cheap,
             "strong": settings.llm_model_strong,

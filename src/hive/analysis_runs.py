@@ -126,6 +126,7 @@ def analysis_run_record(
             for item in session.hvis
         ],
         "sandbox_results": list(session.sandbox_results),
+        "threat_intelligence": list(session.threat_intelligence),
         "signal_trail": list(session.signal_trail),
         "media_analysis": list(session.media_analysis),
         "related_cases": list(session.related_cases),

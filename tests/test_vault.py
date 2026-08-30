@@ -96,6 +96,18 @@ def _populated_session() -> tuple[SessionState, HashChain]:
     s.sandbox_results = [{"url": "http://x.co", "final_url": "http://phish.ru",
                           "verdict_signal": "malicious", "dest_ip": "1.2.3.4",
                           "cloaking_suspected": False}]
+    s.threat_intelligence = [
+        {
+            "provider": "semak_mule",
+            "provider_label": "Semak Mule",
+            "indicator_kind": "bank_account",
+            "observable": "1234567890",
+            "status": "hit",
+            "risk": "malicious",
+            "summary": "PDRM records show 2 reports for this value.",
+            "checked_ts": time.time(),
+        }
+    ]
     s.media_analysis = [
         {
             "source_msg_id": 2,

@@ -51,6 +51,24 @@ class FakeEngine:
     def summary(self, session):
         return "SUMMARY"
 
+    def enrich_threat_intelligence(
+        self, session, _indicators, _messages, *, force=False
+    ):
+        assert force is True
+        observation = {
+            "provider": "semak_mule",
+            "provider_label": "Semak Mule",
+            "indicator_kind": "bank_account",
+            "observable": "123",
+            "source_msg_id": 0,
+            "status": "no_hit",
+            "risk": "clear",
+            "summary": "No matching public report was returned.",
+            "checked_ts": time.time(),
+        }
+        session.threat_intelligence = [observation]
+        return [observation]
+
 
 class FakeUserbot:
     def __init__(self):
@@ -189,6 +207,8 @@ def test_panel_assets_are_served(client):
     assert "Command palette" in script.text
     assert "Evidence vault" in script.text
     assert "Save and restart agent" in script.text
+    assert "Semak Mule and RDAP work without keys" in script.text
+    assert "New Semak Mule key" not in script.text
     assert "What broke" in script.text
     assert "Open peer" in script.text
     assert "Safe package structure" in script.text
@@ -402,6 +422,21 @@ def test_session_detail(client):
     assert d["case_intelligence"]["privacy_mode"] == "identifier_redacted"
     assert d["processing"] is True
     assert "embedding_text" not in d
+
+
+def test_live_threat_intelligence_refresh_is_persisted_and_hash_chained(client):
+    response = client.post(
+        "/api/sessions/100/threat-intelligence/refresh",
+        headers=_h(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["threat_intelligence"][0]["provider"] == "semak_mule"
+    session, chain = client._userbot._sessions[100]
+    assert session.threat_intelligence[0]["status"] == "no_hit"
+    assert chain.entries[-1].payload["event"] == "threat_intelligence"
+    assert chain.verify() is True
+    assert client._userbot.last_checkpointed_peer == 100
 
 
 def test_panel_can_correct_live_indicator_with_provenance(client):

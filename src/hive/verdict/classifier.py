@@ -245,7 +245,14 @@ def classify_soft(session: SessionState, client: LLMClient) -> SoftAssessment:
         ChatMessage(role="system", content=_SYSTEM),
         ChatMessage(role="user", content=convo),
     ]
-    resp = client.complete(messages, tier=Tier.LIGHT, temperature=0.0)
+    try:
+        resp = client.complete(messages, tier=Tier.LIGHT, temperature=0.0)
+    except Exception as exc:  # noqa: BLE001 - soft signals are an optional dependency
+        log.warning(
+            "S6 classifier unavailable; continuing with deterministic signals: %s",
+            exc,
+        )
+        return SoftAssessment(scores={}, evidence={})
     stranger_messages = {
         message.msg_id: message.text for message in window if message.role == "stranger"
     }

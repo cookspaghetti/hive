@@ -93,6 +93,7 @@ _IMPORTANT_ACTIVITY_TYPES = frozenset(
         "reply_delivery",
         "reply_steering",
         "sandbox",
+        "threat_intelligence",
         "session_lifecycle",
         "signing_key",
         "takeover",
@@ -192,6 +193,7 @@ def _session_detail(
         for h in session.hvis
     ]
     detail["sandbox_results"] = session.sandbox_results
+    detail["threat_intelligence"] = list(session.threat_intelligence)
     detail["media_analysis"] = session.media_analysis
     detail["signal_trail"] = session.signal_trail[-20:]
     detail["reporting_guidance"] = reporting_guidance()
@@ -264,6 +266,7 @@ def _history_with_analysis(
         "exchanges",
         "hvi_items",
         "sandbox_results",
+        "threat_intelligence",
         "signal_trail",
         "media_analysis",
         "related_cases",
@@ -1343,12 +1346,23 @@ def create_app(
 
     @app.get("/api/demo/runs", dependencies=[Depends(auth)])
     def demo_runs() -> list[dict[str, Any]]:
-        return demos.list()
+        return [
+            attach_sandbox_captures(
+                detail,
+                source="demo",
+                case_id=str(detail.get("id") or ""),
+            )
+            for detail in demos.list()
+        ]
 
     @app.get("/api/demo/runs/{run_id}", dependencies=[Depends(auth)])
     def demo_run(run_id: str) -> dict[str, Any]:
         try:
-            return demos.get(run_id)
+            return attach_sandbox_captures(
+                demos.get(run_id),
+                source="demo",
+                case_id=run_id,
+            )
         except DemoNotFoundError as exc:
             raise HTTPException(status_code=404, detail="demo run not found") from exc
 
@@ -1732,6 +1746,12 @@ def create_app(
         elif source == "history":
             record = history.get(case_id)
             results = record.get("sandbox_results") or [] if record else []
+        elif source == "demo":
+            try:
+                record = demos.get(case_id)
+            except DemoNotFoundError:
+                record = None
+            results = record.get("sandbox_results") or [] if record else []
         else:
             raise HTTPException(status_code=404, detail="capture not found")
         if result_index < 0 or result_index >= len(results):
@@ -2045,6 +2065,56 @@ def create_app(
             severity="success",
         )
         return {"ok": True, "indicator": corrected, "review": review}
+
+    @app.post(
+        "/api/sessions/{peer_id}/threat-intelligence/refresh",
+        dependencies=[Depends(auth)],
+    )
+    def refresh_live_threat_intelligence(peer_id: int) -> dict[str, Any]:
+        current_engine, current_userbot, _settings = live()
+        entry = current_userbot._sessions.get(peer_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail="no active takeover")
+        session, chain = entry
+        # Explicit operator refresh bypasses the provider-result cache.
+        results = current_engine.enrich_threat_intelligence(
+            session,
+            list(session.hvis),
+            list(session.messages),
+            force=True,
+        )
+        for observation in results:
+            chain.append(
+                {
+                    "event": "threat_intelligence",
+                    "observation": observation,
+                    "trigger": "operator_refresh",
+                },
+                ts=float(observation.get("checked_ts") or time.time()),
+            )
+        checkpoint = getattr(current_userbot, "checkpoint_takeover", None)
+        if callable(checkpoint):
+            checkpoint(peer_id)
+        audit.append(
+            "threat_intelligence",
+            "manual_refresh_completed",
+            component="webpanel.threat_intelligence",
+            payload={"new_observations": len(results)},
+            peer_id=peer_id,
+            session_id=session.session_id,
+        )
+        observations.event(
+            "threat_intelligence",
+            "Threat intelligence refreshed",
+            f"{len(results)} new observation(s)",
+            peer_id=peer_id,
+            severity="success" if results else "info",
+        )
+        return {
+            "ok": True,
+            "new_observations": len(results),
+            "threat_intelligence": list(session.threat_intelligence),
+        }
 
     @app.post("/api/takeover", dependencies=[Depends(auth)])
     async def takeover(

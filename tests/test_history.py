@@ -33,17 +33,30 @@ def test_history_store_persists_and_lists_newest_first(tmp_path):
         )
     )
     newer.hvis.append(HVI("bank_account", "123", 2, 0.9))
+    newer.threat_intelligence.append(
+        {
+            "provider": "semak_mule",
+            "observable": "123",
+            "status": "no_hit",
+            "risk": "clear",
+        }
+    )
     archived = store.archive(newer, evidence_path="bundle_20.pdf", ended_ts=40)
 
     rows = store.list()
     assert [row["peer_id"] for row in rows] == [20, 10]
     assert rows[0]["message_count"] == 1
     assert rows[0]["hvis"] == 1
+    assert rows[0]["threat_intelligence_items"] == 1
+    assert rows[0]["name"] == "Observed Sender"
+    assert rows[0]["showcase"] is False
+    assert rows[0]["showcase_label"] is None
     assert rows[0]["session_id"] == newer.session_id
     assert store.get(archived["id"])["exchanges"] == 1
     assert store.get(archived["id"]) == archived
     assert UUID(archived["id"]).version == 4
     assert archived["hvi_items"][0]["source_msg_id"] == 2
+    assert archived["threat_intelligence"][0]["provider"] == "semak_mule"
     assert UUID(archived["analysis"]["id"]).version == 4
     assert archived["analysis"]["history_id"] == archived["id"]
     assert archived["analysis"]["kind"] == "original"

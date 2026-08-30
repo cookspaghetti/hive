@@ -66,6 +66,20 @@ def test_setup_index_and_api_auth(tmp_path):
     assert client.get("/api/setup/status").status_code == 401
 
 
+def test_keyless_intelligence_baseline_is_ready_without_optional_keys(tmp_path):
+    client, _, _ = _client(tmp_path)
+
+    status = client.get("/api/setup/status", headers=_headers()).json()
+
+    assert status["checks"]["intelligence"] is True
+    assert status["threat_intelligence"] == {
+        "semak_mule": True,
+        "virus_total": False,
+        "abuse_ipdb": False,
+        "rdap": True,
+    }
+
+
 def test_setup_panel_serves_png_logo_and_favicon(tmp_path):
     client, _, _ = _client(tmp_path)
 
@@ -89,6 +103,8 @@ def test_config_and_status_do_not_return_secrets(tmp_path, monkeypatch):
             "HF_TOKEN": "hf-secret",
             "HIVE_LLM_API_KEY": "secret-key",
             "HIVE_PANEL_TOKEN": "panel-secret",
+            "HIVE_VIRUSTOTAL_API_KEY": "vt-secret",
+            "HIVE_ABUSEIPDB_API_KEY": "abuse-secret",
         },
     )
     assert response.status_code == 200
@@ -97,6 +113,15 @@ def test_config_and_status_do_not_return_secrets(tmp_path, monkeypatch):
     assert status.json()["checks"]["llm"] is True
     assert "secret-key" not in status.text and "panel-secret" not in status.text
     assert "hf-secret" not in status.text
+    assert "vt-secret" not in status.text
+    assert "abuse-secret" not in status.text
+    assert status.json()["checks"]["intelligence"] is True
+    assert status.json()["threat_intelligence"] == {
+        "semak_mule": True,
+        "virus_total": True,
+        "abuse_ipdb": True,
+        "rdap": True,
+    }
     assert store.read()["HIVE_LLM_API_KEY"] == "secret-key"
     assert store.read()["HF_TOKEN"] == "hf-secret"
     assert os.environ["HF_TOKEN"] == "hf-secret"

@@ -578,6 +578,42 @@ def build_bundle(
     else:
         story.append(Paragraph("No media analyses were recorded.", styles["body"]))
 
+    _section(story, "Threat-intelligence observations", styles)
+    if session.threat_intelligence:
+        rows = [
+            [
+                Paragraph(value, styles["table_header"])
+                for value in ("PROVIDER", "OBSERVABLE", "RESULT", "CHECKED")
+            ]
+        ]
+        rows.extend(
+            [
+                Paragraph(
+                    _xml(item.get("provider_label", item.get("provider", ""))),
+                    styles["table"],
+                ),
+                Paragraph(_xml(item.get("observable", "")), styles["table"]),
+                Paragraph(
+                    _xml(f"{str(item.get('risk', 'unknown')).upper()}: {item.get('summary', '')}"),
+                    styles["table"],
+                ),
+                Paragraph(_xml(_timestamp(item.get("checked_ts"))), styles["table"]),
+            ]
+            for item in session.threat_intelligence
+        )
+        story.append(_data_table(rows, [28 * mm, 48 * mm, 65 * mm, 28 * mm]))
+        story.append(
+            Paragraph(
+                "Third-party results are time-bounded corroborating observations. "
+                "No match means no known report at query time, not proof of safety.",
+                styles["small"],
+            )
+        )
+    else:
+        story.append(
+            Paragraph("No external intelligence observations were recorded.", styles["body"])
+        )
+
     _section(story, "Sandbox findings", styles)
     if session.sandbox_results:
         for index, result in enumerate(session.sandbox_results, start=1):

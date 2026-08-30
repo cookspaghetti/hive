@@ -52,6 +52,9 @@ export interface CaseSummary extends JsonRecord {
   ended_ts?: number;
   last_message_ts?: number;
   message_count?: number;
+  showcase?: boolean | JsonRecord;
+  showcase_label?: string;
+  threat_intelligence_items?: number;
 }
 
 export interface PendingChat extends JsonRecord {
@@ -104,6 +107,7 @@ export interface CaseDetail extends CaseSummary {
   messages?: MessageItem[];
   hvi_items?: Indicator[];
   sandbox_results?: JsonRecord[];
+  threat_intelligence?: ThreatIntelObservation[];
   signals?: JsonRecord[];
   signal_trail?: JsonRecord[];
   assessment_history?: JsonRecord[];
@@ -118,6 +122,23 @@ export interface CaseDetail extends CaseSummary {
   evidence_download_url?: string;
   package_download_url?: string;
   evidence_verification?: JsonRecord;
+}
+
+export interface ThreatIntelObservation extends JsonRecord {
+  id?: string;
+  provider?: string;
+  provider_label?: string;
+  indicator_kind?: string;
+  observable?: string;
+  source_msg_id?: number;
+  status?: string;
+  risk?: string;
+  summary?: string;
+  facts?: JsonRecord;
+  checked_ts?: number;
+  expires_ts?: number;
+  cached?: boolean;
+  source_url?: string;
 }
 
 export interface RelatedCase extends JsonRecord {
@@ -212,6 +233,7 @@ export interface EvaluationRow extends JsonRecord {
   package_download_url?: string;
   transcript?: Array<[string, string]>;
   hvi_items?: Indicator[];
+  threat_intelligence_items?: ThreatIntelObservation[];
 }
 
 export interface DemoScenario extends JsonRecord {
@@ -222,10 +244,16 @@ export interface DemoScenario extends JsonRecord {
   description?: string;
   language?: string;
   archetype?: string;
+  category?: string;
+  reference?: string;
   exchanges?: number;
   attachments?: number;
   attachment_types?: string[];
   content_types?: string[];
+  live_services?: boolean;
+  provider_mode?: string;
+  sandbox_mode?: string;
+  tags?: string[];
 }
 
 export interface DemoRun extends JsonRecord {
@@ -246,8 +274,13 @@ export interface DemoRun extends JsonRecord {
   messages?: MessageItem[];
   hvi_items?: Indicator[];
   sandbox_results?: JsonRecord[];
+  threat_intelligence?: ThreatIntelObservation[];
+  signal_trail?: JsonRecord[];
   timeline?: ActivityItem[];
   evidence_download_url?: string;
+  live_services?: boolean;
+  provider_mode?: string;
+  sandbox_mode?: string;
 }
 
 export type RouteName = "console" | "cases" | "vault" | "demo" | "evaluations" | "activity" | "logs";

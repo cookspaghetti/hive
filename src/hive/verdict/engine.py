@@ -46,6 +46,13 @@ _HARD_DEFAULT = 0.2
 
 # Sandbox result -> weight.
 _SANDBOX_MALICIOUS = 0.9
+_THREAT_INTEL_WEIGHTS = {
+    ("semak_mule", "malicious"): 0.9,
+    ("virus_total", "malicious"): 0.9,
+    ("virus_total", "suspicious"): 0.5,
+    ("abuse_ipdb", "suspicious"): 0.25,
+    ("rdap", "suspicious"): 0.1,
+}
 
 # Soft-signal weights by classifier label.
 SOFT_WEIGHTS: dict[str, float] = {
@@ -108,6 +115,25 @@ def _collect_contributions(
                     ),
                 }
             )
+    for observation in session.threat_intelligence:
+        provider = str(observation.get("provider") or "")
+        risk = str(observation.get("risk") or "")
+        weight = _THREAT_INTEL_WEIGHTS.get((provider, risk), 0.0)
+        if weight <= 0 or observation.get("status") != "hit":
+            continue
+        source_id = observation.get("source_msg_id")
+        evidence_ids = [source_id] if isinstance(source_id, int) else []
+        contribs.append(
+            {
+                "reason": f"osint:{provider}:{risk}",
+                "weight": weight,
+                "source_message_ids": evidence_ids,
+                "value": observation.get("observable"),
+                "confidence": 1.0,
+                "extractor": provider,
+                "scope": "new" if source_id in source_message_ids else "carried",
+            }
+        )
     if soft:
         for label, conf in soft.items():
             w = SOFT_WEIGHTS.get(label, 0.1) * conf

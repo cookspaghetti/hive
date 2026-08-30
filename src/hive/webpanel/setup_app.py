@@ -37,6 +37,8 @@ CONFIG_KEYS = {
     "HIVE_LLM_MODEL_STRONG",
     "HIVE_VISION_MODEL",
     "HIVE_PANEL_TOKEN",
+    "HIVE_VIRUSTOTAL_API_KEY",
+    "HIVE_ABUSEIPDB_API_KEY",
 }
 
 
@@ -171,6 +173,9 @@ def register_setup_routes(
             ),
             "signing_key": bool(signing["valid"]),
             "panel": bool(values.get("HIVE_PANEL_TOKEN")),
+            # Semak Mule and RDAP provide a usable keyless baseline. Optional
+            # VirusTotal and AbuseIPDB credentials are reported separately.
+            "intelligence": True,
         }
         return {
             "ready": all(
@@ -183,6 +188,12 @@ def register_setup_routes(
                 "signing_key": _display_path(project_root, signing_path),
             },
             "signing_key": signing,
+            "threat_intelligence": {
+                "semak_mule": True,
+                "virus_total": bool(values.get("HIVE_VIRUSTOTAL_API_KEY")),
+                "abuse_ipdb": bool(values.get("HIVE_ABUSEIPDB_API_KEY")),
+                "rdap": True,
+            },
         }
 
     @app.put("/api/setup/config", dependencies=[Depends(auth)])

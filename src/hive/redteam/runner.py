@@ -88,6 +88,7 @@ class RunResult:
     agent_tiers: list[str] = field(default_factory=list)
     hvi_items: list[dict[str, Any]] = field(default_factory=list)
     additional_hvi_items: list[dict[str, Any]] = field(default_factory=list)
+    threat_intelligence_items: list[dict[str, Any]] = field(default_factory=list)
     attachments: list[dict[str, Any]] = field(default_factory=list)
     scored_message_ids: list[int] = field(default_factory=lambda: [0])
     extraction: ExtractionMetrics | None = None
@@ -347,6 +348,7 @@ def run_conversation(
     result.additional_hvi_items = [
         item for item in result.hvi_items if item["source_msg_id"] not in result.scored_message_ids
     ]
+    result.threat_intelligence_items = list(session.threat_intelligence)
     result.extraction = _score_extraction(
         _indicator_pairs(
             item for item in session.hvis if item.source_msg_id in result.scored_message_ids
@@ -417,6 +419,9 @@ def aggregate_results(results: Iterable[RunResult]) -> dict[str, Any]:
         "mean_threat_indicators_per_session": (
             sum(len(row.hvi_items) for row in rows) / count if count else 0.0
         ),
+        "mean_threat_intelligence_observations": (
+            sum(len(row.threat_intelligence_items) for row in rows) / count if count else 0.0
+        ),
         "language_alignment_rate": (
             sum(row.language_match for row in rows) / count if count else 0.0
         ),
@@ -475,6 +480,7 @@ def write_results(results: Iterable[RunResult], output_directory: str | Path) ->
             "hvi_count",
             "additional_hvi_count",
             "attachment_count",
+            "threat_intelligence_count",
             "verdict",
             "verdict_score",
             "verdict_correct",
@@ -505,6 +511,7 @@ def write_results(results: Iterable[RunResult], output_directory: str | Path) ->
                     "hvi_count": len(row.hvi_items),
                     "additional_hvi_count": len(row.additional_hvi_items),
                     "attachment_count": len(row.attachments),
+                    "threat_intelligence_count": len(row.threat_intelligence_items),
                     "mean_response_latency_s": (
                         sum(row.response_latencies_s) / len(row.response_latencies_s)
                         if row.response_latencies_s

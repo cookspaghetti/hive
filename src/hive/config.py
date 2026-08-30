@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     case_similarity_threshold: float = 0.72
     case_embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
 
+    # Semak Mule and RDAP are keyless; only commercial reputation providers
+    # remain visibly unconfigured until their credentials are supplied.
+    virustotal_api_key: str = ""
+    abuseipdb_api_key: str = ""
+    threat_intel_timeout_s: float = 5.0
+
     # Report-only retention policy. HIVE does not delete artifacts automatically.
     retention_media_days: int = 30
     retention_demo_days: int = 90

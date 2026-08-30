@@ -69,6 +69,14 @@ def test_file_checkpoint_round_trips_session_chain_and_pending_messages(tmp_path
     session = SessionState(peer_id=77, persona="confused_elderly", phase=Phase.ACTIVE)
     session.verdict = "likely_scam"
     session.hvis.append(HVI("bank_account", "12345678", 4, 0.9, "regex"))
+    session.threat_intelligence.append(
+        {
+            "provider": "semak_mule",
+            "observable": "12345678",
+            "status": "hit",
+            "risk": "malicious",
+        }
+    )
     session.indicator_reviews.append(
         {
             "id": "review-1",
@@ -93,6 +101,7 @@ def test_file_checkpoint_round_trips_session_chain_and_pending_messages(tmp_path
     assert restored.session.session_id == session.session_id
     assert restored.session.phase is Phase.ACTIVE
     assert restored.session.hvis[0].value == "12345678"
+    assert restored.session.threat_intelligence[0]["provider"] == "semak_mule"
     assert restored.session.indicator_reviews[0]["id"] == "review-1"
     assert restored.pending_messages[0].msg_id == 5
     assert restored.chain.verify() is True

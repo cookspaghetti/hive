@@ -9,7 +9,7 @@ the engine remains the single place that holds state.
 Flow (edges):
 
     START -> ingress -> [budget?] -> guardrails -> extract -> sandbox
-          -> verdict -> [terminate?] -> reason -> middleware -> END
+          -> threat intelligence -> verdict -> [terminate?] -> reason -> middleware -> END
 
 `ingress` enforces the turn/duration budget (Hermes IterationBudget pattern:
 consume-per-turn with an explicit exit reason). `verdict` performs the benign
@@ -235,6 +235,47 @@ def build_turn_graph(engine: HiveEngine) -> Any:
         session.phase = Phase.ACTIVE
         return {}
 
+    def n_threat_intelligence(state: TurnState) -> TurnState:
+        session = state["session"]
+        chain = state["chain"]
+        inbounds = state.get("inbounds") or [state["inbound"]]
+        try:
+            results = engine.enrich_threat_intelligence(
+                session,
+                list(state.get("hvis", [])),
+                list(inbounds),
+            )
+        except Exception as exc:  # noqa: BLE001 - enrichment must never stop a reply
+            log.exception("threat intelligence enrichment failed")
+            audit_event(
+                "threat_intelligence",
+                "enrichment_failed",
+                component="orchestrator.threat_intelligence",
+                payload={"error": str(exc)},
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+                level="error",
+            )
+            return {}
+        if results:
+            for observation in results:
+                chain.append(
+                    {
+                        "event": "threat_intelligence",
+                        "observation": observation,
+                    },
+                    ts=float(observation.get("checked_ts") or time.time()),
+                )
+            audit_event(
+                "threat_intelligence",
+                "observations_recorded",
+                component="orchestrator.threat_intelligence",
+                payload={"count": len(results), "observations": results},
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+            )
+        return {}
+
     def n_verdict(state: TurnState) -> TurnState:
         session = state["session"]
         inbounds = state.get("inbounds") or [state["inbound"]]
@@ -405,6 +446,7 @@ def build_turn_graph(engine: HiveEngine) -> Any:
     for name, fn in [
         ("ingress", n_ingress), ("guardrails", n_guardrails), ("extract", n_extract),
         ("sandbox", n_sandbox),
+        ("threat_intelligence", n_threat_intelligence),
         ("verdict", n_verdict),
         ("reason", n_reason),
         ("middleware", n_middleware),
@@ -415,7 +457,8 @@ def build_turn_graph(engine: HiveEngine) -> Any:
     g.add_conditional_edges("ingress", _after_ingress, {"continue": "guardrails", "end": END})
     g.add_edge("guardrails", "extract")
     g.add_edge("extract", "sandbox")
-    g.add_edge("sandbox", "verdict")
+    g.add_edge("sandbox", "threat_intelligence")
+    g.add_edge("threat_intelligence", "verdict")
     g.add_conditional_edges("verdict", _after_verdict, {"continue": "reason", "end": END})
     g.add_edge("reason", "middleware")
     g.add_edge("middleware", END)

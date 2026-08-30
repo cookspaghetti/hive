@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from hive.extraction.engine import extract_hvis
 from hive.redteam.evaluate import timestamped_output_directory
 from hive.redteam.runner import (
+    EvaluationSandboxRunner,
     aggregate_results,
     assess_language_alignment,
     run_conversation,
@@ -15,6 +16,7 @@ from hive.redteam.runner import (
 from hive.redteam.scammer import ARCHETYPES
 from hive.redteam.scenarios import DEFAULT_SCENARIOS
 from hive.scenario_media import FIXTURES
+from hive.threat_intelligence import build_synthetic_threat_intelligence_service
 from hive.vault.signer import generate_keypair
 from tests.fakes import fake_client
 
@@ -172,6 +174,37 @@ def test_run_conversation_exercises_pipeline_metrics_and_evidence(tmp_path):
     paths = write_results([result], tmp_path / "results")
     assert json.loads(paths["summary"].read_text(encoding="utf-8"))["runs"] == 1
     assert paths["csv"].read_text(encoding="utf-8").startswith("archetype,persona")
+
+
+def test_redteam_records_no_network_threat_intelligence_observations():
+    from hive.runtime import HiveEngine
+
+    engine = HiveEngine(
+        agent_client=fake_client("Wait ah, which account and website?"),
+        sandbox_runner=EvaluationSandboxRunner(),
+        threat_intelligence=build_synthetic_threat_intelligence_service(),
+        enable_early_exit=False,
+        max_turns=0,
+    )
+    result = run_conversation(
+        agent_client=engine.agent_client,
+        scammer_client=fake_client("Pay now"),
+        archetype=ARCHETYPES["investment"],
+        persona="confused_elderly",
+        engine=engine,
+        max_turns=1,
+        opener="Pay Maybank 1234567890 at https://bad.example/login now",
+    )
+
+    assert {item["provider"] for item in result.threat_intelligence_items} >= {
+        "semak_mule",
+        "virus_total",
+        "rdap",
+    }
+    assert all(
+        item["status"] == "synthetic_fixture"
+        for item in result.threat_intelligence_items
+    )
 
 
 def test_all_required_scam_archetypes_are_defined():

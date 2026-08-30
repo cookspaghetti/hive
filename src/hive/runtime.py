@@ -66,6 +66,7 @@ class HiveEngine:
     ner_backend: NerBackend | None = None
     vision_client: VisionDescriber | None = None
     case_intelligence: CaseIntelligenceStore | None = None
+    threat_intelligence: Any = None
     enable_early_exit: bool = True
     early_exit_min_turns: int = 10  # require sustained benign evidence before hand-back
     max_turns: int = 60             # 0 disables; else terminate past this
@@ -118,6 +119,26 @@ class HiveEngine:
             },
             "hvis": list(result.hvis),
         }
+
+    def enrich_threat_intelligence(
+        self,
+        session: SessionState,
+        indicators: list[Any] | None = None,
+        messages: list[Message] | None = None,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Run configured reputation providers without making them runtime-critical."""
+        if self.threat_intelligence is None:
+            return []
+        return list(
+            self.threat_intelligence.enrich(
+                session,
+                indicators,
+                messages,
+                force=force,
+            )
+        )
 
     def new_session(self, peer_id: int, persona: str) -> tuple[SessionState, HashChain]:
         s = SessionState(peer_id=peer_id, persona=persona, phase=Phase.ARMED)
@@ -416,6 +437,7 @@ def build_engine(settings: Settings, *, load_ner: bool = True) -> HiveEngine:
     from hive.extraction.ner import get_default_backend
     from hive.llm.client import build_client, build_vision_client
     from hive.sandbox.runner import configured_sandbox_runner
+    from hive.threat_intelligence import build_threat_intelligence_service
 
     client = build_client(settings)
     vision_client = build_vision_client(settings)
@@ -451,6 +473,7 @@ def build_engine(settings: Settings, *, load_ner: bool = True) -> HiveEngine:
         ner_backend=ner,
         vision_client=vision_client,
         case_intelligence=case_intelligence,
+        threat_intelligence=build_threat_intelligence_service(settings),
         max_turns=getattr(settings, "max_turns", 60),
         max_session_minutes=getattr(settings, "max_session_minutes", 120),
     )

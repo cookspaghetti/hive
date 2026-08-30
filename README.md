@@ -22,6 +22,8 @@ signed evidence bundle.
   - S7 prompt-injection and bot-probe screening.
   - L3 regex + optional GLiNER extraction.
   - L4 Playwright-in-Docker URL analysis.
+  - Evidence-safe threat-intelligence enrichment through Semak Mule,
+    VirusTotal, AbuseIPDB, and RDAP.
   - S6 hybrid verdict scoring.
   - L2 persona reply generation through the cost-tiered LLM router, with
     deterministic continuity from recent messages and validated session facts.
@@ -64,6 +66,7 @@ Telethon client.
 | L2 Deceptive agent | `src/hive/agent/` | Persona prompts, message construction, model-tier routing |
 | L3 Extraction | `src/hive/extraction/` | Regex HVIs, optional GLiNER NER, local QR decoding |
 | L4 Sandbox | `src/hive/sandbox/` | Disposable Playwright Docker runner and URL verdict signals |
+| Threat intelligence | `src/hive/threat_intelligence.py` | Cached external corroboration for extracted accounts, phones, URLs, IPs, domains, and APK hashes |
 | L5 Evidence vault | `src/hive/vault/` | Hash chain, PDF bundle, RSA signature |
 | Audit ledger | `src/hive/audit.py` | Permanent hash-chained action and message journal |
 | S6 Verdict | `src/hive/verdict/` | Hard + soft signal scoring |
@@ -213,6 +216,15 @@ verifies the Bot API token, authorizes the Telethon user account (including
 starts automatically once the setup checklist is complete. Credential changes
 can be applied by restarting only the managed agent runtime; the panel remains
 available throughout.
+
+Threat-intelligence credentials are configured under **Setup → Intelligence**.
+Semak Mule and RDAP work without keys. Semak Mule checks extracted Malaysian
+bank accounts and phone numbers; VirusTotal checks canonical URLs and existing APK hashes;
+AbuseIPDB checks only the public destination IP returned by the sandbox. HIVE
+does not upload unknown APKs, and a provider's no-hit result is never presented
+as proof that an observable is safe. Normalized findings, query timestamps, and
+response digests are retained in the case, hash chain, history, and sealed
+evidence report; raw provider responses are not persisted.
 
 HIVE models a person checking their phone rather than reacting to every update.
 After the first inbound message it picks a random, persona-biased check time

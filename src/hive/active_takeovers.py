@@ -81,6 +81,7 @@ def _session_from_dict(value: dict[str, Any]) -> SessionState:
         hvis=[_hvi_from_dict(item) for item in value.get("hvis", [])],
         indicator_reviews=list(value.get("indicator_reviews", [])),
         sandbox_results=list(value.get("sandbox_results", [])),
+        threat_intelligence=list(value.get("threat_intelligence", [])),
         verdict_score=float(value.get("verdict_score", 0.0)),
         verdict=value.get("verdict", "inconclusive"),
         turn_count=int(value.get("turn_count", 0)),

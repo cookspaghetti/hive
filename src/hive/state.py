@@ -66,6 +66,7 @@ class SessionState:
     hvis: list[HVI] = field(default_factory=list)
     indicator_reviews: list[dict[str, Any]] = field(default_factory=list)
     sandbox_results: list[dict[str, Any]] = field(default_factory=list)
+    threat_intelligence: list[dict[str, Any]] = field(default_factory=list)
     verdict_score: float = 0.0
     verdict: Verdict = "inconclusive"
     turn_count: int = 0

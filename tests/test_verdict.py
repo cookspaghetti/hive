@@ -40,6 +40,25 @@ def test_sandbox_malicious_is_near_decisive():
     assert update_verdict(s) == "likely_scam"
 
 
+def test_confirmed_semak_mule_hit_is_traceable_and_near_decisive():
+    s = _session()
+    s.threat_intelligence = [
+        {
+            "provider": "semak_mule",
+            "indicator_kind": "bank_account",
+            "observable": "12345678",
+            "source_msg_id": 4,
+            "status": "hit",
+            "risk": "malicious",
+        }
+    ]
+
+    assert update_verdict(s) == "likely_scam"
+    assert s.signal_trail[-1]["contributions"][0]["reason"] == (
+        "osint:semak_mule:malicious"
+    )
+
+
 def test_soft_signals_alone_can_reach_inconclusive():
     s = _session()
     v = update_verdict(s, soft={"urgency": 1.0, "investment_framing": 1.0})
@@ -137,6 +156,20 @@ def test_classify_soft_with_fake_client():
     assessment = classify_soft(s, client)
     assert assessment.scores["urgency"] == 0.8
     assert assessment.evidence["urgency"] == [0]
+
+
+def test_classify_soft_degrades_when_model_is_unavailable():
+    class UnavailableClient:
+        def complete(self, *_args, **_kwargs):
+            raise TimeoutError("classifier timed out")
+
+    s = _session()
+    s.messages.append(Message(role="stranger", text="pay now", ts=time.time(), msg_id=1))
+
+    assessment = classify_soft(s, UnavailableClient())
+
+    assert assessment.scores == {}
+    assert assessment.evidence == {}
 
 
 def test_classifier_rejects_real_but_semantically_wrong_evidence():

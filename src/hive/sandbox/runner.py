@@ -102,12 +102,15 @@ def validate_public_url(url: str) -> list[str]:
 _SCRAPLING_SCRIPT = r"""
 import ipaddress
 import json
+import re
 import socket
 import ssl
 import sys
 import time
 from pathlib import Path
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 
 from scrapling.fetchers import StealthyFetcher
 
@@ -160,6 +163,81 @@ def certificate_age_days(raw):
         raise ValueError("TLS certificate did not report notBefore")
     issued_at = ssl.cert_time_to_seconds(not_before)
     return max(0, int((time.time() - issued_at) // 86400))
+
+
+class PublicRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        ensure_public(newurl)
+        if req.full_url not in chain:
+            chain.append(req.full_url)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def safe_http_fallback(raw, browser_error):
+    # Recover useful HTTP evidence when Chromium rejects an error response.
+    opener = build_opener(PublicRedirectHandler())
+    request = Request(
+        raw,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 Chrome/128.0 Safari/537.36"
+            )
+        },
+    )
+    certificate_error = ""
+    try:
+        response = opener.open(request, timeout=20)
+    except HTTPError as exc:
+        response = exc
+    except URLError as exc:
+        if "CERTIFICATE_VERIFY_FAILED" not in str(exc):
+            raise
+        certificate_error = str(exc)
+        unverified = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        unverified.check_hostname = False
+        unverified.verify_mode = ssl.CERT_NONE
+        degraded_opener = build_opener(
+            PublicRedirectHandler(), HTTPSHandler(context=unverified)
+        )
+        try:
+            response = degraded_opener.open(request, timeout=20)
+        except HTTPError as degraded_exc:
+            response = degraded_exc
+    with response:
+        final_url = response.geturl()
+        addresses = ensure_public(final_url)
+        status = int(getattr(response, "status", 0) or response.getcode() or 0)
+        body = response.read(1_000_000)
+    decoded = body.decode("utf-8", errors="replace")
+    title_match = re.search(r"<title[^>]*>(.*?)</title>", decoded, re.I | re.S)
+    title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else ""
+    lowered = decoded.casefold()
+    result = {
+        "final_url": final_url,
+        "redirect_chain": chain,
+        "dest_ip": addresses[0] if addresses else "",
+        "title": title,
+        "has_password_field": bool(
+            re.search(r"<input[^>]+type=[\"']?password", lowered, re.I)
+        ),
+        "body_len": len(body),
+        "blocked_requests": list(dict.fromkeys(blocked)),
+        "http_status": status,
+        "fetcher": "scrapling_stealthy+safe_http_fallback",
+        "access_state": "blocked" if status >= 400 else "reached",
+        "challenge_detected": False,
+        "challenge_provider": "",
+        "screenshot_error": f"Browser capture unavailable: {browser_error}",
+        "error": "",
+    }
+    try:
+        result["certificate_age_days"] = certificate_age_days(final_url)
+        result["certificate_error"] = certificate_error
+    except Exception as certificate_exc:
+        result["certificate_age_days"] = None
+        result["certificate_error"] = certificate_error or str(certificate_exc)
+    return result
 
 
 def page_setup(page):
@@ -300,12 +378,15 @@ try:
         observed["certificate_error"] = str(certificate_exc)
     print(json.dumps(observed, ensure_ascii=False))
 except Exception as exc:
-    print(json.dumps({
-        "error": str(exc),
-        "blocked_requests": list(dict.fromkeys(blocked)),
-        "fetcher": "scrapling_stealthy",
-        "access_state": "error",
-    }, ensure_ascii=False))
+    try:
+        print(json.dumps(safe_http_fallback(url, str(exc)), ensure_ascii=False))
+    except Exception as fallback_exc:
+        print(json.dumps({
+            "error": f"browser: {exc}; HTTP fallback: {fallback_exc}",
+            "blocked_requests": list(dict.fromkeys(blocked)),
+            "fetcher": "scrapling_stealthy+safe_http_fallback",
+            "access_state": "error",
+        }, ensure_ascii=False))
 """
 
 

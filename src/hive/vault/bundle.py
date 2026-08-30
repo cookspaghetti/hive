@@ -55,7 +55,8 @@ def s90a_certificate(session: SessionState, operator_name: str) -> str:
 
 
 def _xml(value: object) -> str:
-    return html.escape(str(value or "")).replace("\n", "<br/>")
+    rendered = "" if value is None else str(value)
+    return html.escape(rendered).replace("\n", "<br/>")
 
 
 def _emoji_font() -> str | None:
@@ -313,6 +314,108 @@ def _data_table(
     return table
 
 
+def _format_bytes(value: int | None) -> str:
+    size = max(0, int(value or 0))
+    if size >= 1024 * 1024:
+        return f"{size / (1024 * 1024):.1f} MB"
+    if size >= 1024:
+        return f"{size / 1024:.1f} KB"
+    return f"{size} bytes"
+
+
+def _embedded_image_card(message: Any, width: float, styles: dict[str, Any]) -> Any | None:
+    """Build a bounded evidence preview for a captured inbound image."""
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from reportlab.lib.utils import ImageReader
+    from reportlab.platypus import Image, KeepTogether, Paragraph, Table, TableStyle
+
+    path = Path(str(message.media_path or ""))
+    media_kind = str(message.media_kind or "").lower()
+    media_mime = str(message.media_mime or "").lower()
+    if not path.is_file() or not (
+        media_kind in {"image", "photo", "qr"} or media_mime.startswith("image/")
+    ):
+        return None
+    try:
+        image_width, image_height = ImageReader(str(path)).getSize()
+        if image_width <= 0 or image_height <= 0:
+            raise ValueError("image dimensions are unavailable")
+        max_image_width = min(width, 120 * mm)
+        max_image_height = 95 * mm
+        scale = min(max_image_width / image_width, max_image_height / image_height, 1.0)
+        preview = Image(
+            str(path),
+            width=image_width * scale,
+            height=image_height * scale,
+        )
+    except Exception as exc:  # noqa: BLE001 - corrupt evidence must not abort sealing
+        log.warning("evidence image preview skipped: path=%s error=%s", path, exc)
+        return None
+    preview.hAlign = "LEFT"
+    digest = str(message.media_sha256 or "")
+    caption = (
+        f"<b>Received image</b> | {_xml(message.media_name or path.name)} | "
+        f"{_xml(message.media_mime or 'image')} | {_xml(_format_bytes(message.media_size))}"
+    )
+    if digest:
+        caption += f" | SHA-256 {_xml(digest)}"
+    card = Table(
+        [[preview], [Paragraph(caption, styles["small"])]],
+        colWidths=[width],
+        hAlign="LEFT",
+    )
+    card.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(_BRAND_PAPER)),
+                ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(_BRAND_LINE)),
+                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ]
+        )
+    )
+    return KeepTogether([card])
+
+
+def _sandbox_finding_xml(index: int, result: dict[str, Any]) -> str:
+    """Render a complete, non-blank sandbox finding for the evidence report."""
+    redirects = list(result.get("redirect_chain") or [])
+    blocked = list(result.get("blocked_requests") or [])
+    status = int(result.get("http_status") or 0)
+    certificate_age = result.get("certificate_age_days")
+    screenshot_path = Path(str(result.get("screenshot_path") or ""))
+    screenshot = "Captured" if screenshot_path.is_file() else "Not captured"
+    if result.get("screenshot_error"):
+        screenshot = f"Unavailable - {result['screenshot_error']}"
+    values = [
+        ("Finding", f"{index}: {result.get('verdict_signal') or 'unclassified'}"),
+        ("Submitted URL", result.get("url") or "Unavailable"),
+        ("Final URL", result.get("final_url") or "Unavailable"),
+        ("HTTP status", status if status else "Unavailable"),
+        ("Destination IP", result.get("dest_ip") or "Unavailable"),
+        ("Access state", result.get("access_state") or "unknown"),
+        ("Fetcher", result.get("fetcher") or "unknown"),
+        ("Redirects", " -> ".join(str(item) for item in redirects) or "None observed"),
+        ("Blocked requests", len(blocked)),
+        (
+            "Certificate age",
+            f"{certificate_age} days" if certificate_age is not None else "Unavailable",
+        ),
+        ("Runtime", f"{int(result.get('runtime_ms') or 0)} ms"),
+        ("Challenge", result.get("challenge_provider") or "None detected"),
+        ("Cloaking suspected", "Yes" if result.get("cloaking_suspected") else "No"),
+        ("Screenshot", screenshot),
+    ]
+    if result.get("certificate_error"):
+        values.append(("Certificate error", result["certificate_error"]))
+    if result.get("error"):
+        values.append(("Error detail", result["error"]))
+    return "<br/>".join(f"<b>{_xml(label)}:</b> {_xml(value)}" for label, value in values)
+
+
 def build_bundle(
     session: SessionState,
     chain: HashChain,
@@ -526,6 +629,10 @@ def build_bundle(
             )
         )
         story.append(bubble)
+        image_card = _embedded_image_card(message, doc.width, styles)
+        if image_card is not None:
+            story.append(Spacer(1, 2 * mm))
+            story.append(image_card)
         story.append(Spacer(1, 3 * mm))
 
     _section(story, "Extracted intelligence", styles)
@@ -617,16 +724,7 @@ def build_bundle(
     _section(story, "Sandbox findings", styles)
     if session.sandbox_results:
         for index, result in enumerate(session.sandbox_results, start=1):
-            finding = (
-                f"<b>Finding {index}: {_xml(result.get('verdict_signal', 'unclassified'))}</b><br/>"
-                f"Submitted URL: {_xml(result.get('url', ''))}<br/>"
-                f"Final URL: {_xml(result.get('final_url', ''))}<br/>"
-                f"Destination IP: {_xml(result.get('dest_ip', ''))}<br/>"
-                f"Access state: {_xml(result.get('access_state', 'unknown'))}<br/>"
-                f"Fetcher: {_xml(result.get('fetcher', 'unknown'))}<br/>"
-                f"Challenge: {_xml(result.get('challenge_provider', 'none'))}<br/>"
-                f"Cloaking suspected: {_xml(result.get('cloaking_suspected', False))}"
-            )
+            finding = _sandbox_finding_xml(index, result)
             card = Table([[Paragraph(finding, styles["body"])]], colWidths=[doc.width])
             card.setStyle(
                 TableStyle(

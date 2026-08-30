@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from hive.state import HVI, Message, SessionState
-from hive.vault.bundle import _message_xml
+from hive.vault.bundle import _message_xml, _sandbox_finding_xml, _xml
 from hive.vault.hashchain import HashChain
 from hive.vault.package import evidence_package_path, verify_evidence_package
 from hive.vault.signer import (
@@ -62,6 +62,30 @@ def test_transcript_emoji_uses_font_or_explicit_unicode_fallback():
         'wait <font name="EmojiFont">😰</font> now'
     )
     assert _message_xml("wait 😰 now", None) == "wait [emoji U+1F630] now"
+
+
+def test_report_xml_preserves_zero_and_false_values():
+    assert _xml(0) == "0"
+    assert _xml(False) == "False"
+
+
+def test_sandbox_finding_includes_actionable_error_and_missing_values():
+    finding = _sandbox_finding_xml(
+        1,
+        {
+            "url": "https://example.test/high-risk",
+            "verdict_signal": "error",
+            "access_state": "error",
+            "fetcher": "scrapling_stealthy",
+            "runtime_ms": 45055,
+            "error": "Page.goto: net::ERR_HTTP_RESPONSE_CODE_FAILURE",
+        },
+    )
+
+    assert "Error detail" in finding
+    assert "ERR_HTTP_RESPONSE_CODE_FAILURE" in finding
+    assert "45055 ms" in finding
+    assert "Final URL:</b> Unavailable" in finding
 
 
 def _populated_session() -> tuple[SessionState, HashChain]:
@@ -157,6 +181,36 @@ def test_build_bundle_creates_portable_verified_evidence_package(tmp_path, keypa
     )
     with zipfile.ZipFile(package) as archive:
         assert "attachment_001_courier_notice.txt" in archive.namelist()
+
+
+def test_build_bundle_embeds_received_image_preview(tmp_path, keypair):
+    from PIL import Image as PILImage
+
+    from hive.vault.bundle import build_bundle
+
+    priv, _pub = keypair
+    without_image, chain = _populated_session()
+    baseline = Path(
+        build_bundle(without_image, chain, str(tmp_path / "without-image.pdf"), priv)
+    )
+
+    with_image, image_chain = _populated_session()
+    received = tmp_path / "received-photo.png"
+    PILImage.new("RGB", (320, 240), color=(229, 163, 33)).save(received)
+    message = with_image.messages[0]
+    message.media_path = str(received)
+    message.media_name = received.name
+    message.media_kind = "image"
+    message.media_mime = "image/png"
+    message.media_size = received.stat().st_size
+    message.media_sha256 = "a" * 64
+    embedded = Path(
+        build_bundle(with_image, image_chain, str(tmp_path / "with-image.pdf"), priv)
+    )
+
+    assert embedded.read_bytes().count(b"/Subtype /Image") > baseline.read_bytes().count(
+        b"/Subtype /Image"
+    )
 
 
 def test_evidence_package_verifier_rejects_tampering(tmp_path, keypair):

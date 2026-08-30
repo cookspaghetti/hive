@@ -104,8 +104,12 @@ def test_configured_runner_uses_resource_limits_by_default(monkeypatch):
 
 
 def test_scrapling_script_enables_stealth_and_preserves_request_guards():
+    compile(_SCRAPLING_SCRIPT, "<sandbox>", "exec")
     assert "sys.argv[1]" in _SCRAPLING_SCRIPT
     assert "StealthyFetcher.fetch" in _SCRAPLING_SCRIPT
+    assert "safe_http_fallback" in _SCRAPLING_SCRIPT
+    assert "PublicRedirectHandler" in _SCRAPLING_SCRIPT
+    assert "ensure_public(newurl)" in _SCRAPLING_SCRIPT
     assert "solve_cloudflare=True" in _SCRAPLING_SCRIPT
     assert 'page.route("**/*", guard)' in _SCRAPLING_SCRIPT
     assert "socket.getaddrinfo" in _SCRAPLING_SCRIPT

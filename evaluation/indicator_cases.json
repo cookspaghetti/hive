@@ -2,10 +2,8 @@
   "schema_version": 1,
   "description": "Sanitized, synthetic regression cases for deterministic HVI extraction.",
   "provenance": "synthetic",
-  "corpus_version": "2026-08-25-v3-multimodal",
-  "known_limitations": [
-    "The evaluation set deliberately retains a Manglish name-boundary error where the particle 'lah' is absorbed into a person name."
-  ],
+  "corpus_version": "2026-08-30-v4-multimodal",
+  "known_limitations": [],
   "cases": [
     {
       "id": "en-maybank-account",

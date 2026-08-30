@@ -153,6 +153,35 @@ def validate_turn_scores(scores: Any, turns: list[dict[str, Any]]) -> list[dict[
     return sorted(validated, key=lambda item: item["turn"])
 
 
+def normalize_automated_turn_scores(scores: Any) -> Any:
+    """Fill only non-evidentiary omissions in otherwise structured judge output.
+
+    Some providers emit a valid pass/uncertain verdict with an empty explanation.
+    The raw response remains retained, while this normalization supplies a
+    transparent standard explanation. Break findings are never repaired or
+    invented and continue to fail closed under ``validate_turn_scores``.
+    """
+    if not isinstance(scores, list):
+        return scores
+    normalized: list[Any] = []
+    for item in scores:
+        if not isinstance(item, dict):
+            normalized.append(item)
+            continue
+        clean = dict(item)
+        if not str(clean.get("reason") or "").strip():
+            if clean.get("verdict") == "pass":
+                clean["reason"] = (
+                    "No rubric-defined character break was identified in this response turn."
+                )
+            elif clean.get("verdict") == "uncertain":
+                clean["reason"] = (
+                    "The response did not provide enough context for a reliable assessment."
+                )
+        normalized.append(clean)
+    return normalized
+
+
 def assess_character(
     persona: str,
     transcript: list[Any],
@@ -185,7 +214,9 @@ def assess_character(
             raw = raw[7:-3].strip()
         payload = json.loads(raw)
         assessment["turns"] = validate_turn_scores(
-            payload.get("turns") if isinstance(payload, dict) else None,
+            normalize_automated_turn_scores(
+                payload.get("turns") if isinstance(payload, dict) else None
+            ),
             response_turns(transcript),
         )
         assessment["status"] = "automated"

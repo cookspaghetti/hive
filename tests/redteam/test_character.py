@@ -11,6 +11,7 @@ from hive.redteam.character import (
     assess_character,
     assessment_metrics,
     empty_assessment,
+    normalize_automated_turn_scores,
     response_turns,
     validate_turn_scores,
 )
@@ -164,6 +165,29 @@ def test_judge_records_model_rubric_evidence_and_provisional_status():
     assert result["source_sha256"]
     assert judge._backend.calls[0]["temperature"] == 0.0
     assert "untrusted evidence" in judge._backend.calls[0]["messages"][0]["content"]
+
+
+def test_automated_pass_can_use_transparent_standard_reason():
+    raw = [score(1), score(2)]
+    raw[0]["reason"] = ""
+    raw[1]["reason"] = "   "
+
+    normalized = normalize_automated_turn_scores(raw)
+    result = validate_turn_scores(normalized, response_turns(TRANSCRIPT))
+
+    assert all("No rubric-defined character break" in item["reason"] for item in result)
+    assert raw[0]["reason"] == ""
+
+
+def test_automated_break_is_never_repaired_without_explanation():
+    raw = [score(1), score(2, "break")]
+    raw[1]["reason"] = ""
+
+    with pytest.raises(ValueError, match="explanation"):
+        validate_turn_scores(
+            normalize_automated_turn_scores(raw),
+            response_turns(TRANSCRIPT),
+        )
 
 
 @pytest.mark.parametrize(

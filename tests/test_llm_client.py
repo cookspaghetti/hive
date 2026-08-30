@@ -76,6 +76,39 @@ def test_backend_fails_when_model_never_leaves_loading_state() -> None:
         backend.close()
 
 
+def test_backend_retries_transient_transport_timeout() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise httpx.ReadTimeout("temporary timeout", request=request)
+        return httpx.Response(200, json=_response("RECOVERED", "stop"))
+
+    delays: list[float] = []
+    backend = OllamaBackend(
+        "https://ollama.example/v1",
+        "test-key",
+        max_load_retries=1,
+        load_retry_s=0.25,
+        sleeper=delays.append,
+    )
+    backend._client.close()
+    backend._client = httpx.Client(
+        base_url="https://ollama.example/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    try:
+        result = backend.chat("test-model", [{"role": "user", "content": "test"}])
+    finally:
+        backend.close()
+
+    assert extract_chat_text(result) == "RECOVERED"
+    assert calls == 2
+    assert delays == [0.25]
+
+
 @pytest.mark.parametrize(
     ("payload", "message"),
     [

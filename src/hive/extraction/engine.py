@@ -146,9 +146,10 @@ def _context_name(text: str) -> str | None:
         match = pattern.search(text)
         if match:
             candidate = re.split(
-                r"\b(?:and|from|with|at|who)\b",
+                r"\b(?:and|from|with|at|who|lah|ah|leh|lor|meh)\b",
                 match.group(1),
                 maxsplit=1,
+                flags=re.IGNORECASE,
             )[0]
             candidate = candidate.strip().strip(".,!?;:'\"")
             if _plausible_name(candidate):

@@ -168,6 +168,16 @@ def test_context_extracts_explicit_english_and_mandarin_names():
     }
 
 
+def test_context_stops_person_name_before_manglish_particle():
+    messages = [Message("stranger", "My name is Kevin Lim lah.", 1.0, 82)]
+
+    hvis = extract_contextual_hvis(messages, {82})
+
+    assert [(item.kind, item.value, item.source_msg_id) for item in hvis] == [
+        ("person_name", "Kevin Lim", 82)
+    ]
+
+
 def test_context_links_agent_alias_to_preceding_name_message():
     messages = [
         Message("agent", "the bank account under what name ah?", 1.0, -1),

@@ -109,11 +109,26 @@ class OllamaBackend:
         **kw: Any,
     ) -> dict[str, Any]:
         for attempt in range(self._max_load_retries + 1):
-            resp = self._client.post(
-                "/chat/completions",
-                json={"model": model, "messages": messages, **kw},
-            )
-            resp.raise_for_status()
+            try:
+                resp = self._client.post(
+                    "/chat/completions",
+                    json={"model": model, "messages": messages, **kw},
+                )
+                resp.raise_for_status()
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                if attempt == self._max_load_retries:
+                    raise
+                delay = self._load_retry_s * (attempt + 1)
+                log.warning(
+                    "LLM transport failure: model=%s retry=%d/%d delay=%.1fs err=%s",
+                    model,
+                    attempt + 1,
+                    self._max_load_retries,
+                    delay,
+                    exc,
+                )
+                self._sleeper(delay)
+                continue
             raw = cast(dict[str, Any], resp.json())
             if not _is_loading_response(raw):
                 return raw

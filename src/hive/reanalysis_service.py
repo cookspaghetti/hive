@@ -44,6 +44,8 @@ class ReanalysisService:
             "history_id": str(record["id"]),
             "peer_id": int(record["peer_id"]),
             "status": "queued",
+            "stage": "Queued",
+            "progress": 5,
             "created_ts": time.time(),
             "started_ts": None,
             "completed_ts": None,
@@ -67,7 +69,13 @@ class ReanalysisService:
             return dict(job) if job else None
 
     def _execute(self, job_id: str, record: dict[str, Any], engine: Any, settings: Any) -> None:
-        self._update(job_id, status="running", started_ts=time.time())
+        self._update(
+            job_id,
+            status="running",
+            stage="Analysing transcript",
+            progress=20,
+            started_ts=time.time(),
+        )
         audit_event(
             "analysis_run",
             "reanalysis_started",
@@ -77,11 +85,14 @@ class ReanalysisService:
         )
         try:
             analysis = self.runner(record, engine, settings)
+            self._update(job_id, stage="Saving analysis run", progress=78)
             self.store.create(analysis)
         except Exception as exc:  # noqa: BLE001 - persisted job must report any worker failure
             self._update(
                 job_id,
                 status="failed",
+                stage="Failed",
+                progress=100,
                 completed_ts=time.time(),
                 error=str(exc),
             )
@@ -95,6 +106,7 @@ class ReanalysisService:
             )
             return
         if self.case_intelligence is not None:
+            self._update(job_id, stage="Updating pattern index", progress=92)
             try:
                 self.case_intelligence.index(build_case_profile(record, analysis))
             except Exception as exc:  # noqa: BLE001 - retain completed immutable analysis
@@ -113,6 +125,8 @@ class ReanalysisService:
         self._update(
             job_id,
             status="completed",
+            stage="Complete",
+            progress=100,
             completed_ts=time.time(),
             analysis_run_id=analysis["id"],
         )

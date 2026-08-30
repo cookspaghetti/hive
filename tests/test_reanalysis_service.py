@@ -38,6 +38,8 @@ def test_reanalysis_service_persists_completed_run(tmp_path):
     job = _wait(service, service.submit(_record(), object(), object())["id"])
 
     assert job["status"] == "completed"
+    assert job["stage"] == "Complete"
+    assert job["progress"] == 100
     assert store.get(_record()["id"], job["analysis_run_id"])["kind"] == "reanalysis"
 
 
@@ -50,4 +52,6 @@ def test_reanalysis_service_reports_worker_failure(tmp_path):
     job = _wait(service, service.submit(_record(), object(), object())["id"])
 
     assert job["status"] == "failed"
+    assert job["stage"] == "Failed"
+    assert job["progress"] == 100
     assert job["error"] == "model unavailable"

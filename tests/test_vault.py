@@ -115,6 +115,11 @@ def test_build_bundle_creates_portable_verified_evidence_package(tmp_path, keypa
 
     priv, pub = keypair
     session, chain = _populated_session()
+    attachment = tmp_path / "captured-notice.txt"
+    attachment.write_text("synthetic attachment", encoding="utf-8")
+    session.messages[0].media_path = str(attachment)
+    session.messages[0].media_name = "courier notice.txt"
+    session.messages[0].media_kind = "document"
     out = str(tmp_path / "bundle.pdf")
     path = build_bundle(session, chain, out, priv, operator_name="Tho Kai Syuen")
 
@@ -134,6 +139,12 @@ def test_build_bundle_creates_portable_verified_evidence_package(tmp_path, keypa
     assert verification["manifest"]["signing_key_fingerprint"] == (
         signing_key_details(priv)["fingerprint"]
     )
+    assert verification["checks"]["attachment_001_checksum"] is True
+    assert verification["manifest"]["attachments"][0]["source_name"] == (
+        "courier notice.txt"
+    )
+    with zipfile.ZipFile(package) as archive:
+        assert "attachment_001_courier_notice.txt" in archive.namelist()
 
 
 def test_evidence_package_verifier_rejects_tampering(tmp_path, keypair):

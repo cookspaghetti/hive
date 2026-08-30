@@ -142,6 +142,7 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
         )
     } | {
         "message_count": len(record.get("messages", [])),
+        "hvis": len(record.get("hvi_items", [])),
         "analysis_run_id": (record.get("analysis") or {}).get("id"),
         "analysis_schema_version": (record.get("analysis") or {}).get("schema_version"),
     }

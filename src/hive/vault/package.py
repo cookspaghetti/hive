@@ -7,6 +7,7 @@ import json
 import re
 import time
 import zipfile
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -24,6 +25,7 @@ _README = """HIVE evidence verification package
 
 Contents:
 - The signed PDF evidence bundle.
+- Captured attachments, when the session contains locally retained media.
 - The PDF's detached RSA-PSS/SHA-256 signature.
 - The public verification key.
 - A signed checksum manifest.
@@ -59,6 +61,7 @@ def build_evidence_package(
     private_key_path: str | Path,
     *,
     output_path: str | Path | None = None,
+    attachments: Iterable[tuple[str | Path, str]] = (),
 ) -> Path:
     """Build an atomic ZIP containing evidence and all verification material."""
     pdf = Path(pdf_path)
@@ -70,6 +73,19 @@ def build_evidence_package(
     pdf_bytes = pdf.read_bytes()
     signature_bytes = signature.read_bytes()
     public_key = public_key_bytes(str(private_key_path))
+    packaged_attachments: list[tuple[str, bytes, str]] = []
+    for index, (source_value, display_value) in enumerate(attachments, start=1):
+        source = Path(source_value)
+        if not source.is_file():
+            raise FileNotFoundError(f"evidence attachment not found: {source}")
+        data = source.read_bytes()
+        if len(data) > _MAX_MEMBER_BYTES:
+            raise ValueError(f"evidence attachment exceeds size limit: {source.name}")
+        display_name = Path(str(display_value or source.name)).name
+        safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "_", display_name).strip("._")
+        archive_name = f"attachment_{index:03d}_{safe_name or 'capture.bin'}"
+        packaged_attachments.append((archive_name, data, display_name))
+
     manifest = {
         "schema_version": 1,
         "package_type": "HIVE evidence package",
@@ -84,6 +100,15 @@ def build_evidence_package(
             },
             "public_key": {"name": "public_key.pem", "sha256": _sha256(public_key)},
         },
+        "attachments": [
+            {
+                "name": name,
+                "source_name": display_name,
+                "size": len(data),
+                "sha256": _sha256(data),
+            }
+            for name, data, display_name in packaged_attachments
+        ],
     }
     manifest_bytes = json.dumps(
         manifest,
@@ -107,6 +132,8 @@ def build_evidence_package(
             archive.writestr("manifest.json", manifest_bytes)
             archive.writestr("manifest.sig", manifest_signature)
             archive.writestr("VERIFY.txt", _README.encode("utf-8"))
+            for name, data, _display_name in packaged_attachments:
+                archive.writestr(name, data)
         temporary.replace(target)
     except Exception:
         temporary.unlink(missing_ok=True)
@@ -175,6 +202,13 @@ def verify_evidence_package(package_path: str | Path) -> dict[str, Any]:
                 "public_key_checksum": _sha256(public_key) == key_meta.get("sha256"),
             }
             result["checks"].update(checksums)
+            for index, attachment in enumerate(manifest.get("attachments") or [], start=1):
+                attachment_name = str(attachment.get("name") or "")
+                if not _safe_member(attachment_name) or attachment_name not in names:
+                    raise ValueError("manifest attachment is missing or unsafe")
+                result["checks"][f"attachment_{index:03d}_checksum"] = _sha256(
+                    archive.read(attachment_name)
+                ) == attachment.get("sha256")
             result["checks"]["manifest_signature"] = verify_signature_with_public_key(
                 manifest_bytes,
                 archive.read("manifest.sig"),

@@ -79,6 +79,7 @@ class ControlBot:
         self._app: Any = None
         # Get notified when the userbot hands a benign conversation back.
         self.userbot.on_handback = self._on_handback
+        self.userbot.on_limit_reached = self._on_limit_reached
         self.userbot.on_takeover_request = self._on_takeover_request
 
     def _authorised(self, user_id: int | None) -> bool:
@@ -153,6 +154,36 @@ class ControlBot:
                 session_id=session.session_id,
             )
         log.info("control bot: notified operator of hand-back peer=%s", peer_id)
+
+    async def _on_limit_reached(
+        self,
+        peer_id: int,
+        session: SessionState,
+        reason: str,
+    ) -> None:  # pragma: no cover
+        """Tell the operator that automation paused without discarding evidence."""
+        reason_label = reason.replace("_", " ").title()
+        text = (
+            "⏸️ HIVE paused automatic replies\n\n"
+            f"Peer ID: {peer_id}\n"
+            f"Reason: {reason_label}\n"
+            f"Analysed exchanges: {session.exchange_count}\n"
+            f"Messages observed: {session.turn_count}\n\n"
+            "The takeover remains open and checkpointed. Review the case, then "
+            "use Stop & seal when you are ready. HIVE will not send more replies "
+            "while this safety pause is active."
+        )
+        if self._app is not None:
+            await self._app.bot.send_message(chat_id=self.operator_id, text=text)
+            audit_event(
+                "control_message",
+                "control_bot_reply_sent",
+                component="transport.control_bot",
+                payload={"text": text, "chat_id": self.operator_id},
+                peer_id=peer_id,
+                session_id=session.session_id,
+            )
+        log.info("control bot: notified operator of automation pause peer=%s", peer_id)
 
     async def _on_takeover_request(self, chat: dict[str, object]) -> bool:
         """Push a pending private chat to the operator's Telegram control bot."""

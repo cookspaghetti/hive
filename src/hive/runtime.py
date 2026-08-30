@@ -55,6 +55,8 @@ class TurnOutput:
     reason: str = ""           # "" | "benign" | "max_turns" | "max_duration"
     verdict: str = "inconclusive"
     tier: str = ""
+    outbound_guardrail_flag: bool = False
+    outbound_guardrail_reasons: tuple[str, ...] = ()
 
 
 @dataclass
@@ -208,6 +210,10 @@ class HiveEngine:
                 reason=reason,
                 verdict=final.get("verdict", session.verdict),
                 tier=final.get("tier", ""),
+                outbound_guardrail_flag=bool(final.get("outbound_guardrail_flag", False)),
+                outbound_guardrail_reasons=tuple(
+                    final.get("outbound_guardrail_reasons", ())
+                ),
             )
             audit_event(
                 "batch_processing",
@@ -222,6 +228,8 @@ class HiveEngine:
                     "reason": output.reason,
                     "handed_back": output.handed_back,
                     "terminated": output.terminated,
+                    "outbound_guardrail_flag": output.outbound_guardrail_flag,
+                    "outbound_guardrail_reasons": list(output.outbound_guardrail_reasons),
                 },
                 peer_id=session.peer_id,
                 session_id=session.session_id,

@@ -703,7 +703,16 @@ def build_bundle(
         # discover PDFs, so they can never observe a half-sealed case file.
         signature_temporary.replace(signature_target)
         temporary.replace(target)
-        build_evidence_package(target, key_path, output_path=package_target)
+        build_evidence_package(
+            target,
+            key_path,
+            output_path=package_target,
+            attachments=(
+                (message.media_path, message.media_name or Path(message.media_path).name)
+                for message in session.messages
+                if message.media_path
+            ),
+        )
     except Exception:
         temporary.unlink(missing_ok=True)
         signature_temporary.unlink(missing_ok=True)

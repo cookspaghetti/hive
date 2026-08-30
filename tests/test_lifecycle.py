@@ -46,6 +46,35 @@ def test_default_benign_handback_requires_ten_exchanges():
     assert engine.early_exit_min_turns == 10
 
 
+def test_benign_session_engages_for_nine_exchanges_before_handback_on_tenth():
+    engine = HiveEngine(
+        agent_client=fake_client("[[pace:normal]] okay, what is this about?"),
+        sandbox_runner=_CleanRunner(),
+        enable_early_exit=True,
+    )
+    session, chain = engine.new_session(peer_id=71, persona="confused_elderly")
+
+    for exchange in range(1, 10):
+        output = engine.process_turn(
+            session,
+            chain,
+            Message("stranger", "hello, checking in", time.time(), exchange),
+        )
+        assert output.handed_back is False
+        assert output.text
+
+    output = engine.process_turn(
+        session,
+        chain,
+        Message("stranger", "thanks, wrong number", time.time(), 10),
+    )
+
+    assert session.exchange_count == 10
+    assert output.handed_back is True
+    assert output.reason == "benign"
+    assert output.text is None
+
+
 def test_burst_preserves_each_inbound_and_records_each_reply_bubble():
     eng = HiveEngine(
         agent_client=fake_client("wait ah ||| which bank account?"),

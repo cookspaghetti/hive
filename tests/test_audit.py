@@ -63,6 +63,56 @@ def test_ledger_can_filter_multiple_event_types_before_applying_limit(tmp_path):
     assert [row["event_type"] for row in rows] == ["takeover", "verdict"]
 
 
+def test_ledger_uses_in_sync_query_mirror_for_bounded_reads(tmp_path):
+    ledger = DurableAuditLedger(tmp_path / "events.jsonl")
+    ledger.append("takeover", "takeover_started", component="test", peer_id=55)
+    expected = ledger.local.records()
+
+    class QueryMirror:
+        def __init__(self):
+            self.calls = []
+
+        def list(self, **kwargs):
+            self.calls.append(kwargs)
+            return expected
+
+    mirror = QueryMirror()
+    ledger.mirror = mirror
+    ledger._mirror_dirty = False
+
+    rows = ledger.list(limit=8, peer_id=55, event_types={"takeover", "verdict"})
+
+    assert rows == expected
+    assert mirror.calls == [
+        {
+            "source_id": ledger.local.source_id,
+            "after": 0,
+            "limit": 8,
+            "peer_id": 55,
+            "event_type": "",
+            "event_types": {"takeover", "verdict"},
+        }
+    ]
+
+
+def test_ledger_falls_back_to_authoritative_jsonl_when_mirror_query_fails(tmp_path):
+    ledger = DurableAuditLedger(tmp_path / "events.jsonl")
+    ledger.append("message", "recorded", component="test")
+
+    class BrokenQueryMirror:
+        def list(self, **kwargs):
+            raise OSError("database unavailable")
+
+    ledger.mirror = BrokenQueryMirror()
+    ledger._mirror_dirty = False
+
+    rows = ledger.list(limit=1)
+
+    assert rows[0]["action"] == "recorded"
+    assert ledger._mirror_dirty is True
+    assert ledger._mirror_error == "database unavailable"
+
+
 def test_ledger_refuses_to_continue_after_tampering(tmp_path):
     path = tmp_path / "events.jsonl"
     ledger = DurableAuditLedger(path)

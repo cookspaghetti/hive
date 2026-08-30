@@ -22,7 +22,7 @@ from collections.abc import Collection, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 _ZERO_HASH = "0" * 64
 _SECRET_PATTERNS = (
@@ -353,6 +353,60 @@ class PostgresAuditMirror:
             for record in records:
                 self._write(cursor, record)
 
+    def list(
+        self,
+        *,
+        source_id: str,
+        after: int = 0,
+        limit: int = 200,
+        peer_id: int | None = None,
+        event_type: str = "",
+        event_types: Collection[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Read a bounded, source-scoped window from the query mirror."""
+        columns = (
+            "event_id",
+            "source_id",
+            "sequence",
+            "ts",
+            "event_type",
+            "component",
+            "action",
+            "level",
+            "peer_id",
+            "session_id",
+            "payload",
+            "prev_hash",
+            "event_hash",
+        )
+        clauses = ["source_id = %s", "sequence > %s"]
+        parameters: list[Any] = [source_id, after]
+        if peer_id is not None:
+            clauses.append("peer_id = %s")
+            parameters.append(peer_id)
+        if event_type:
+            clauses.append("event_type = %s")
+            parameters.append(event_type)
+        if event_types is not None:
+            selected_types = sorted(set(event_types))
+            if not selected_types:
+                return []
+            clauses.append("event_type = ANY(%s)")
+            parameters.append(selected_types)
+        parameters.append(max(1, min(limit, 1000)))
+        query = f"""
+            SELECT {", ".join(columns)}
+            FROM hive_audit_ledger
+            WHERE {" AND ".join(clauses)}
+            ORDER BY sequence DESC
+            LIMIT %s
+        """
+        with self._lock, self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(query, parameters)
+            rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+        rows.reverse()
+        return rows
+
 
 class DurableAuditLedger:
     def __init__(self, path: str | Path, database_url: str = "") -> None:
@@ -423,6 +477,26 @@ class DurableAuditLedger:
         event_type: str = "",
         event_types: Collection[str] | None = None,
     ) -> list[dict[str, Any]]:
+        bounded_limit = max(1, min(limit, 1000))
+        mirror_list = getattr(self.mirror, "list", None)
+        if self.mirror is not None and not self._mirror_dirty and callable(mirror_list):
+            try:
+                return cast(
+                    list[dict[str, Any]],
+                    mirror_list(
+                        source_id=self.local.source_id,
+                        after=after,
+                        limit=bounded_limit,
+                        peer_id=peer_id,
+                        event_type=event_type,
+                        event_types=event_types,
+                    ),
+                )
+            except Exception as exc:  # noqa: BLE001 - authoritative JSONL fallback
+                self._mirror_dirty = True
+                self._mirror_error = str(exc)
+                self._next_mirror_retry = time.monotonic() + _MIRROR_RETRY_SECONDS
+                sys.stderr.write(f"HIVE audit PostgreSQL query unavailable: {exc}\n")
         rows = [
             row
             for row in self.local.records()
@@ -431,7 +505,7 @@ class DurableAuditLedger:
             and (not event_type or row.get("event_type") == event_type)
             and (event_types is None or row.get("event_type") in event_types)
         ]
-        return rows[-max(1, min(limit, 1000)) :]
+        return rows[-bounded_limit:]
 
     def status(self) -> dict[str, Any]:
         return {

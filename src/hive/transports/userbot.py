@@ -23,6 +23,7 @@ from typing import Any, cast
 
 from hive.active_takeovers import (
     ACTIVE,
+    PAUSED_AFTER_LIMIT,
     PAUSED_AFTER_RESTART,
     ActiveTakeoverStore,
 )
@@ -60,6 +61,9 @@ class UserbotTransport:
         session_str: str,
         engine: HiveEngine,
         on_handback: Callable[[int, SessionState], Awaitable[None]] | None = None,
+        on_limit_reached: (
+            Callable[[int, SessionState, str], Awaitable[None]] | None
+        ) = None,
         on_takeover_request: Callable[[dict[str, object]], Awaitable[bool]] | None = None,
         *,
         inbox_debounce_s: float = 3.5,
@@ -76,6 +80,9 @@ class UserbotTransport:
         # Optional async callback(peer_id, session) fired when a benign
         # conversation is handed back, so the control plane can notify the user.
         self.on_handback = on_handback
+        # A turn/time budget pauses automatic replies but deliberately retains
+        # the session so the operator can review and seal it.
+        self.on_limit_reached = on_limit_reached
         # Optional async callback(chat) used by the operator control plane.
         self.on_takeover_request = on_takeover_request
         self.inbox_debounce_s = max(0.0, inbox_debounce_s)
@@ -101,6 +108,7 @@ class UserbotTransport:
         self._media_analysis_tasks: dict[int, dict[int, asyncio.Task[Any]]] = {}
         self._takeover_seed_messages: dict[int, list[Message]] = {}
         self._paused_recoveries: set[int] = set()
+        self._paused_limits: set[int] = set()
         self.restore_takeovers()
 
     def restore_takeovers(self) -> int:
@@ -110,7 +118,12 @@ class UserbotTransport:
         restored = 0
         for checkpoint in self.checkpoint_store.list():
             session = checkpoint.session
-            if session.phase is Phase.CLOSING:
+            if (
+                session.phase is Phase.CLOSING
+                and checkpoint.recovery_status == PAUSED_AFTER_LIMIT
+            ):
+                self._paused_limits.add(session.peer_id)
+            elif session.phase is Phase.CLOSING:
                 minimum = int(getattr(self.engine, "early_exit_min_turns", 10))
                 recoverable_benign_handback = (
                     session.verdict == "likely_benign"
@@ -143,7 +156,8 @@ class UserbotTransport:
                 self._takeover_seed_messages[session.peer_id] = list(
                     checkpoint.pending_messages
                 )
-            self._paused_recoveries.add(session.peer_id)
+            if checkpoint.recovery_status != PAUSED_AFTER_LIMIT:
+                self._paused_recoveries.add(session.peer_id)
             self._checkpoint(session.peer_id)
             audit_event(
                 "takeover_recovery",
@@ -161,6 +175,8 @@ class UserbotTransport:
         return restored
 
     def recovery_status(self, peer_id: int) -> str:
+        if peer_id in self._paused_limits:
+            return PAUSED_AFTER_LIMIT
         return PAUSED_AFTER_RESTART if peer_id in self._paused_recoveries else ACTIVE
 
     def is_processing(self, peer_id: int) -> bool:
@@ -733,6 +749,7 @@ class UserbotTransport:
 
     def begin_takeover(self, peer_id: int, persona: str) -> None:
         self._clear_inbound(peer_id)
+        self._paused_limits.discard(peer_id)
         observed = self._observed_chats.get(peer_id)
         pending_messages: list[Message] = []
         if observed is not None:
@@ -777,7 +794,7 @@ class UserbotTransport:
 
     async def process_pending_takeover(self, peer_id: int) -> int:
         """Process preserved pre-takeover messages after operator approval."""
-        if peer_id in self._paused_recoveries:
+        if peer_id in self._paused_recoveries or peer_id in self._paused_limits:
             return 0
         messages = self._takeover_seed_messages.pop(peer_id, [])
         if not messages or peer_id not in self._sessions:
@@ -837,7 +854,11 @@ class UserbotTransport:
             session = self._sessions[peer_id][0]
             audit_event(
                 "takeover_recovery",
-                "inbound_queued_while_recovery_paused",
+                (
+                    "inbound_queued_while_limit_paused"
+                    if peer_id in self._paused_limits
+                    else "inbound_queued_while_recovery_paused"
+                ),
                 component="transport.userbot",
                 payload={"msg_id": msg_id, "queued_messages": len(queued)},
                 peer_id=peer_id,
@@ -1070,10 +1091,39 @@ class UserbotTransport:
         self._inflight_batches.pop(peer_id, None)
         self._checkpoint(peer_id)
         log.info("userbot: processing peer=%s inbound_batch=%d", peer_id, len(batch))
-        if out.handed_back or out.terminated:
-            # Stop intercepting this peer. handed_back = benign safeguard;
-            # terminated = turn/duration budget exhausted (fyp.txt S8). Either
-            # way, drop the session and let the operator seal via /stop.
+        if out.terminated:
+            # A safety budget is not a benign hand-back. Keep the checkpoint and
+            # stop automatic replies until the operator reviews/seals the case.
+            self._paused_limits.add(peer_id)
+            self._checkpoint(peer_id)
+            reason = out.reason or "safety_limit"
+            log.warning("userbot: automation paused peer=%s reason=%s", peer_id, reason)
+            if self.on_limit_reached is not None:
+                try:
+                    await self.on_limit_reached(peer_id, session, reason)
+                except Exception:
+                    log.exception("userbot: limit notification failed peer=%s", peer_id)
+                    audit_event(
+                        "control_message",
+                        "limit_notification_failed",
+                        component="transport.userbot",
+                        payload={"reason": reason},
+                        peer_id=peer_id,
+                        session_id=session.session_id,
+                        level="error",
+                    )
+            audit_event(
+                "takeover",
+                "takeover_automation_paused",
+                component="transport.userbot",
+                payload={"reason": reason, "operator_action_required": True},
+                peer_id=peer_id,
+                session_id=session.session_id,
+                level="warning",
+            )
+            return
+        if out.handed_back:
+            # The benign early-exit safeguard returns control to the user.
             self.end_takeover(peer_id)
             log.info(
                 "userbot: ending takeover peer=%s (reason=%s)", peer_id, out.reason or "benign"
@@ -1346,6 +1396,7 @@ class UserbotTransport:
                 return None
             entry = removed
             self._paused_recoveries.discard(peer_id)
+            self._paused_limits.discard(peer_id)
             audit_event(
                 "takeover",
                 "takeover_ended",

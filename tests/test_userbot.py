@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+from hive.active_takeovers import PAUSED_AFTER_LIMIT, FileActiveTakeoverStore
 from hive.runtime import TurnOutput
 from hive.state import Message, Phase
 from hive.transports.userbot import UserbotTransport
@@ -21,8 +22,9 @@ from hive.transports.userbot import UserbotTransport
 class FakeEngine:
     """Duck-typed engine: returns handed_back or a normal reply on demand."""
 
-    def __init__(self, handed_back: bool):
+    def __init__(self, handed_back: bool, *, terminated: bool = False):
         self._handed_back = handed_back
+        self._terminated = terminated
         self.closed = False
 
     def new_session(self, peer_id, persona):
@@ -32,11 +34,13 @@ class FakeEngine:
         return SessionState(peer_id=peer_id, persona=persona), HashChain()
 
     def process_turn(self, session, chain, inbound):
-        if self._handed_back:
+        if self._handed_back or self._terminated:
             session.phase = Phase.CLOSING
         return TurnOutput(
-            text=None if self._handed_back else "hi",
+            text=None if self._handed_back or self._terminated else "hi",
             handed_back=self._handed_back,
+            terminated=self._terminated,
+            reason="max_turns" if self._terminated else "",
             delay_s=2.0,
         )
 
@@ -83,6 +87,40 @@ def test_handback_notification_failure_does_not_restore_takeover():
     _run(ub.on_message(556, "ok bye thanks", 1, 0.0))
 
     assert 556 not in ub._sessions
+
+
+def test_budget_limit_pauses_and_preserves_takeover_for_operator(tmp_path):
+    notifications = []
+    handbacks = []
+
+    async def on_limit(peer_id, session, reason):
+        notifications.append((peer_id, session.session_id, reason))
+
+    async def on_handback(peer_id, session):
+        handbacks.append((peer_id, session.session_id))
+
+    store = FileActiveTakeoverStore(tmp_path / "active")
+    ub = _transport(
+        FakeEngine(handed_back=False, terminated=True),
+        on_limit_reached=on_limit,
+        on_handback=on_handback,
+        checkpoint_store=store,
+    )
+    ub.begin_takeover(557, "confused_elderly")
+
+    _run(ub.on_message(557, "still there?", 1, 1.0))
+
+    assert 557 in ub._sessions
+    assert ub.recovery_status(557) == PAUSED_AFTER_LIMIT
+    assert notifications == [(557, ub._sessions[557][0].session_id, "max_turns")]
+    assert handbacks == []
+    checkpoint = store.list()[0]
+    assert checkpoint.recovery_status == PAUSED_AFTER_LIMIT
+
+    _run(ub.on_message(557, "hello again", 2, 2.0))
+    assert [message.msg_id for message in checkpoint.pending_messages] == []
+    refreshed = store.list()[0]
+    assert [message.msg_id for message in refreshed.pending_messages] == [2]
 
 
 def test_active_conversation_keeps_session():

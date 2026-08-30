@@ -38,6 +38,7 @@ def test_history_store_persists_and_lists_newest_first(tmp_path):
     rows = store.list()
     assert [row["peer_id"] for row in rows] == [20, 10]
     assert rows[0]["message_count"] == 1
+    assert rows[0]["hvis"] == 1
     assert rows[0]["session_id"] == newer.session_id
     assert store.get(archived["id"])["exchanges"] == 1
     assert store.get(archived["id"]) == archived

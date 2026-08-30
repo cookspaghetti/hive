@@ -46,6 +46,21 @@ def test_elderly_slower_than_young():
     assert elderly > young
 
 
+def test_latency_varies_across_equivalent_responses_without_leaving_bounds():
+    delays = {
+        compute_delay(
+            "I need a moment to check that account name",
+            "small_business_owner",
+            incoming_len=48,
+            seed=seed,
+        )
+        for seed in range(20)
+    }
+
+    assert len(delays) >= 15
+    assert all(2.0 <= delay <= 45.0 for delay in delays)
+
+
 def test_pipeline_returns_text_and_delay():
     r = apply("how do i do it", "confused_elderly", incoming_len=40, seed=9)
     assert isinstance(r.text, str) and r.text

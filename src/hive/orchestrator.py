@@ -18,6 +18,7 @@ early-exit safeguard. Either short-circuits to END with a termination reason.
 
 from __future__ import annotations
 
+import hashlib
 import time
 from typing import TYPE_CHECKING, Any, TypedDict
 
@@ -53,6 +54,8 @@ class TurnState(TypedDict, total=False):
     verdict: str
     reply: str
     tier: str
+    outbound_guardrail_flag: bool
+    outbound_guardrail_reasons: list[str]
     # outputs / control
     outbound: str | None
     outbound_messages: list[str]
@@ -278,6 +281,7 @@ def build_turn_graph(engine: HiveEngine) -> Any:
     def n_reason(state: TurnState) -> TurnState:
         from hive.agent.graph_nodes import reason_and_reply
         from hive.case_intelligence import build_probe_context
+        from hive.guardrails.outbound import enforce_outbound_safety
 
         session = state["session"]
         inbound = state["inbound"]
@@ -326,7 +330,26 @@ def build_turn_graph(engine: HiveEngine) -> Any:
             defense_note=defense,
             case_context=session.case_probe_context,
         )
-        return {"reply": reply, "tier": tier.value}
+        safety = enforce_outbound_safety(reply, incoming_text=inbound.text)
+        if safety.flagged:
+            audit_event(
+                "guardrail",
+                "unsafe_outbound_reply_replaced",
+                component="orchestrator.reason",
+                payload={
+                    "reasons": list(safety.reasons),
+                    "blocked_reply_sha256": hashlib.sha256(reply.encode("utf-8")).hexdigest(),
+                },
+                peer_id=session.peer_id,
+                session_id=session.session_id,
+                level="warning",
+            )
+        return {
+            "reply": safety.text,
+            "tier": tier.value,
+            "outbound_guardrail_flag": safety.flagged,
+            "outbound_guardrail_reasons": list(safety.reasons),
+        }
 
     def n_middleware(state: TurnState) -> TurnState:
         session = state["session"]

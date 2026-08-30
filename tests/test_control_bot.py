@@ -267,6 +267,30 @@ def test_handback_notifies_operator_bot_that_manual_control_resumed(tmp_path):
     assert "continue the conversation manually" in sent[0]["text"]
 
 
+def test_limit_pause_notifies_operator_that_case_remains_sealable(tmp_path):
+    sent = []
+
+    class TelegramBot:
+        async def send_message(self, **kwargs):
+            sent.append(kwargs)
+
+    class App:
+        bot = TelegramBot()
+
+    bot = _bot(TakeoverHistoryStore(tmp_path))
+    bot._app = App()
+    session = SessionState(peer_id=556, persona="confused_elderly")
+    session.exchange_count = 60
+    session.turn_count = 72
+
+    _run(bot._on_limit_reached(556, session, "max_turns"))
+
+    assert sent[0]["chat_id"] == 42
+    assert "paused automatic replies" in sent[0]["text"]
+    assert "remains open and checkpointed" in sent[0]["text"]
+    assert "Stop & seal" in sent[0]["text"]
+
+
 def test_takeover_request_is_pushed_to_operator_bot():
     sent = []
 

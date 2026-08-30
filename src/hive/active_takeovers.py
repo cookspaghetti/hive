@@ -14,6 +14,7 @@ from hive.vault.hashchain import ChainEntry, HashChain
 SCHEMA_VERSION = 1
 ACTIVE = "active"
 PAUSED_AFTER_RESTART = "paused_after_restart"
+PAUSED_AFTER_LIMIT = "paused_after_limit"
 
 
 @dataclass(slots=True)
@@ -109,7 +110,7 @@ def _payload(
     pending_messages: list[Message],
     recovery_status: str,
 ) -> dict[str, Any]:
-    if recovery_status not in {ACTIVE, PAUSED_AFTER_RESTART}:
+    if recovery_status not in {ACTIVE, PAUSED_AFTER_RESTART, PAUSED_AFTER_LIMIT}:
         raise ValueError(f"unsupported recovery status: {recovery_status}")
     if not chain.verify():
         raise ValueError("cannot checkpoint an invalid evidence hash chain")

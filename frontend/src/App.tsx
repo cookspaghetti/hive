@@ -29,6 +29,7 @@ export function App() {
   const [confirmation,setConfirmation]=useState<Confirmation|null>(null),[toasts,setToasts]=useState<Toast[]>([]),[firstRunDismissed,setFirstRunDismissed]=useState(false);
   const [backgroundTasks,setBackgroundTasks]=useState<BackgroundTask[]>(readBackgroundTasks);
   const prompted=useRef(false);
+  const syncRevision=useRef<number|null>(null);
   const runtime=usePolling(()=>api<RuntimeStatus>("/api/runtime/status"),5000,[]);
   const sessions=usePolling(()=>api<CaseSummary[]>("/api/sessions").catch(()=>[]),5000,[]);
   const history=usePolling(()=>api<CaseSummary[]>("/api/history").catch(()=>[]),10000,[]);
@@ -37,6 +38,7 @@ export function App() {
   useEffect(()=>{const handler=()=>setRoute(parseRoute());window.addEventListener("hashchange",handler);if(!window.location.hash)navigate("console");return()=>window.removeEventListener("hashchange",handler);},[navigate]);
   useEffect(()=>{const handler=(event:KeyboardEvent)=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="k"){event.preventDefault();setPaletteOpen(true);}if(event.key==="Escape"){setPaletteOpen(false);setMobileNav(false);}};window.addEventListener("keydown",handler);return()=>window.removeEventListener("keydown",handler);},[]);
   useEffect(()=>{const notice=(event:Event)=>{const request=(event as CustomEvent<NoticeRequest>).detail;const id=Date.now()+Math.random();const item:Toast={...request,id,kind:request.kind||"info"};setToasts(rows=>[...rows,item].slice(-3));if(item.kind!=="error")window.setTimeout(()=>setToasts(rows=>rows.filter(row=>row.id!==id)),6000);};const confirm=(event:Event)=>setConfirmation((event as CustomEvent<Confirmation>).detail);window.addEventListener("hive:notice",notice);window.addEventListener("hive:confirm",confirm);return()=>{window.removeEventListener("hive:notice",notice);window.removeEventListener("hive:confirm",confirm);};},[]);
+  useEffect(()=>{let disposed=false;const poll=async()=>{try{const state=await api<JsonRecord>("/api/sync");if(disposed)return;const revision=Number(state.revision||0);if(syncRevision.current!==null&&revision!==syncRevision.current)window.dispatchEvent(new CustomEvent("hive:data-changed",{detail:state}));syncRevision.current=revision;}catch{/* Existing view polling continues if the sync probe is temporarily unavailable. */}};void poll();const timer=window.setInterval(()=>void poll(),1000);return()=>{disposed=true;window.clearInterval(timer);};},[]);
   useEffect(()=>{const add=(event:Event)=>{const task=(event as CustomEvent<BackgroundTask>).detail;setBackgroundTasks(rows=>[...rows.filter(row=>row.id!==task.id),task].slice(-5));};window.addEventListener("hive:background-task",add);return()=>window.removeEventListener("hive:background-task",add);},[]);
   useEffect(()=>{sessionStorage.setItem(backgroundTaskStorageKey,JSON.stringify(backgroundTasks));},[backgroundTasks]);
   useEffect(()=>{
@@ -95,7 +97,13 @@ function ToastStack({rows,dismiss}:{rows:Toast[];dismiss:(id:number)=>void}){ret
 function BackgroundTaskWidget({rows,dismiss}:{rows:BackgroundTask[];dismiss:(id:string)=>void}){
   if(!rows.length)return null;
   const active=rows.filter(row=>row.status==="queued"||row.status==="running").length;
-  return <aside className="background-task-widget" aria-live="polite"><header><div><span className={`status-dot ${active?"live":"success"}`}/><div><strong>Background activity</strong><small>{active?`${active} task${active===1?"":"s"} running`:"Recent tasks"}</small></div></div></header><div className="background-task-list">{rows.slice(-3).reverse().map(row=>{const terminal=row.status==="completed"||row.status==="failed";return <article className={row.status} key={row.id}><div className="background-task-title"><div><strong>{row.title}</strong><small>{row.stage}</small></div>{terminal&&<button title="Dismiss task" aria-label={`Dismiss ${row.title}`} onClick={()=>dismiss(row.id)}><CloseIcon size={14}/></button>}</div><div className="background-task-progress" aria-label={`${row.progress}% complete`}><i style={{width:`${Math.max(3,Math.min(100,row.progress))}%`}}/></div><footer><span>{row.detail}</span><b>{row.status==="failed"?"Failed":row.status==="completed"?"Done":`${Math.round(row.progress)}%`}</b></footer></article>;})}</div></aside>;
+  return <aside className="background-task-widget" aria-live="polite"><header><div><span className={`status-dot ${active?"live":"success"}`}/><div><strong>Background activity</strong><small>{active?`${active} task${active===1?"":"s"} running`:"Recent tasks"}</small></div></div></header><div className="background-task-list">{rows.slice(-3).reverse().map(row=>{const terminal=row.status==="completed"||row.status==="failed",progress=displayTaskProgress(row),estimated=row.status==="running"&&progress>row.progress;return <article className={row.status} key={row.id}><div className="background-task-title"><div><strong>{row.title}</strong><small>{row.stage}</small></div>{terminal&&<button title="Dismiss task" aria-label={`Dismiss ${row.title}`} onClick={()=>dismiss(row.id)}><CloseIcon size={14}/></button>}</div><div className="background-task-progress" aria-label={`${Math.round(progress)}% complete`}><i style={{width:`${Math.max(3,Math.min(100,progress))}%`}}/></div><footer><span>{row.detail}</span><b>{row.status==="failed"?"Failed":row.status==="completed"?"Done":`${estimated?"~":""}${Math.round(progress)}%`}</b></footer></article>;})}</div></aside>;
+}
+
+function displayTaskProgress(task:BackgroundTask):number{
+  if(task.status!=="running"||task.progress>20)return task.progress;
+  const elapsed=Math.max(0,Date.now()/1000-task.createdTs);
+  return Math.min(76,20+58*(1-Math.exp(-elapsed/26)));
 }
 
 function readBackgroundTasks():BackgroundTask[]{

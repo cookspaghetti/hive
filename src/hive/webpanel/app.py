@@ -873,6 +873,11 @@ def create_app(
     def runtime_status() -> dict[str, object]:
         return cast(dict[str, object], runtime.snapshot())
 
+    @app.get("/api/sync", dependencies=[Depends(auth)])
+    def sync_status() -> dict[str, Any]:
+        """Expose a cheap cross-channel revision for automatic panel refresh."""
+        return observations.change_state()
+
     @app.get("/api/dashboard", dependencies=[Depends(auth)])
     def dashboard() -> dict[str, object]:
         status = runtime.snapshot()

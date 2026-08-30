@@ -41,6 +41,13 @@ class ObservationHub(logging.Handler):
         self._events: deque[dict[str, Any]] = deque(maxlen=capacity)
         self._lock = threading.Lock()
         self._sequence = 0
+        self._change_revision = 0
+        self._last_change: dict[str, Any] = {
+            "revision": 0,
+            "topic": "startup",
+            "peer_id": None,
+            "ts": time.time(),
+        }
 
     def _next(self) -> int:
         with self._lock:
@@ -108,6 +115,22 @@ class ObservationHub(logging.Handler):
         with self._lock:
             rows = [dict(row) for row in self._events if row["id"] > after]
         return rows[-max(1, min(limit, 500)) :]
+
+    def change(self, topic: str, *, peer_id: int | None = None) -> dict[str, Any]:
+        """Advance the lightweight UI revision after an operational mutation."""
+        with self._lock:
+            self._change_revision += 1
+            self._last_change = {
+                "revision": self._change_revision,
+                "topic": _redact(topic),
+                "peer_id": peer_id,
+                "ts": time.time(),
+            }
+            return dict(self._last_change)
+
+    def change_state(self) -> dict[str, Any]:
+        with self._lock:
+            return dict(self._last_change)
 
 
 _HUB = ObservationHub()

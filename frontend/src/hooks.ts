@@ -21,7 +21,13 @@ export function usePolling<T>(loader: () => Promise<T>, intervalMs = 0, dependen
     mounted.current = true;
     void refresh();
     const timer = intervalMs ? window.setInterval(() => void refresh(), intervalMs) : 0;
-    return () => { mounted.current = false; if (timer) window.clearInterval(timer); };
+    const changed = () => void refresh();
+    window.addEventListener("hive:data-changed", changed);
+    return () => {
+      mounted.current = false;
+      if (timer) window.clearInterval(timer);
+      window.removeEventListener("hive:data-changed", changed);
+    };
   }, [refresh, intervalMs]);
 
   return { data, error, loading, refresh, setData };

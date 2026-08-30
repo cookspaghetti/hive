@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import mimetypes
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -57,6 +57,7 @@ def replay_history_record(
     *,
     media_paths: Mapping[int, str | Path] | None = None,
     media_descriptions: dict[int, str] | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> SessionState:
     """Rerun intelligence analysis over one immutable archived transcript."""
     resolved_media = {
@@ -80,6 +81,9 @@ def replay_history_record(
     batch: list[Message] = []
     sandboxed_urls: set[str] = set()
     analyzed_turns = 0
+    total_inbound = sum(
+        1 for item in record.get("messages", []) if str(item.get("role") or "") == "stranger"
+    )
     turn_boundaries = {
         int(item["turn"])
         for item in record.get("signal_trail", [])
@@ -141,6 +145,8 @@ def replay_history_record(
             soft_evidence=assessment.evidence,
         )
         batch.clear()
+        if progress_callback is not None:
+            progress_callback(analyzed_turns, total_inbound)
 
     for raw in record.get("messages", []):
         message = _message(raw, resolved_media)

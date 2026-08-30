@@ -67,7 +67,12 @@ def test_replay_preserves_transcript_and_reruns_grounded_analysis():
         enable_early_exit=False,
     )
 
-    replayed = replay_history_record(record, engine)
+    progress = []
+    replayed = replay_history_record(
+        record,
+        engine,
+        progress_callback=lambda completed, total: progress.append((completed, total)),
+    )
 
     assert [(message.role, message.text) for message in replayed.messages] == [
         ("stranger", "I am John"),
@@ -77,6 +82,7 @@ def test_replay_preserves_transcript_and_reruns_grounded_analysis():
     assert [(item.kind, item.value) for item in replayed.hvis] == [("person_name", "John")]
     assert replayed.replay_of == "123_919"
     assert replayed.turn_count == 2
+    assert progress == [(1, 2), (2, 2)]
     contributions = replayed.signal_trail[-1]["contributions"]
     assert all(item["reason"] != "soft:payment_request" for item in contributions)
     assert contributions[-1]["source_message_ids"] == [1]

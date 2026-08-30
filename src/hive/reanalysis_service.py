@@ -16,8 +16,14 @@ from hive.replay import replay_history_record
 ReanalysisRunner = Callable[[dict[str, Any], Any, Any], dict[str, Any]]
 
 
-def run_reanalysis(record: dict[str, Any], engine: Any, settings: Any) -> dict[str, Any]:
-    session = replay_history_record(record, engine)
+def run_reanalysis(
+    record: dict[str, Any],
+    engine: Any,
+    settings: Any,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> dict[str, Any]:
+    session = replay_history_record(record, engine, progress_callback=progress_callback)
     return analysis_run_record(record, session, models=model_manifest(settings))
 
 
@@ -84,7 +90,17 @@ class ReanalysisService:
             peer_id=int(record["peer_id"]),
         )
         try:
-            analysis = self.runner(record, engine, settings)
+            if self.runner is run_reanalysis:
+                analysis = run_reanalysis(
+                    record,
+                    engine,
+                    settings,
+                    progress_callback=lambda completed, total: self._analysis_progress(
+                        job_id, completed, total
+                    ),
+                )
+            else:
+                analysis = self.runner(record, engine, settings)
             self._update(job_id, stage="Saving analysis run", progress=78)
             self.store.create(analysis)
         except Exception as exc:  # noqa: BLE001 - persisted job must report any worker failure
@@ -142,6 +158,17 @@ class ReanalysisService:
                 "score": analysis.get("score"),
             },
             peer_id=int(record["peer_id"]),
+        )
+
+    def _analysis_progress(self, job_id: str, completed: int, total: int) -> None:
+        if total <= 0:
+            return
+        bounded = min(max(completed, 0), total)
+        progress = 20 + round((bounded / total) * 56)
+        self._update(
+            job_id,
+            stage=f"Analysing transcript · {bounded}/{total} messages",
+            progress=min(progress, 76),
         )
 
     def _update(self, job_id: str, **values: Any) -> None:

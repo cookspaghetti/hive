@@ -355,6 +355,19 @@ def test_dashboard_aggregates_live_operations(client):
     assert data["sessions"][0]["peer_id"] == 100
 
 
+def test_sync_endpoint_reports_cross_channel_revision(client):
+    from hive.webpanel.observability import get_observation_hub
+
+    hub = get_observation_hub()
+    before = client.get("/api/sync", headers=_h()).json()
+    hub.change("test_mutation", peer_id=321)
+    after = client.get("/api/sync", headers=_h()).json()
+
+    assert after["revision"] == before["revision"] + 1
+    assert after["topic"] == "test_mutation"
+    assert after["peer_id"] == 321
+
+
 def test_model_status_does_not_expose_api_key(client):
     response = client.get("/api/models/status", headers=_h())
 

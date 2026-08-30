@@ -20,6 +20,62 @@ class NeverUsedSandbox:
         raise AssertionError(url)
 
 
+class RecordingSandbox:
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+
+    def run(self, url: str) -> RawFindings:
+        self.urls.append(url)
+        return RawFindings(
+            final_url=url,
+            redirect_chain=[url],
+            dest_ip="1.1.1.1",
+            title="Public security test",
+            body_len=1200,
+            http_status=200,
+            certificate_age_days=120,
+            runtime_ms=25,
+            fetcher="test_disposable_container",
+            access_state="reached",
+        )
+
+
+class RecordingThreatIntelligence:
+    configured = {
+        "semak_mule": True,
+        "virus_total": True,
+        "abuse_ipdb": True,
+        "rdap": True,
+    }
+
+    def __init__(self) -> None:
+        self.force_values: list[bool] = []
+
+    def enrich(self, session, indicators=None, messages=None, *, force=False):
+        del messages
+        self.force_values.append(force)
+        results = [
+            {
+                "id": f"live-{item.source_msg_id}",
+                "provider": "virus_total",
+                "provider_label": "VirusTotal",
+                "indicator_kind": item.kind,
+                "observable": item.value,
+                "source_msg_id": item.source_msg_id,
+                "status": "hit",
+                "risk": "malicious",
+                "summary": "Public test observation.",
+                "facts": {"malicious": 1},
+                "checked_ts": time.time(),
+                "cached": False,
+            }
+            for item in indicators or []
+            if item.kind == "url"
+        ]
+        session.threat_intelligence.extend(results)
+        return results
+
+
 @dataclass
 class Settings:
     signing_key_path: str
@@ -32,7 +88,7 @@ class Runtime:
     is_running: bool = True
 
 
-def _service(tmp_path) -> DemoService:
+def _service(tmp_path, *, sandbox=None, threat_intelligence=None) -> DemoService:
     private_key = tmp_path / "signing.pem"
     public_key = tmp_path / "signing.pub.pem"
     generate_keypair(str(private_key), str(public_key))
@@ -40,7 +96,8 @@ def _service(tmp_path) -> DemoService:
         agent_client=fake_client(
             '{"urgency": 0.9, "payment_request": 0.9, "investment_framing": 0.8}'
         ),
-        sandbox_runner=NeverUsedSandbox(),
+        sandbox_runner=sandbox or NeverUsedSandbox(),
+        threat_intelligence=threat_intelligence,
         enable_early_exit=False,
     )
     runtime = Runtime(engine, Settings(str(private_key)))
@@ -59,7 +116,7 @@ def _wait_for(service: DemoService, run_id: str, predicate, timeout: float = 20)
 
 
 def test_scenarios_use_separate_messages_and_reserved_urls():
-    assert len(SCENARIOS) >= 5
+    assert len(SCENARIOS) == 30
     for scenario in SCENARIOS.values():
         assert len(scenario.bursts) >= 3
         assert all(
@@ -70,7 +127,16 @@ def test_scenarios_use_separate_messages_and_reserved_urls():
         for burst in scenario.bursts:
             for message in scenario.events(burst):
                 if "http" in message.text:
-                    assert ".example" in message.text
+                    if scenario.live_services:
+                        assert any(
+                            allowed in message.text
+                            for allowed in (
+                                "testsafebrowsing.appspot.com",
+                                "example.com",
+                            )
+                        )
+                    else:
+                        assert ".example" in message.text
 
 
 def test_multimodal_fixtures_are_inert_and_scenarios_reference_them():
@@ -96,6 +162,71 @@ def test_catalog_exposes_all_three_demo_modes():
     assert catalog["modes"][0]["key"] == "scripted"
     assert catalog["modes"][0]["recommended"] is True
     assert catalog["fixture_policy"]["executable_content"] is False
+    live = [item for item in catalog["scenarios"] if item["live_services"]]
+    assert len(live) == 3
+    assert all(item["provider_mode"] == "live" for item in live)
+    assert all(item["category"] for item in catalog["scenarios"])
+    assert len({item["category"] for item in catalog["scenarios"]}) >= 10
+    assert sum(
+        item["reference"] == "Reddit r/malaysia scam-awareness post"
+        for item in catalog["scenarios"]
+    ) == 19
+    assert all(
+        "Malaysia pattern" in item["tags"]
+        for item in catalog["scenarios"]
+        if item["reference"] == "Reddit r/malaysia scam-awareness post"
+    )
+    assert catalog["live_showcase_policy"]["hardcoded_public_observables_only"] is True
+
+
+def test_live_osint_showcase_uses_real_service_seams_without_creating_evidence(tmp_path):
+    sandbox = RecordingSandbox()
+    threat_intelligence = RecordingThreatIntelligence()
+    service = _service(
+        tmp_path,
+        sandbox=sandbox,
+        threat_intelligence=threat_intelligence,
+    )
+
+    started = service.start(
+        "osint_malicious_url",
+        "confused_elderly",
+        "5x",
+        mode="scripted",
+    )
+    run = _wait_for(
+        service,
+        started["id"],
+        lambda item: item["status"] in {"completed", "failed", "cancelled"},
+    )
+
+    assert run["status"] == "completed", run.get("error")
+    assert run["live_services"] is True
+    assert run["provider_mode"] == "live"
+    assert run["sandbox_mode"] == "disposable_container"
+    assert sandbox.urls == ["http://testsafebrowsing.appspot.com/s/malware.html"]
+    assert threat_intelligence.force_values and all(threat_intelligence.force_values)
+    assert run["sandbox_results"][0]["fetcher"] == "test_disposable_container"
+    assert run["threat_intelligence"][0]["provider"] == "virus_total"
+    assert run["threat_intelligence"][0]["cached"] is False
+    assert run["evidence_available"] is False
+    assert run["evidence_download_url"] is None
+
+
+def test_live_osint_showcase_rejects_generated_or_presenter_input(tmp_path):
+    service = _service(
+        tmp_path,
+        sandbox=RecordingSandbox(),
+        threat_intelligence=RecordingThreatIntelligence(),
+    )
+
+    for mode in ("model_driven", "interactive"):
+        try:
+            service.start("osint_malicious_url", "confused_elderly", "5x", mode=mode)
+        except ValueError as exc:
+            assert "scripted mode only" in str(exc)
+        else:  # pragma: no cover - safety invariant
+            raise AssertionError(f"unsafe showcase mode accepted: {mode}")
 
 
 def test_audit_scope_keeps_synthetic_events_out_of_the_default_ledger(tmp_path):
@@ -127,6 +258,16 @@ def test_demo_runs_pipeline_and_seals_isolated_evidence(tmp_path):
     assert all("\n" not in message["text"] for message in run["messages"])
     assert {item["kind"] for item in run["hvi_items"]} >= {"url", "bank_account"}
     assert run["sandbox_results"]
+    assert {item["provider"] for item in run["threat_intelligence"]} >= {
+        "semak_mule",
+        "virus_total",
+        "rdap",
+    }
+    assert all(
+        item["status"] == "synthetic_fixture"
+        and item["facts"]["external_lookup"] is False
+        for item in run["threat_intelligence"]
+    )
     assert run["audit"]["valid"] is True
     assert run["evidence_verified"] is True
 

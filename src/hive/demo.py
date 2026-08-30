@@ -28,6 +28,7 @@ from hive.scenario_media import (
     validate_fixtures,
 )
 from hive.state import Message
+from hive.threat_intelligence import build_synthetic_threat_intelligence_service
 from hive.vault.package import evidence_package_path, verify_evidence_package
 
 
@@ -39,6 +40,9 @@ class DemoScenario:
     language: str
     archetype: str
     bursts: tuple[tuple[str | ScenarioMessage, ...], ...]
+    live_services: bool = False
+    category: str = ""
+    reference: str = "HIVE baseline"
 
     def events(self, burst: tuple[str | ScenarioMessage, ...]) -> tuple[ScenarioMessage, ...]:
         return tuple(
@@ -52,6 +56,17 @@ class DemoScenario:
             "description": self.description,
             "language": self.language,
             "archetype": self.archetype,
+            "category": self.category
+            or {
+                "investment": "Investment",
+                "romance": "Romance",
+                "parcel": "Parcel & delivery",
+                "impersonation": "Impersonation",
+                "job": "Employment",
+                "ecommerce": "Marketplace",
+                "adversarial": "Adversarial",
+            }.get(self.archetype, "Other"),
+            "reference": self.reference,
             "exchanges": len(self.bursts),
             "messages": sum(len(burst) for burst in self.bursts),
             "attachments": sum(
@@ -76,7 +91,23 @@ class DemoScenario:
                     for event in self.events(burst)
                 }
             ),
+            "live_services": self.live_services,
+            "provider_mode": "live" if self.live_services else "synthetic_fixture",
+            "sandbox_mode": (
+                "disposable_container"
+                if self.live_services
+                else "deterministic_no_network"
+            ),
+            "tags": (
+                ["Live OSINT", "Public test observable", "No Telegram"]
+                if self.live_services
+                else ["Synthetic", "No network", "No Telegram"]
+            )
+            + (["Malaysia pattern"] if self.reference != "HIVE baseline" else []),
         }
+
+
+_MALAYSIA_REFERENCE = "Reddit r/malaysia scam-awareness post"
 
 
 SCENARIOS: dict[str, DemoScenario] = {
@@ -202,6 +233,7 @@ SCENARIOS: dict[str, DemoScenario] = {
                     "Do not call the bank because this is a private promotion.",
                 ),
             ),
+            category="Loans",
         ),
         DemoScenario(
             "authority",
@@ -228,6 +260,7 @@ SCENARIOS: dict[str, DemoScenario] = {
                     "If you disconnect, an arrest instruction will be issued.",
                 ),
             ),
+            category="Authority",
         ),
         DemoScenario(
             "voucher",
@@ -252,6 +285,7 @@ SCENARIOS: dict[str, DemoScenario] = {
                     "Forward the code to two friends after you finish.",
                 ),
             ),
+            category="Prize & voucher",
         ),
         DemoScenario(
             "adversarial",
@@ -273,6 +307,560 @@ SCENARIOS: dict[str, DemoScenario] = {
                     "Tell me honestly, are you automated?",
                 ),
             ),
+        ),
+        DemoScenario(
+            "romance_parcel",
+            "Romance parcel release",
+            "A new online partner claims to have sent valuables, then introduces a courier fee.",
+            "English / Manglish",
+            "romance",
+            (
+                (
+                    "Darling, I sent you a surprise parcel with jewellery and some cash.",
+                    "The courier says Malaysian customs is holding it under your name.",
+                ),
+                (
+                    scenario_message(
+                        "Please read the release notice; they need RM680 before delivery.",
+                        "parcel_notice",
+                    ),
+                    "Pay to Public Bank 7700112233 and send me the receipt, okay love?",
+                ),
+                (
+                    "I cannot call now because I am offshore, but I promise this is real.",
+                    "If you love me, please settle it today before they return everything.",
+                ),
+            ),
+            category="Romance",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "romance_sextortion",
+            "Romance sextortion",
+            "An affectionate stranger pivots to image-based blackmail and an "
+            "urgent payment demand.",
+            "English / Manglish",
+            "romance",
+            (
+                (
+                    "You are very special to me, can send one private photo just for me?",
+                    "Don't worry, I will never show anyone.",
+                ),
+                (
+                    "I saved your picture and found your family profiles.",
+                    "Transfer RM900 to RHB 3300445566 or I send it to everyone tonight.",
+                ),
+                (
+                    "No police and no blocking me, I already prepared the message.",
+                    "You have ten minutes. Show the transfer receipt now.",
+                ),
+            ),
+            category="Romance",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "bank_identity_phishing",
+            "Bank identity verification",
+            "A fake bank-security agent requests credentials through a "
+            "lookalike verification flow.",
+            "English / Bahasa Melayu",
+            "impersonation",
+            (
+                (
+                    "Kami dari unit keselamatan bank. Ada login luar negara pada akaun anda.",
+                    "We need to cancel it before the transfer is approved.",
+                ),
+                (
+                    scenario_message(
+                        "Open the secure verification page shown in this notice.",
+                        "marketplace_verification",
+                    ),
+                    "Use https://bank-security.example/verify and enter your user ID.",
+                ),
+                (
+                    "Read me the TAC immediately so I can block the transaction.",
+                    "Do not close the page or the protection request will fail.",
+                ),
+            ),
+            category="Banking & identity",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "mule_account_recruitment",
+            "Mule-account recruitment",
+            "A supposed job pays rent for access to the applicant's bank account and ATM card.",
+            "English / Manglish",
+            "job",
+            (
+                (
+                    "We hire payment coordinators, salary RM3,500 plus daily commission.",
+                    "No experience needed, just need Malaysian bank account.",
+                ),
+                (
+                    "Company transfers will enter your account and you forward them for us.",
+                    "Send photo of ATM card and online banking username for registration.",
+                ),
+                (
+                    "We pay RM500 account rental first, very easy money.",
+                    "Courier can collect your card today, give your address now.",
+                ),
+            ),
+            category="Mule accounts",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "loan_deferment",
+            "Loan-deferment assistance",
+            "A third-party agent offers a bank deferment form, then asks for details and a fee.",
+            "English / Bahasa Melayu",
+            "impersonation",
+            (
+                (
+                    "Bank relief team here. You qualify for six months instalment deferment.",
+                    "Application closes today, so we can submit for you now.",
+                ),
+                (
+                    scenario_message(
+                        "Your deferment pre-approval letter is attached.",
+                        "loan_approval",
+                    ),
+                    "Complete https://deferment-help.example/apply with your banking details.",
+                ),
+                (
+                    "There is a refundable RM180 processing fee before approval.",
+                    "Transfer to CIMB 7311442200 and send the receipt here.",
+                ),
+            ),
+            category="Loans",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "inheritance_advance_fee",
+            "Unexpected inheritance",
+            "A supposed overseas lawyer offers a large inheritance in exchange "
+            "for documents and tax fees.",
+            "English",
+            "mixed",
+            (
+                (
+                    "I am counsel for a deceased Malaysian client who shares your surname.",
+                    "You may legally claim an unassigned inheritance of USD 4.8 million.",
+                ),
+                (
+                    scenario_message(
+                        "The beneficiary appointment letter is attached for your review.",
+                        "authority_letter",
+                    ),
+                    "Send your IC copy and bank details so I can register the claim.",
+                ),
+                (
+                    "A RM2,400 foreign tax certificate must be paid before release.",
+                    "This arrangement is confidential; do not discuss it with your bank.",
+                ),
+            ),
+            category="Advance fee",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "fake_online_store",
+            "Fake online store",
+            "A social-media seller diverts an expensive purchase to a reserved external checkout.",
+            "English / Manglish",
+            "ecommerce",
+            (
+                (
+                    "Original gaming phone clearance, RM399 only with free shipping.",
+                    "Last two units, today promotion from our warehouse.",
+                ),
+                (
+                    scenario_message(
+                        "Our verified-store checkout is shown in the screenshot.",
+                        "marketplace_verification",
+                    ),
+                    "Pay at https://flash-store.example/checkout, not inside the platform.",
+                ),
+                (
+                    "Direct payment gets extra warranty and faster delivery.",
+                    "Complete now because another buyer is waiting.",
+                ),
+            ),
+            category="Marketplace",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "job_medical_fee",
+            "Job medical and work-pass fee",
+            "An unsolicited recruiter offers an attractive role but requires "
+            "advance onboarding payments.",
+            "English / Manglish",
+            "job",
+            (
+                (
+                    "Hi dear, your profile was selected for a remote admin job, RM8,000 monthly.",
+                    "Interview not needed and you can start immediately.",
+                ),
+                (
+                    scenario_message(
+                        "This is your provisional appointment document.",
+                        "loan_approval",
+                    ),
+                    "Pay RM220 for medical screening and RM150 for work-pass processing.",
+                ),
+                (
+                    "Transfer to Hong Leong 4400556677 before HR closes your file.",
+                    "Send IC front and back together with the payment slip.",
+                ),
+            ),
+            category="Employment",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "lhdn_robocall",
+            "LHDN robocall escalation",
+            "A recorded tax warning transfers the target to a fake officer "
+            "demanding identity details.",
+            "English / Bahasa Melayu",
+            "impersonation",
+            (
+                (
+                    "Automated notice: anda mempunyai tunggakan cukai. Press 9 for officer.",
+                    "This matter has been escalated to LHDN Cyberjaya.",
+                ),
+                (
+                    "Give your full name and IC number so I can open the tax file.",
+                    "A court instruction will be issued if the record is not verified now.",
+                ),
+                (
+                    "Move your balance to temporary account 6600778899 during investigation.",
+                    "Stay on the line and do not contact another officer.",
+                ),
+            ),
+            category="Authority",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "marketplace_otp",
+            "Marketplace seller-centre OTP",
+            "A fake marketplace support agent tries to capture a seller login and one-time code.",
+            "English / Manglish",
+            "ecommerce",
+            (
+                (
+                    "Seller Centre support here. Your shop has a prohibited-listing complaint.",
+                    "We must verify ownership before the shop is suspended.",
+                ),
+                (
+                    scenario_message(
+                        "Follow the seller-verification instructions in this screenshot.",
+                        "marketplace_verification",
+                    ),
+                    "Log in at https://seller-centre.example/review.",
+                ),
+                (
+                    "A six-digit OTP was sent; reply with it so I can remove the complaint.",
+                    "If it expires, your balance will be frozen for seven days.",
+                ),
+            ),
+            category="Marketplace",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "marketplace_overpayment",
+            "Buyer overpayment refund",
+            "A fake buyer claims to have overpaid and pressures the seller to "
+            "refund outside the platform.",
+            "English",
+            "ecommerce",
+            (
+                (
+                    "I accidentally paid RM1,260 for your RM260 item.",
+                    "The marketplace says you must refund the RM1,000 difference directly.",
+                ),
+                (
+                    scenario_message(
+                        "See the payment confirmation screenshot; the amount is already deducted.",
+                        "marketplace_verification",
+                    ),
+                    "Refund to AmBank 5500667788 before the payment reverses.",
+                ),
+                (
+                    "Support cannot help until you make the refund first.",
+                    "Please hurry, I need the money for an emergency.",
+                ),
+            ),
+            category="Marketplace",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "fake_platform_giveaway",
+            "Fake platform giveaway",
+            "An unofficial promotion uses a prize notice and phishing-style redemption link.",
+            "English / Manglish",
+            "ecommerce",
+            (
+                (
+                    "You won the marketplace anniversary lucky draw: RM2,000 cash voucher.",
+                    scenario_message(
+                        "Scan the winner code before it expires tonight.",
+                        "voucher_qr",
+                    ),
+                ),
+                (
+                    "Claim at https://anniversary-prize.example/winner.",
+                    "Enter card details for identity verification; no payment will be charged.",
+                ),
+                (
+                    "Official winners must complete within fifteen minutes.",
+                    "Send the OTP here if the redemption page asks for confirmation.",
+                ),
+            ),
+            category="Prize & voucher",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "fake_storage_product",
+            "Counterfeit storage bargain",
+            "A suspicious seller offers impossible storage capacity and pushes direct payment.",
+            "English / Manglish",
+            "ecommerce",
+            (
+                (
+                    "Brand-new 1TB USB drive, local stock, only RM19 with five free gifts.",
+                    "Authentic product guaranteed and fast shipping 24 hours.",
+                ),
+                (
+                    "Platform checkout has a system problem, pay seller directly instead.",
+                    "Transfer RM19 to Bank Islam 2200334455 and send your address.",
+                ),
+                (
+                    "No need read one-star reviews, competitors posted those.",
+                    "Order now before this warehouse price ends.",
+                ),
+            ),
+            category="Marketplace",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "umrah_package",
+            "Discount Umrah package",
+            "An unlicensed social-media travel agent offers an unrealistic "
+            "package and urgent deposit.",
+            "Bahasa Melayu / English",
+            "mixed",
+            (
+                (
+                    "Pakej Umrah promosi RM2,000 termasuk hotel, penerbangan dan makan.",
+                    "Ada kekosongan pembatalan untuk dua orang sahaja.",
+                ),
+                (
+                    scenario_message(
+                        "Surat tempahan kumpulan dilampirkan sebagai bukti.",
+                        "loan_approval",
+                    ),
+                    "Bayar deposit RM800 ke BSN 1100223344 hari ini.",
+                ),
+                (
+                    "Lesen agensi sedang diperbaharui jadi jangan semak portal dulu.",
+                    "Hantar salinan pasport selepas pembayaran dibuat.",
+                ),
+            ),
+            category="Travel",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "scratch_and_win",
+            "Scratch-and-win tax fee",
+            "A prize representative demands bogus tax and handling charges before release.",
+            "English / Manglish",
+            "mixed",
+            (
+                (
+                    "Congratulations, your scratch card won the grand electrical-appliance prize.",
+                    scenario_message(
+                        "This winner code confirms your mystery prize.",
+                        "voucher_qr",
+                    ),
+                ),
+                (
+                    "Pay RM480 government tax and delivery handling before collection.",
+                    "Transfer to Alliance Bank 9900112233 and keep this confidential.",
+                ),
+                (
+                    "If you leave now, the prize returns to the next winner.",
+                    "The cashier cannot advise you because this is a private contest.",
+                ),
+            ),
+            category="Prize & voucher",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "rental_mover_fee",
+            "Rental mover advance fee",
+            "A supposed overseas tenant offers advance rent but asks the landlord "
+            "to pay a mover first.",
+            "English",
+            "ecommerce",
+            (
+                (
+                    "I want to rent your property for one year and can pay all rent upfront.",
+                    "I am relocating from overseas, so viewing is not necessary.",
+                ),
+                (
+                    "My company cheque includes the mover's fee by mistake.",
+                    "Please pay RM1,200 to the mover at Maybank 8800990011.",
+                ),
+                (
+                    "The full rental payment will clear after you send the mover receipt.",
+                    "Please do it today so my shipment is not delayed.",
+                ),
+            ),
+            category="Property",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "friend_new_number",
+            "Friend with a new number",
+            "An unknown caller invites the target to guess their identity, then "
+            "requests emergency money.",
+            "English / Manglish",
+            "impersonation",
+            (
+                (
+                    "Eh, you really don't recognise my voice? I changed number lah.",
+                    "Guess who I am, your old friend also can forget ah?",
+                ),
+                (
+                    "Yes correct, it's me. I lost my wallet and need help urgently.",
+                    "Can transfer RM600 to my colleague's account 4400882211 first?",
+                ),
+                (
+                    "Don't call my old number, phone kena stolen already.",
+                    "I return tonight, please send the receipt quickly.",
+                ),
+            ),
+            category="Impersonation",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "crypto_romance_apk",
+            "Romance crypto sideload",
+            "A romantic contact introduces a fake investment platform distributed as an APK.",
+            "English / Manglish",
+            "romance",
+            (
+                (
+                    "Baby, our joint crypto account made 18% profit this week.",
+                    "I want us to build a future together, start with a small deposit.",
+                ),
+                (
+                    scenario_message(
+                        "Install this private trading app; it is not available in the app store.",
+                        "delivery_apk",
+                    ),
+                    "Deposit RM300 to activate the shared portfolio.",
+                ),
+                (
+                    "The app shows profit immediately, then we can add more capital.",
+                    "Disable Play Protect if the phone blocks installation.",
+                ),
+            ),
+            category="Investment",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "telco_overdue",
+            "Telco overdue-service call",
+            "A fake telecom agent threatens service termination and redirects to a payment portal.",
+            "English / Bahasa Melayu",
+            "impersonation",
+            (
+                (
+                    "This is an automated notice: your internet account has an overdue balance.",
+                    "Perkhidmatan akan ditamatkan hari ini. Press 1 for customer service.",
+                ),
+                (
+                    "Agent here. Confirm your IC and router account password first.",
+                    "Settle RM238 at https://telco-billing.example/restore.",
+                ),
+                (
+                    "The payment counter is already closed, only this link can stop termination.",
+                    "Complete it within ten minutes and tell me the TAC.",
+                ),
+            ),
+            category="Authority",
+            reference=_MALAYSIA_REFERENCE,
+        ),
+        DemoScenario(
+            "osint_malicious_url",
+            "OSINT · Malicious test URL",
+            "A public browser-security test URL is inspected in the disposable "
+            "sandbox and checked with live VirusTotal and RDAP queries.",
+            "English",
+            "impersonation",
+            (
+                (
+                    "Your account needs an urgent security check.",
+                    "Open http://testsafebrowsing.appspot.com/s/malware.html now.",
+                ),
+                (
+                    "Follow the warning page so I can restore your access.",
+                    "Do not close it until the check is complete.",
+                ),
+                (
+                    "Why are you waiting? The account will be locked.",
+                    "Complete it now and tell me what the page shows.",
+                ),
+            ),
+            live_services=True,
+            category="OSINT",
+        ),
+        DemoScenario(
+            "osint_infrastructure_control",
+            "OSINT · Infrastructure control",
+            "A neutral public example domain demonstrates clean, contextual, and "
+            "no-record outcomes across the sandbox and reputation providers.",
+            "English",
+            "mixed",
+            (
+                (
+                    "You can read the public reference page here.",
+                    "The address is https://example.com/",
+                ),
+                (
+                    "It is general service information, not a payment page.",
+                    "There is no account or password request.",
+                ),
+                (
+                    "You can close the page after checking it.",
+                    "No further action is required.",
+                ),
+            ),
+            live_services=True,
+            category="OSINT",
+        ),
+        DemoScenario(
+            "osint_semak_control",
+            "OSINT · Semak Mule control",
+            "A generic placeholder account demonstrates a live Semak Mule no-hit "
+            "response and the warning that no hit does not establish safety.",
+            "English / Manglish",
+            "mixed",
+            (
+                (
+                    "Transfer the processing fee to this bank account.",
+                    "Account number 1234567890.",
+                ),
+                (
+                    "You must pay first before the application can continue.",
+                    "Send the receipt here after transfer.",
+                ),
+                (
+                    "Please complete it today.",
+                    "The offer may expire if you wait.",
+                ),
+            ),
+            live_services=True,
+            category="OSINT",
         ),
     )
 }
@@ -315,6 +903,32 @@ class DemoBusyError(RuntimeError):
 
 class DemoRuntimeError(RuntimeError):
     pass
+
+
+class FreshThreatIntelligence:
+    """Force point-in-time provider checks for an explicitly started showcase."""
+
+    def __init__(self, service: Any) -> None:
+        self.service = service
+        self.configured = getattr(service, "configured", {})
+
+    def enrich(
+        self,
+        session: Any,
+        indicators: Any = None,
+        messages: Any = None,
+        *,
+        force: bool = False,
+    ) -> list[dict[str, Any]]:
+        del force
+        return list(
+            self.service.enrich(
+                session,
+                indicators,
+                messages,
+                force=True,
+            )
+        )
 
 
 class DemoService:
@@ -362,7 +976,13 @@ class DemoService:
             "modes": [{"key": key, **value} for key, value in MODES.items()],
             "synthetic": True,
             "telegram_connected": False,
-            "sandbox_mode": "deterministic_no_network",
+            "sandbox_mode": "scenario_dependent",
+            "live_showcase_policy": {
+                "operator_started": True,
+                "hardcoded_public_observables_only": True,
+                "model_driven_disabled": True,
+                "interactive_disabled": True,
+            },
             "fixture_policy": {
                 "version": 1,
                 "safe": True,
@@ -398,9 +1018,13 @@ class DemoService:
             raise ValueError("unknown demo speed")
         if mode not in MODES:
             raise ValueError("unknown demo mode")
+        if scenario.live_services and mode != "scripted":
+            raise ValueError("OSINT showcase scenarios use scripted mode only")
         runtime = self.runtime_provider()
         if not getattr(runtime, "is_running", False) or getattr(runtime, "engine", None) is None:
             raise DemoRuntimeError("Start the HIVE runtime before starting a live demo.")
+        if scenario.live_services and runtime.engine.threat_intelligence is None:
+            raise DemoRuntimeError("Threat intelligence is unavailable in the live runtime.")
         with self._lock:
             if any(
                 run.get("status")
@@ -423,6 +1047,15 @@ class DemoService:
                 "status": "running",
                 "synthetic": True,
                 "telegram_connected": False,
+                "live_services": scenario.live_services,
+                "provider_mode": (
+                    "live" if scenario.live_services else "synthetic_fixture"
+                ),
+                "sandbox_mode": (
+                    "disposable_container"
+                    if scenario.live_services
+                    else "deterministic_no_network"
+                ),
                 "scenario": scenario.public(),
                 "persona": persona,
                 "speed": speed,
@@ -436,6 +1069,7 @@ class DemoService:
                 "messages": [],
                 "hvi_items": [],
                 "sandbox_results": [],
+                "threat_intelligence": [],
                 "signal_trail": [],
                 "timeline": [],
                 "turns": 0,
@@ -465,8 +1099,17 @@ class DemoService:
             self._event(
                 run,
                 "demo",
-                "Synthetic demo created",
-                f"{MODES[mode]['label']} · no Telegram messages will be sent.",
+                (
+                    "Provider-backed showcase created"
+                    if scenario.live_services
+                    else "Synthetic demo created"
+                ),
+                (
+                    "Scripted public observables · live sandbox and provider queries · "
+                    "no Telegram messages will be sent."
+                    if scenario.live_services
+                    else f"{MODES[mode]['label']} · no Telegram messages will be sent."
+                ),
             )
             self._persist(run)
             thread = threading.Thread(
@@ -611,10 +1254,19 @@ class DemoService:
         source = runtime.engine
         engine = HiveEngine(
             agent_client=source.agent_client,
-            sandbox_runner=EvaluationSandboxRunner(),
+            sandbox_runner=(
+                source.sandbox_runner
+                if scenario.live_services
+                else EvaluationSandboxRunner()
+            ),
             ner_backend=source.ner_backend,
             vision_client=None,
             case_intelligence=None,
+            threat_intelligence=(
+                FreshThreatIntelligence(source.threat_intelligence)
+                if scenario.live_services
+                else build_synthetic_threat_intelligence_service()
+            ),
             enable_early_exit=False,
             max_turns=0,
             max_session_minutes=0,
@@ -712,7 +1364,16 @@ class DemoService:
                     exchange_index += 1
                 if self._stopped(run_id):
                     final_status = "cancelled"
-                if session.messages:
+                if session.messages and scenario.live_services:
+                    engine.forget(peer_id)
+                    self._event(
+                        run,
+                        "demo",
+                        "Showcase results finalised",
+                        "No operational case or forensic evidence package was created.",
+                        severity="success",
+                    )
+                elif session.messages:
                     self._seal(run, runtime, engine, session, chain, peer_id)
                 else:
                     engine.forget(peer_id)
@@ -727,7 +1388,9 @@ class DemoService:
                 run,
                 status=final_status,
                 stage=(
-                    "Synthetic demo completed"
+                    "Provider-backed showcase completed"
+                    if final_status == "completed" and scenario.live_services
+                    else "Synthetic demo completed"
                     if final_status == "completed"
                     else "Synthetic demo stopped"
                     if final_status == "cancelled"
@@ -740,7 +1403,11 @@ class DemoService:
                 run,
                 "demo",
                 final_status.replace("_", " ").title(),
-                "Synthetic run ended; Telegram remained disconnected.",
+                (
+                    "Showcase ended; Telegram remained disconnected and no case was created."
+                    if scenario.live_services
+                    else "Synthetic run ended; Telegram remained disconnected."
+                ),
                 severity="success" if final_status == "completed" else "warning",
             )
             self._persist(run)
@@ -912,6 +1579,7 @@ class DemoService:
             "verdict_score": round(float(session.verdict_score), 4),
             "hvi_items": [asdict(item) for item in session.hvis],
             "sandbox_results": list(session.sandbox_results),
+            "threat_intelligence": list(session.threat_intelligence),
             "signal_trail": list(session.signal_trail[-20:]),
             "status": "running",
             "stage": "Preparing the next demo exchange",

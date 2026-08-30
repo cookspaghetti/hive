@@ -259,11 +259,11 @@ Further messages update the same request instead of sending duplicate alerts;
 starting a takeover resolves it, and a later post-takeover message can create a
 new request.
 
-The control bot also exposes `/takeovers` and an interactive `/status` picker
-with a **Stop & seal** action. `/persona` similarly lets the operator choose an
-default persona with buttons. A second confirmation is required before
-HIVE stops replying; the same coordinator used by the panel then archives the
-chat, generates the signed report, and sends the PDF back through Telegram.
+The control bot exposes one operator workflow through `/takeovers`. It lists
+active takeovers as buttons; selecting one shows the latest ten messages and
+offers persona selection or **Stop & seal**. A second confirmation is required
+before HIVE stops replying; the same coordinator used by the panel then archives
+the chat, generates the signed report, and sends the PDF back through Telegram.
 Concurrent panel and bot seal attempts are rejected instead of producing two
 case files.
 
@@ -423,10 +423,9 @@ task run
 Control bot commands:
 
 ```text
-/takeover <peer_id> [persona]
-/persona
-/status
-/stop <peer_id>
+/chats
+/takeovers
+/help
 ```
 
 Valid personas:
@@ -438,12 +437,12 @@ overseas_worker
 small_business_owner
 ```
 
-`/stop` ends the takeover, seals the evidence bundle under `evidence/`, sends
-the summary, and attaches the generated PDF. If the engine decides the chat is
-likely benign after enough conversational exchanges, the userbot ends the
-takeover automatically and notifies the operator. Verdict risk is cumulative
-within a takeover, so a quieter later message cannot erase an earlier
-high-confidence scam finding.
+The **Stop & seal** action under `/takeovers` ends the takeover, seals the
+evidence bundle under `evidence/`, sends the summary, and attaches the generated
+PDF. If the engine decides the chat is likely benign after enough conversational
+exchanges, the userbot ends the takeover automatically and notifies the
+operator. Verdict risk is cumulative within a takeover, so a quieter later
+message cannot erase an earlier high-confidence scam finding.
 
 ## Docker Deployment
 

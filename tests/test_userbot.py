@@ -422,6 +422,40 @@ def test_takeover_request_notifies_once_and_reopens_after_takeover():
     assert delivered[-1]["request_created_at"] == 20.0
 
 
+def test_pending_takeover_notification_refreshes_after_new_message():
+    delivered = []
+
+    async def notify(chat):
+        delivered.append(chat)
+        return True
+
+    ub = _transport(FakeEngine(handed_back=False), on_takeover_request=notify)
+    ub.observe_incoming(447, "first", 1, 10.0)
+    _run(ub.notify_pending_takeover_requests())
+    ub.observe_incoming(447, "updated", 2, 11.0)
+    _run(ub.notify_pending_takeover_requests())
+
+    assert [item["latest_text"] for item in delivered] == ["first", "updated"]
+    assert delivered[-1]["message_count"] == 2
+
+
+def test_userbot_mutations_advance_panel_sync_revision():
+    from hive.webpanel.observability import get_observation_hub
+
+    hub = get_observation_hub()
+    before = hub.change_state()["revision"]
+    ub = _transport(FakeEngine(handed_back=False))
+
+    ub.observe_incoming(448, "new request", 1, 10.0)
+    after_request = hub.change_state()["revision"]
+    ub.begin_takeover(448, "confused_elderly")
+    after_takeover = hub.change_state()["revision"]
+    ub.update_persona(448, "small_business_owner")
+    after_persona = hub.change_state()["revision"]
+
+    assert before < after_request < after_takeover < after_persona
+
+
 def test_failed_takeover_request_delivery_is_retried():
     attempts = 0
 

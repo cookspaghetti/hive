@@ -4,11 +4,7 @@ A separate @Bot the operator chats with to drive the system. Every command is
 gated to HIVE_OPERATOR_ID. Commands:
     /start, /help                 show the command reference
     /chats                        list recent private incoming chats
-    /takeovers                    list active takeovers with controls
-    /takeover <peer_id> [persona]  begin a takeover on the userbot
-    /persona                       choose the default persona with buttons
-    /stop <peer_id>                confirm, reclaim, seal evidence, report
-    /status                        choose a takeover and show its status
+    /takeovers                    list active takeovers and open their controls
 
 Requires a live Bot API connection, so not unit-tested.
 """
@@ -40,11 +36,8 @@ VALID_PERSONAS = set(PERSONAS)
 HELP_TEXT = (
     "HIVE control bot\n\n"
     "/chats - list recent incoming private chats\n"
-    "/takeover <peer_id> [persona] - start a takeover\n"
-    "/persona - choose the default persona with buttons\n"
-    "/takeovers - list active takeovers with controls\n"
-    "/status - choose an active takeover and show its controls\n"
-    "/stop <peer_id> - request stop-and-seal confirmation\n"
+    "/takeovers - inspect active takeovers, change persona, or stop and seal\n"
+    "New takeover requests are sent here automatically.\n"
     "/help - show this command reference"
 )
 
@@ -77,6 +70,7 @@ class ControlBot:
             evidence_root="evidence",
         )
         self._app: Any = None
+        self._takeover_request_message_ids: dict[int, int] = {}
         # Get notified when the userbot hands a benign conversation back.
         self.userbot.on_handback = self._on_handback
         self.userbot.on_limit_reached = self._on_limit_reached
@@ -218,16 +212,42 @@ class ControlBot:
                 ]
             ]
         )
-        await self._app.bot.send_message(
-            chat_id=self.operator_id,
-            text=text,
-            reply_markup=reply_markup,
-        )
+        message_id = self._takeover_request_message_ids.get(peer_id)
+        delivery = "updated" if message_id is not None else "sent"
+        if message_id is not None:
+            try:
+                await self._app.bot.edit_message_text(
+                    chat_id=self.operator_id,
+                    message_id=message_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                )
+            except Exception:
+                log.warning(
+                    "control bot: could not update request card; sending replacement peer=%s",
+                    peer_id,
+                )
+                sent = await self._app.bot.send_message(
+                    chat_id=self.operator_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                )
+                if getattr(sent, "message_id", None) is not None:
+                    self._takeover_request_message_ids[peer_id] = int(sent.message_id)
+                delivery = "replaced"
+        else:
+            sent = await self._app.bot.send_message(
+                chat_id=self.operator_id,
+                text=text,
+                reply_markup=reply_markup,
+            )
+            if getattr(sent, "message_id", None) is not None:
+                self._takeover_request_message_ids[peer_id] = int(sent.message_id)
         audit_event(
             "control_message",
-            "takeover_request_sent_to_control_bot",
+            f"takeover_request_{delivery}_in_control_bot",
             component="transport.control_bot",
-            payload={"chat_id": self.operator_id, "text": text},
+            payload={"chat_id": self.operator_id, "text": text, "delivery": delivery},
             peer_id=peer_id,
         )
         return True
@@ -278,6 +298,7 @@ class ControlBot:
             result = "This takeover request action is invalid."
 
         await query.edit_message_text(result)
+        self._takeover_request_message_ids.pop(peer_id, None)
         audit_event(
             "control_message",
             "takeover_request_button_completed",
@@ -287,18 +308,10 @@ class ControlBot:
         )
 
     @staticmethod
-    def _stop_markup(peer_id: int) -> Any:
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-        return InlineKeyboardMarkup(
-            [[InlineKeyboardButton("Stop & seal", callback_data=f"hive_seal:request:{peer_id}")]]
-        )
-
-    @staticmethod
     def _persona_label(persona: str) -> str:
         return persona.replace("_", " ").title()
 
-    def _status_picker_markup(self) -> Any:
+    def _takeovers_list_markup(self) -> Any:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         buttons = []
@@ -306,26 +319,54 @@ class ControlBot:
             buttons.append(
                 [
                     InlineKeyboardButton(
-                        f"{peer_id} · {self._persona_label(session.persona)}",
-                        callback_data=f"hive_status:show:{peer_id}",
+                        (
+                            f"{session.peer_display_name or peer_id} · "
+                            f"{self._persona_label(session.persona)} · "
+                            f"{session.verdict.replace('_', ' ').title()}"
+                        ),
+                        callback_data=f"hive_takeovers:show:{peer_id}",
                     )
                 ]
             )
         return InlineKeyboardMarkup(buttons)
 
-    def _persona_picker_markup(self) -> Any:
+    def _takeover_controls_markup(self, peer_id: int) -> Any:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-        buttons = []
-        row = []
+        return InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton(
+                        "Change persona",
+                        callback_data=f"hive_takeovers:persona:{peer_id}",
+                    ),
+                    InlineKeyboardButton(
+                        "Stop & seal",
+                        callback_data=f"hive_seal:request:{peer_id}",
+                    ),
+                ],
+                [
+                    InlineKeyboardButton(
+                        "← Active takeovers",
+                        callback_data="hive_takeovers:list:0",
+                    )
+                ],
+            ]
+        )
+
+    def _takeover_persona_markup(self, peer_id: int, current: str) -> Any:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        buttons: list[list[Any]] = []
+        row: list[Any] = []
         for persona in sorted(VALID_PERSONAS):
             label = self._persona_label(persona)
-            if persona == self.default_persona:
+            if persona == current:
                 label = f"✓ {label}"
             row.append(
                 InlineKeyboardButton(
                     label,
-                    callback_data=f"hive_persona:set:{persona}",
+                    callback_data=f"hive_takeover_persona:{peer_id}:{persona}",
                 )
             )
             if len(row) == 2:
@@ -333,16 +374,51 @@ class ControlBot:
                 row = []
         if row:
             buttons.append(row)
+        buttons.append(
+            [
+                InlineKeyboardButton(
+                    "← Takeover details",
+                    callback_data=f"hive_takeovers:show:{peer_id}",
+                )
+            ]
+        )
         return InlineKeyboardMarkup(buttons)
 
-    async def _callback_status(self, update: Any, context: Any) -> None:
+    def _takeover_detail(self, peer_id: int, session: SessionState) -> str:
+        account = session.peer_display_name or f"Peer {peer_id}"
+        if session.peer_username:
+            account = f"{account} (@{session.peer_username})"
+        messages = list(session.messages)[-10:]
+        lines = [
+            "🛡️ Active HIVE takeover",
+            "",
+            f"Chat: {account}",
+            f"Peer ID: {peer_id}",
+            f"Persona: {self._persona_label(session.persona)}",
+            f"Verdict: {session.verdict.replace('_', ' ').title()}",
+            f"Risk: {float(session.verdict_score):.2f}",
+            f"Messages: {len(session.messages)}",
+            "",
+            "Recent messages (latest 10):",
+        ]
+        if not messages:
+            lines.append("No messages recorded yet.")
+        for message in messages:
+            speaker = "HIVE" if message.role == "agent" else "Stranger"
+            content = (message.text or f"[{message.media_kind or 'media'}]").strip()
+            if len(content) > 240:
+                content = content[:237] + "…"
+            lines.append(f"{speaker}: {content}")
+        return "\n".join(lines)
+
+    async def _callback_takeovers(self, update: Any, context: Any) -> None:
         query = update.callback_query
         user_id = update.effective_user.id if update.effective_user else None
         authorised = self._authorised(user_id)
         data = str(getattr(query, "data", "") or "")
         audit_event(
             "control_message",
-            "status_button_pressed",
+            "takeovers_button_pressed",
             component="transport.control_bot",
             payload={"operator_id": user_id, "callback_data": data, "authorised": authorised},
             level="info" if authorised else "warning",
@@ -354,29 +430,53 @@ class ControlBot:
         try:
             _prefix, action, raw_peer_id = data.split(":", 2)
             peer_id = int(raw_peer_id)
-            if action != "show":
+            if action not in {"list", "show", "persona"}:
                 raise ValueError
         except (ValueError, TypeError):
-            await query.edit_message_text("This status action is invalid.")
+            await query.edit_message_text("This takeover action is invalid.")
             return
 
+        if action == "list":
+            if not self.userbot._sessions:
+                await query.edit_message_text("No active takeovers.")
+            else:
+                await query.edit_message_text(
+                    "Choose an active takeover:",
+                    reply_markup=self._takeovers_list_markup(),
+                )
+            return
         entry = self.userbot._sessions.get(peer_id)
         if entry is None:
-            await query.edit_message_text(f"No active takeover on {peer_id}.")
+            await query.edit_message_text(
+                f"No active takeover on {peer_id}.",
+                reply_markup=(
+                    self._takeovers_list_markup() if self.userbot._sessions else None
+                ),
+            )
+            return
+        session = entry[0]
+        if action == "persona":
+            await query.edit_message_text(
+                f"Choose the persona for takeover {peer_id}:",
+                reply_markup=self._takeover_persona_markup(
+                    peer_id,
+                    session.persona,
+                ),
+            )
             return
         await query.edit_message_text(
-            self.engine.summary(entry[0]),
-            reply_markup=self._stop_markup(peer_id),
+            self._takeover_detail(peer_id, session),
+            reply_markup=self._takeover_controls_markup(peer_id),
         )
 
-    async def _callback_persona(self, update: Any, context: Any) -> None:
+    async def _callback_takeover_persona(self, update: Any, context: Any) -> None:
         query = update.callback_query
         user_id = update.effective_user.id if update.effective_user else None
         authorised = self._authorised(user_id)
         data = str(getattr(query, "data", "") or "")
         audit_event(
             "control_message",
-            "persona_button_pressed",
+            "takeover_persona_button_pressed",
             component="transport.control_bot",
             payload={"operator_id": user_id, "callback_data": data, "authorised": authorised},
             level="info" if authorised else "warning",
@@ -386,25 +486,32 @@ class ControlBot:
             return
         await query.answer()
         try:
-            _prefix, action, persona = data.split(":", 2)
+            _prefix, raw_peer_id, persona = data.split(":", 2)
+            peer_id = int(raw_peer_id)
         except (ValueError, TypeError):
             await query.edit_message_text("This persona action is invalid.")
             return
 
-        if action != "set" or persona not in VALID_PERSONAS:
+        if persona not in VALID_PERSONAS:
             await query.edit_message_text("This persona action is invalid.")
             return
-
-        previous = self.default_persona
-        self.default_persona = persona
+        entry = self.userbot._sessions.get(peer_id)
+        if entry is None:
+            await query.edit_message_text(f"No active takeover on {peer_id}.")
+            return
+        previous = entry[0].persona
+        self.userbot.update_persona(peer_id, persona)
         await query.edit_message_text(
-            f"✅ Default persona set to {self._persona_label(self.default_persona)}."
+            self._takeover_detail(peer_id, entry[0]),
+            reply_markup=self._takeover_controls_markup(peer_id),
         )
         audit_event(
             "control_message",
-            "default_persona_changed",
+            "takeover_persona_changed",
             component="transport.control_bot",
-            payload={"previous_persona": previous, "persona": self.default_persona},
+            payload={"previous_persona": previous, "persona": persona},
+            peer_id=peer_id,
+            session_id=entry[0].session_id,
         )
 
     @staticmethod
@@ -450,10 +557,14 @@ class ControlBot:
             return
 
         if action == "cancel":
-            await query.edit_message_text(
-                f"Takeover {peer_id} is still running.",
-                reply_markup=self._stop_markup(peer_id),
-            )
+            entry = self.userbot._sessions.get(peer_id)
+            if entry is None:
+                await query.edit_message_text(f"No active takeover on {peer_id}.")
+            else:
+                await query.edit_message_text(
+                    self._takeover_detail(peer_id, entry[0]),
+                    reply_markup=self._takeover_controls_markup(peer_id),
+                )
             return
         if peer_id not in self.userbot._sessions:
             await query.edit_message_text(f"No active takeover on {peer_id}.")
@@ -491,12 +602,15 @@ class ControlBot:
             await query.edit_message_text(
                 f"Could not seal {peer_id}. The takeover remains active; "
                 "fix the report error and retry.",
-                reply_markup=self._stop_markup(peer_id),
+                reply_markup=self._takeover_controls_markup(peer_id),
             )
             return
 
         await query.edit_message_text(
-            f"✅ Takeover {peer_id} stopped and sealed.\n\n{sealed.summary}"
+            f"✅ Takeover {peer_id} stopped and sealed.\n\n{sealed.summary}",
+            reply_markup=(
+                self._takeovers_list_markup() if self.userbot._sessions else None
+            ),
         )
         with sealed.path.open("rb") as stream:
             await query.message.reply_document(stream, filename=f"evidence_{peer_id}.pdf")
@@ -536,10 +650,6 @@ class ControlBot:
         self._app.add_handler(CommandHandler("help", self._cmd_help))
         self._app.add_handler(CommandHandler("chats", self._cmd_chats))
         self._app.add_handler(CommandHandler("takeovers", self._cmd_takeovers))
-        self._app.add_handler(CommandHandler("takeover", self._cmd_takeover))
-        self._app.add_handler(CommandHandler("persona", self._cmd_persona))
-        self._app.add_handler(CommandHandler("stop", self._cmd_stop))
-        self._app.add_handler(CommandHandler("status", self._cmd_status))
         self._app.add_handler(
             CallbackQueryHandler(
                 self._callback_takeover_request,
@@ -548,14 +658,14 @@ class ControlBot:
         )
         self._app.add_handler(
             CallbackQueryHandler(
-                self._callback_status,
-                pattern=r"^hive_status:show:-?\d+$",
+                self._callback_takeovers,
+                pattern=r"^hive_takeovers:(?:list|show|persona):-?\d+$",
             )
         )
         self._app.add_handler(
             CallbackQueryHandler(
-                self._callback_persona,
-                pattern=r"^hive_persona:set:[a-z_]+$",
+                self._callback_takeover_persona,
+                pattern=r"^hive_takeover_persona:-?\d+:[a-z_]+$",
             )
         )
         self._app.add_handler(
@@ -569,11 +679,7 @@ class ControlBot:
         await self._app.bot.set_my_commands(
             [
                 BotCommand("chats", "List recent incoming chats"),
-                BotCommand("takeovers", "List active takeovers and controls"),
-                BotCommand("takeover", "Start a takeover by peer ID"),
-                BotCommand("persona", "Choose the default persona"),
-                BotCommand("status", "Choose a takeover to inspect"),
-                BotCommand("stop", "Request stop-and-seal confirmation"),
+                BotCommand("takeovers", "Inspect and manage active takeovers"),
                 BotCommand("help", "Show available commands"),
             ]
         )
@@ -616,17 +722,6 @@ class ControlBot:
             return False
         return True
 
-    async def _peer_arg(self, update: Any, context: Any, usage: str) -> int | None:
-        """Parse args[0] as an int peer id, or reply usage and return None."""
-        if not context.args:
-            await self._reply_text(update, usage)
-            return None
-        try:
-            return int(context.args[0])
-        except (ValueError, TypeError):
-            await self._reply_text(update, usage)
-            return None
-
     async def _cmd_help(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
@@ -656,115 +751,11 @@ class ControlBot:
     async def _cmd_takeovers(self, update: Any, context: Any) -> None:  # pragma: no cover
         if not await self._guard(update):
             return
-        sessions = sorted(self.userbot._sessions.items())
-        if not sessions:
+        if not self.userbot._sessions:
             await self._reply_text(update, "No active takeovers.")
             return
-        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-
-        lines = ["Active takeovers:"]
-        buttons = []
-        for peer_id, (session, _chain) in sessions:
-            lines.append(
-                f"{peer_id} — {session.persona} — {session.verdict} "
-                f"({len(session.messages)} messages)"
-            )
-            buttons.append(
-                [
-                    InlineKeyboardButton(
-                        f"Stop & seal {peer_id}",
-                        callback_data=f"hive_seal:request:{peer_id}",
-                    )
-                ]
-            )
         await self._reply_text(
             update,
-            "\n".join(lines),
-            reply_markup=InlineKeyboardMarkup(buttons),
-        )
-
-    async def _cmd_takeover(self, update: Any, context: Any) -> None:  # pragma: no cover
-        if not await self._guard(update):
-            return
-        peer = await self._peer_arg(update, context, "Usage: /takeover <peer_id> [persona]")
-        if peer is None:
-            return
-        persona = context.args[1] if len(context.args) > 1 else self.default_persona
-        if persona not in VALID_PERSONAS:
-            await self._reply_text(
-                update,
-                f"Unknown persona '{persona}'. Choose from: {', '.join(sorted(VALID_PERSONAS))}"
-            )
-            return
-        self.userbot.begin_takeover(peer, persona)
-        await self.userbot.process_pending_takeover(peer)
-        await self._reply_text(update, f"Takeover started on {peer} as {persona}.")
-
-    async def _cmd_persona(self, update: Any, context: Any) -> None:  # pragma: no cover
-        if not await self._guard(update):
-            return
-        if not context.args:
-            await self._reply_text(
-                update,
-                "Choose the default persona for new takeovers:",
-                reply_markup=self._persona_picker_markup(),
-            )
-            return
-        name = context.args[0]
-        if name not in VALID_PERSONAS:
-            await self._reply_text(
-                update,
-                f"Unknown persona '{name}'. Choose from: {', '.join(sorted(VALID_PERSONAS))}"
-            )
-            return
-        self.default_persona = name
-        await self._reply_text(update, f"Default persona set to {self.default_persona}.")
-
-    async def _cmd_status(self, update: Any, context: Any) -> None:  # pragma: no cover
-        if not await self._guard(update):
-            return
-        if not context.args:
-            if not self.userbot._sessions:
-                await self._reply_text(update, "No active takeovers.")
-                return
-            await self._reply_text(
-                update,
-                "Choose a takeover to inspect:",
-                reply_markup=self._status_picker_markup(),
-            )
-            return
-        peer = await self._peer_arg(update, context, "Usage: /status <peer_id>")
-        if peer is None:
-            return
-        entry = self.userbot._sessions.get(peer)
-        if entry is None:
-            await self._reply_text(update, f"No active takeover on {peer}.")
-            return
-        await self._reply_text(
-            update,
-            self.engine.summary(entry[0]),
-            reply_markup=self._stop_markup(peer),
-        )
-
-    async def _cmd_stop(self, update: Any, context: Any) -> None:  # pragma: no cover
-        if not await self._guard(update):
-            return
-        peer = await self._peer_arg(update, context, "Usage: /stop <peer_id>")
-        if peer is None:
-            return
-        entry = self.userbot._sessions.get(peer)
-        if entry is None:
-            await self._reply_text(update, f"No active takeover on {peer}.")
-            return
-        session = entry[0]
-        await self._reply_text(
-            update,
-            (
-                f"Stop and seal takeover {peer}?\n\n"
-                f"Verdict: {session.verdict}\n"
-                f"Messages: {len(session.messages)}\n\n"
-                "HIVE will stop replying, archive the chat, generate the signed PDF, "
-                "and send it here."
-            ),
-            reply_markup=self._seal_confirmation_markup(peer),
+            "Choose an active takeover:",
+            reply_markup=self._takeovers_list_markup(),
         )

@@ -203,18 +203,28 @@ class UserbotTransport:
         return unique
 
     def _checkpoint(self, peer_id: int) -> None:
-        if self.checkpoint_store is None:
-            return
         entry = self._sessions.get(peer_id)
         if entry is None:
             return
         session, chain = entry
-        self.checkpoint_store.save(
-            session,
-            chain,
-            pending_messages=self._checkpoint_messages(peer_id),
-            recovery_status=self.recovery_status(peer_id),
-        )
+        if self.checkpoint_store is not None:
+            self.checkpoint_store.save(
+                session,
+                chain,
+                pending_messages=self._checkpoint_messages(peer_id),
+                recovery_status=self.recovery_status(peer_id),
+            )
+        self._signal_change("takeover_updated", peer_id)
+
+    @staticmethod
+    def _signal_change(topic: str, peer_id: int) -> None:
+        """Wake connected operator surfaces after Telegram/runtime mutations."""
+        try:
+            from hive.webpanel.observability import get_observation_hub
+
+            get_observation_hub().change(topic, peer_id=peer_id)
+        except Exception:
+            log.exception("userbot: failed to publish state change peer=%s", peer_id)
 
     def checkpoint_takeover(self, peer_id: int) -> None:
         """Persist a state mutation made by another control surface."""
@@ -634,10 +644,9 @@ class UserbotTransport:
             peer_id=peer_id,
             ts=ts,
         )
+        self._signal_change("incoming_chat_updated", peer_id)
         if new_request:
             self._notified_takeover_requests.discard(peer_id)
-            if notify_request:
-                self._takeover_notification_candidates.add(peer_id)
             audit_event(
                 "takeover_request",
                 "takeover_request_created",
@@ -651,6 +660,9 @@ class UserbotTransport:
                 peer_id=peer_id,
                 ts=ts,
             )
+        if request_pending and notify_request:
+            # Every new message refreshes the existing Telegram approval card.
+            self._takeover_notification_candidates.add(peer_id)
 
     def _chat_payload(self, chat: ObservedChat) -> dict[str, object]:
         return {
@@ -677,7 +689,6 @@ class UserbotTransport:
             or not chat.request_pending
             or callback is None
             or peer_id not in self._takeover_notification_candidates
-            or peer_id in self._notified_takeover_requests
             or peer_id in self._notifying_takeover_requests
         ):
             return False
@@ -708,6 +719,7 @@ class UserbotTransport:
             payload={"channels": ["control_panel", "telegram_control_bot"]},
             peer_id=peer_id,
         )
+        self._signal_change("takeover_request_notification_updated", peer_id)
         return True
 
     async def notify_pending_takeover_requests(self) -> None:
@@ -745,6 +757,7 @@ class UserbotTransport:
             payload={},
             peer_id=peer_id,
         )
+        self._signal_change("takeover_request_dismissed", peer_id)
         return True
 
     def begin_takeover(self, peer_id: int, persona: str) -> None:
@@ -1408,6 +1421,7 @@ class UserbotTransport:
             forget = getattr(self.engine, "forget", None)
             if callable(forget):
                 forget(peer_id)
+            self._signal_change("takeover_ended", peer_id)
         return entry
 
     def _clear_inbound(self, peer_id: int) -> None:

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import time
+import zipfile
 from dataclasses import dataclass
 
 from hive.audit import DurableAuditLedger, audit_event, audit_scope
 from hive.demo import MODES, SCENARIOS, DemoService
 from hive.runtime import HiveEngine
 from hive.sandbox.runner import RawFindings
+from hive.scenario_media import FIXTURES, validate_fixtures
 from hive.vault.signer import generate_keypair
 from tests.fakes import fake_client
 
@@ -60,11 +62,31 @@ def test_scenarios_use_separate_messages_and_reserved_urls():
     assert len(SCENARIOS) >= 5
     for scenario in SCENARIOS.values():
         assert len(scenario.bursts) >= 3
-        assert all("\n" not in message for burst in scenario.bursts for message in burst)
+        assert all(
+            "\n" not in message.text
+            for burst in scenario.bursts
+            for message in scenario.events(burst)
+        )
         for burst in scenario.bursts:
-            for message in burst:
-                if "http" in message:
-                    assert ".example" in message
+            for message in scenario.events(burst):
+                if "http" in message.text:
+                    assert ".example" in message.text
+
+
+def test_multimodal_fixtures_are_inert_and_scenarios_reference_them():
+    manifest = validate_fixtures()
+
+    assert {item["key"] for item in manifest} == set(FIXTURES)
+    assert all(item["safe_fixture"] for item in manifest)
+    assert {fixture.kind for fixture in FIXTURES.values()} >= {"image", "document", "file"}
+    assert any(
+        event.fixture
+        for scenario in SCENARIOS.values()
+        for burst in scenario.bursts
+        for event in scenario.events(burst)
+    )
+    apk = FIXTURES["delivery_apk"].path.read_bytes()
+    assert not apk.startswith((b"PK\x03\x04", b"dex\n", b"\x7fELF", b"MZ"))
 
 
 def test_catalog_exposes_all_three_demo_modes():
@@ -73,6 +95,7 @@ def test_catalog_exposes_all_three_demo_modes():
     assert [item["key"] for item in catalog["modes"]] == list(MODES)
     assert catalog["modes"][0]["key"] == "scripted"
     assert catalog["modes"][0]["recommended"] is True
+    assert catalog["fixture_policy"]["executable_content"] is False
 
 
 def test_audit_scope_keeps_synthetic_events_out_of_the_default_ledger(tmp_path):
@@ -106,7 +129,33 @@ def test_demo_runs_pipeline_and_seals_isolated_evidence(tmp_path):
     assert run["sandbox_results"]
     assert run["audit"]["valid"] is True
     assert run["evidence_verified"] is True
-    assert service.evidence_path(run["id"]).is_file()
+
+
+def test_multimodal_demo_records_and_serves_fixture_metadata(tmp_path):
+    service = _service(tmp_path)
+
+    started = service.start("parcel", "confused_elderly", "5x")
+    run = _wait_for(
+        service,
+        started["id"],
+        lambda item: item["status"] in {"completed", "failed", "cancelled"},
+    )
+
+    attachments = [item for item in run["messages"] if item.get("media_kind")]
+    assert run["status"] == "completed", run.get("error")
+    assert len(attachments) == 1
+    attachment = attachments[0]
+    assert attachment["media_name"] == "parcel-release-notice.png"
+    assert attachment["media_sha256"]
+    assert attachment["media_url"].endswith(f"/media/{attachment['msg_id']}")
+    path, name, mime = service.media(run["id"], attachment["msg_id"])
+    assert path.is_file()
+    assert name == "parcel-release-notice.png"
+    assert mime == "image/svg+xml"
+    evidence = service.evidence_path(run["id"])
+    assert evidence.is_file()
+    with zipfile.ZipFile(evidence) as archive:
+        assert "attachment_001_parcel-release-notice.png" in archive.namelist()
     assert not (tmp_path / "evaluation" / "results" / "redteam_runs.json").exists()
 
 
@@ -125,16 +174,12 @@ def test_model_driven_demo_keeps_fixed_opener_then_generates_bubbles(tmp_path):
         lambda item: item["status"] in {"completed", "failed", "cancelled"},
     )
 
-    stranger_messages = [
-        item["text"] for item in run["messages"] if item["role"] == "stranger"
-    ]
+    stranger_messages = [item["text"] for item in run["messages"] if item["role"] == "stranger"]
     assert run["status"] == "completed", run.get("error")
     assert run["mode"] == "model_driven"
     assert stranger_messages[:2] == list(SCENARIOS["investment"].bursts[0])
     assert all("\n" not in text for text in stranger_messages)
-    assert sum(
-        item["category"] == "scammer_model" for item in run["timeline"]
-    ) == 2
+    assert sum(item["category"] == "scammer_model" for item in run["timeline"]) == 2
     assert run["evidence_verified"] is True
 
 
@@ -158,8 +203,7 @@ def test_interactive_demo_accepts_one_bubble_at_a_time_and_seals(tmp_path):
     _wait_for(
         service,
         started["id"],
-        lambda item: item["status"] == "awaiting_input"
-        and item["current_exchange"] == 1,
+        lambda item: item["status"] == "awaiting_input" and item["current_exchange"] == 1,
     )
     service.finish(started["id"])
     run = _wait_for(
@@ -168,9 +212,7 @@ def test_interactive_demo_accepts_one_bubble_at_a_time_and_seals(tmp_path):
         lambda item: item["status"] in {"completed", "failed", "cancelled"},
     )
 
-    stranger_messages = [
-        item["text"] for item in run["messages"] if item["role"] == "stranger"
-    ]
+    stranger_messages = [item["text"] for item in run["messages"] if item["role"] == "stranger"]
     assert run["status"] == "completed", run.get("error")
     assert run["mode"] == "interactive"
     assert stranger_messages == ["Your parcel is held. Pay the release fee."]

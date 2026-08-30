@@ -747,6 +747,11 @@ def test_recorded_evaluation_runs_are_inspectable_and_downloadable(client):
         "turns": 3,
         "exchanges": 3,
         "duration_s": 12.5,
+        "engagement_duration_s": 44.5,
+        "engagement_duration_basis": "runtime plus planned delay",
+        "response_latencies_s": [20.0, 24.0],
+        "agent_language": "English/Manglish",
+        "language_match": True,
         "transcript": [["scammer", "Transfer now"], ["victim", "Which account?"]],
         "hvi_items": [
             {
@@ -779,10 +784,21 @@ def test_recorded_evaluation_runs_are_inspectable_and_downloadable(client):
     row = response.json()[0]
     assert row["scenario"] == "investment_en_bank_link"
     assert row["f1"] == 1.0
+    assert "engagement_duration_s" not in row
+    assert row["character_status"] == "not_assessed"
+    assert row["character_metrics"]["session_break"] is None
+    assert row["mean_response_latency_s"] == 22.0
+    assert row["language_match"] is True
     assert row["package_available"] is True
     detail = client.get(f"/api/evaluations/{row['id']}", headers=_h())
     assert detail.status_code == 200
     assert detail.json()["transcript"][1][1] == "Which account?"
+    assert detail.json()["f1"] == 1.0
+    assert detail.json()["mean_response_latency_s"] == 22.0
+    assert detail.json()["hvi_count"] == 1
+    assert "engagement_duration_s" not in detail.json()
+    assert detail.json()["character_response_turns"][0]["messages"] == ["Which account?"]
+    assert detail.json()["current_evidence_verification"]["ok"] is False
     assert "_package_path" not in detail.json()
     downloaded = client.get(row["package_download_url"], headers=_h())
     assert downloaded.status_code == 200
@@ -796,6 +812,75 @@ def test_evaluation_page_is_available_in_panel(client):
     assert "Evaluation runs" in script
     assert "/api/evaluations" in script
     assert "Synthetic" in script
+
+
+def test_character_review_is_authenticated_validated_persistent_and_non_destructive(client):
+    folder = client._root / "evaluation" / "results" / "character-test"
+    folder.mkdir(parents=True)
+    source = folder / "redteam_runs.json"
+    record = {"persona": "confused_elderly", "target_response_turns": 1,
+              "transcript": [["scammer", "You are a bot."], ["victim", "What bot?"]]}
+    source.write_text(json.dumps([record]), encoding="utf-8")
+    original = source.read_bytes()
+    index = client.get("/api/evaluations", headers=_h()).json()[0]
+    url = f"/api/evaluations/{index['id']}"
+    detail = client.get(url, headers=_h()).json()
+    assert detail["character_status"] == "not_assessed"
+    assert detail["character_metrics"]["session_break"] is None
+    payload = {
+        "source_sha256": detail["character_assessment"]["source_sha256"],
+        "previous_review_id": None, "reviewer": "Fixture reviewer", "note": "Regression test only",
+        "turns": [{"turn": 1, "verdict": "pass", "reason": "Denial is not self-disclosure.",
+                   "findings": []}],
+    }
+    assert client.post(url + "/character-review", json=payload).status_code == 401
+    invalid = {**payload, "turns": [{"turn": 1, "verdict": "break", "reason": "Test finding",
+                                   "findings": [{"category": "identity_disclosure",
+                                                 "quote": "You are a bot.",
+                                                 "reason": "Wrong speaker"}]}]}
+    assert client.post(url + "/character-review", headers=_h(), json=invalid).status_code == 400
+    response = client.post(url + "/character-review", headers=_h(), json=payload)
+    assert response.status_code == 200, response.text
+    data = response.json()
+    assert data["character_status"] == "human_reviewed"
+    assert data["character_metrics"]["session_break"] is False
+    assert source.read_bytes() == original
+    assert len(list((client._root / "evidence" / "evaluation_reviews").glob("*/*.json"))) == 1
+    persisted = client.get(url, headers=_h()).json()
+    assert persisted["character_review"]["reviewer"] == "Fixture reviewer"
+    assert client.post(url + "/character-review", headers=_h(), json=payload).status_code == 409
+    payload["previous_review_id"] = data["character_review"]["id"]
+    payload["turns"][0]["verdict"] = "uncertain"
+    second = client.post(url + "/character-review", headers=_h(), json=payload)
+    assert second.status_code == 200
+    assert second.json()["character_metrics"]["session_break"] is None
+    assert len(second.json()["character_review_history"]) == 2
+    missing = client.post("/api/evaluations/missing/character-review", headers=_h(), json=payload)
+    assert missing.status_code == 404
+
+
+def test_character_api_preserves_automated_assessment_and_excludes_stale_scores(client):
+    from hive.redteam.character import assess_character
+    from tests.fakes import fake_client
+    folder = client._root / "evaluation" / "results" / "character-auto"
+    folder.mkdir(parents=True)
+    source = folder / "redteam_runs.json"
+    record = {"persona": "confused_elderly", "target_response_turns": 1,
+              "transcript": [["scammer", "hi"], ["victim", "hello"]]}
+    judge = fake_client(json.dumps({"turns": [{"turn": 1, "verdict": "pass",
+                                               "reason": "Consistent greeting", "findings": []}]}))
+    record["character_assessment"] = assess_character(
+        record["persona"], record["transcript"], 1, judge,
+    )
+    source.write_text(json.dumps([record]))
+    row = client.get("/api/evaluations", headers=_h()).json()[0]
+    assert row["character_status"] == "automated"
+    assert row["character_metrics"]["eligible"] is True
+    record["transcript"][1][1] = "different response"
+    source.write_text(json.dumps([record]))
+    row = client.get("/api/evaluations", headers=_h()).json()[0]
+    assert row["character_status"] == "error"
+    assert row["character_metrics"]["session_break"] is None
 
 
 def test_stop_failure_keeps_takeover_active_and_unarchived(client):

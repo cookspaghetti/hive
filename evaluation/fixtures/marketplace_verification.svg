@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420">
+  <rect width="720" height="420" rx="24" fill="#111820"/>
+  <rect x="36" y="34" width="648" height="352" rx="18" fill="#19232d" stroke="#d7a348"/>
+  <text x="66" y="88" fill="#f4f0e6" font-family="Arial" font-size="28" font-weight="700">SELLER PAYMENT PENDING</text>
+  <text x="66" y="134" fill="#a9b7c6" font-family="Arial" font-size="18">Synthetic marketplace fixture</text>
+  <text x="66" y="204" fill="#f4f0e6" font-family="Arial" font-size="20">Verify your seller account to release RM1,250</text>
+  <text x="66" y="254" fill="#efb44d" font-family="Arial" font-size="18">seller-verify.example/claim</text>
+  <rect x="66" y="302" width="188" height="46" rx="8" fill="#d7a348"/>
+  <text x="96" y="332" fill="#111820" font-family="Arial" font-size="17" font-weight="700">VERIFY NOW</text>
+</svg>

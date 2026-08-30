@@ -8,15 +8,19 @@ import re
 import time
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from hive.agent.personas import get_persona
 from hive.guardrails.injection import screen
 from hive.llm.client import LLMClient
 from hive.logging_setup import get_logger
+from hive.redteam.character import aggregate_character, assess_character, assessment_metrics
 from hive.redteam.scammer import Archetype, scammer_reply
 from hive.runtime import HiveEngine
 from hive.sandbox.runner import RawFindings
+from hive.scenario_media import FIXTURES, message_from_scenario, scenario_message
 from hive.state import Message
 from hive.vault.package import evidence_package_path, verify_evidence_package
 
@@ -31,9 +35,9 @@ _BOT_DETECTION = re.compile(
     re.IGNORECASE,
 )
 DETECTION_DEFINITION = (
-    "A run is detected only when a scammer message explicitly asserts that the "
-    "counterparty is a bot, AI, automated system, or robot. Questions and generic "
-    "bot probes are counted separately and do not by themselves count as detection."
+    "A run is detected only when a post-response scammer message explicitly asserts "
+    "that the counterparty is a bot, AI, automated system, or robot. Scripted opener "
+    "assertions and generic bot questions are recorded separately and excluded."
 )
 
 
@@ -67,13 +71,24 @@ class RunResult:
     persona: str
     scenario: str = ""
     language: str = "unspecified"
+    persona_prompt: str = ""
     transcript: list[tuple[str, str]] = field(default_factory=list)
     turns: int = 0
     exchanges: int = 0
+    started_utc: str = ""
+    completed_utc: str = ""
     duration_s: float = 0.0
+    target_response_turns: int = 20
+    character_assessment: dict[str, Any] | None = None
+    planned_response_delay_s: float = 0.0
+    response_latencies_s: list[float] = field(default_factory=list)
+    pipeline_durations_s: list[float] = field(default_factory=list)
+    agent_language: str = "unknown"
+    language_match: bool = False
     agent_tiers: list[str] = field(default_factory=list)
     hvi_items: list[dict[str, Any]] = field(default_factory=list)
     additional_hvi_items: list[dict[str, Any]] = field(default_factory=list)
+    attachments: list[dict[str, Any]] = field(default_factory=list)
     scored_message_ids: list[int] = field(default_factory=lambda: [0])
     extraction: ExtractionMetrics | None = None
     verdict: str = "inconclusive"
@@ -85,9 +100,12 @@ class RunResult:
     sandbox_mode: str = "deterministic_stub"
     bot_probes: int = 0
     bot_detected: bool = False
+    seed_bot_probes: int = 0
+    seed_bot_detected: bool = False
     detection_definition: str = DETECTION_DEFINITION
     chain_valid: bool = False
     guardrail_flags: int = 0
+    outbound_guardrail_flags: int = 0
     termination_reason: str = "max_exchanges"
     evidence_package: str | None = None
     evidence_verified: bool | None = None
@@ -110,6 +128,37 @@ def split_model_messages(text: str) -> tuple[str, ...]:
     line as its own message without rewriting the model's words.
     """
     return tuple(line.strip() for line in text.splitlines() if line.strip())
+
+
+def assess_language_alignment(
+    expected_language: str,
+    messages: Iterable[str],
+) -> tuple[str, bool]:
+    """Classify the visible script and test coarse English/Mandarin alignment.
+
+    This intentionally avoids claiming semantic fluency. It verifies the more
+    modest objective that the agent replies in the expected writing system;
+    human UAT remains responsible for naturalness and cultural fit.
+    """
+    text = " ".join(messages)
+    cjk = sum("\u3400" <= char <= "\u9fff" for char in text)
+    latin = sum(char.isascii() and char.isalpha() for char in text)
+    letters = cjk + latin
+    if not letters:
+        return "unknown", False
+    cjk_ratio = cjk / letters
+    if cjk_ratio >= 0.5:
+        observed = "Mandarin"
+    elif cjk:
+        observed = "Mixed"
+    else:
+        observed = "English/Manglish"
+    expected = expected_language.strip().casefold()
+    if expected == "mandarin":
+        return observed, cjk_ratio >= 0.2
+    if expected in {"english", "manglish"}:
+        return observed, latin > 0 and cjk_ratio < 0.5
+    return observed, False
 
 
 def _score_extraction(
@@ -137,7 +186,7 @@ def run_conversation(
     scammer_client: LLMClient,
     archetype: Archetype,
     persona: str,
-    max_turns: int = 8,
+    max_turns: int = 20,
     opener: str = "Hello, I have a special offer for you today!",
     *,
     engine: HiveEngine | None = None,
@@ -147,6 +196,8 @@ def run_conversation(
     signing_key_path: str | Path | None = None,
     scenario_key: str = "",
     language: str = "unspecified",
+    opener_fixtures: Iterable[str] = (),
+    character_client: LLMClient | None = None,
 ) -> RunResult:
     """Run a scammer against guardrails, extraction, sandbox, verdict, and persona.
 
@@ -174,7 +225,10 @@ def run_conversation(
         persona=persona,
         scenario=scenario_key,
         language=language,
+        persona_prompt=get_persona(persona).system_prompt,
         expected_verdict=expected_verdict,
+        started_utc=datetime.now(UTC).isoformat(),
+        target_response_turns=max_turns,
         sandbox_mode=(
             "deterministic_stub"
             if isinstance(active_engine.sandbox_runner, EvaluationSandboxRunner)
@@ -182,7 +236,11 @@ def run_conversation(
         ),
     )
     history: list[tuple[str, str]] = []
-    scam_messages = split_model_messages(opener)
+    scam_messages = [scenario_message(text) for text in split_model_messages(opener)]
+    scam_messages.extend(
+        scenario_message(f"A synthetic {FIXTURES[key].kind} is attached.", key)
+        for key in opener_fixtures
+    )
     if not scam_messages:
         raise ValueError("opener must contain at least one non-empty message")
     next_inbound_id = 0
@@ -191,49 +249,89 @@ def run_conversation(
     for exchange in range(max_turns):
         inbounds: list[Message] = []
         for scam_message in scam_messages:
-            history.append(("scammer", scam_message))
-            if _BOT_LANGUAGE.search(scam_message):
+            history.append(("scammer", scam_message.text))
+            if _BOT_LANGUAGE.search(scam_message.text):
                 result.bot_probes += 1
-            if _BOT_DETECTION.search(scam_message):
-                result.bot_detected = True
-            if screen(scam_message).flagged:
+                if exchange == 0:
+                    result.seed_bot_probes += 1
+            if _BOT_DETECTION.search(scam_message.text):
+                if exchange == 0:
+                    result.seed_bot_detected = True
+                else:
+                    result.bot_detected = True
+            if screen(scam_message.text).flagged:
                 result.guardrail_flags += 1
             timestamp = time.time()
-            inbounds.append(
-                Message(
-                    role="stranger",
-                    text=scam_message,
-                    ts=timestamp,
-                    msg_id=next_inbound_id,
-                    captured_ts=timestamp,
-                    platform="simulation",
-                    pre_takeover=exchange == 0,
-                )
+            inbound = message_from_scenario(
+                scam_message,
+                msg_id=next_inbound_id,
+                ts=timestamp,
+                platform="simulation",
+                pre_takeover=exchange == 0,
             )
+            inbounds.append(inbound)
+            if inbound.media_kind:
+                result.attachments.append(
+                    {
+                        "msg_id": inbound.msg_id,
+                        "kind": inbound.media_kind,
+                        "name": inbound.media_name,
+                        "mime": inbound.media_mime,
+                        "size": inbound.media_size,
+                        "sha256": inbound.media_sha256,
+                        "safe_fixture": True,
+                    }
+                )
             next_inbound_id += 1
         if exchange == 0:
             result.scored_message_ids = [message.msg_id for message in inbounds]
-        output = active_engine.process_messages(
-            session,
-            chain,
-            inbounds,
-        )
+        pipeline_started = time.perf_counter()
+        try:
+            output = active_engine.process_messages(session, chain, inbounds)
+        except Exception:  # noqa: BLE001 - retain failed/short runs, never count as passes
+            log.exception("Evaluation pipeline failed at exchange %d", exchange + 1)
+            result.termination_reason = "pipeline_error"
+            break
+        pipeline_duration = time.perf_counter() - pipeline_started
+        result.pipeline_durations_s.append(pipeline_duration)
         if output.tier:
             result.agent_tiers.append(output.tier)
+        result.outbound_guardrail_flags += int(output.outbound_guardrail_flag)
         victim_messages = output.messages or split_model_messages(output.text or "")
+        if victim_messages:
+            delays = tuple(output.message_delays_s) or (max(0.0, output.delay_s),)
+            first_delay = delays[0] if delays else 0.0
+            skipped_wait = max(0.0, first_delay - pipeline_duration) + sum(delays[1:])
+            result.planned_response_delay_s += skipped_wait
+            result.response_latencies_s.append(
+                max(pipeline_duration, first_delay) + sum(delays[1:])
+            )
         history.extend(("victim", message) for message in victim_messages)
         if output.handed_back or output.terminated or not output.text:
             result.termination_reason = output.reason or "no_reply"
             break
-        scam_messages = split_model_messages(
-            scammer_reply(scammer_client, archetype, history)
-        )
+        if exchange + 1 == max_turns:
+            break
+        try:
+            scam_messages = [
+                scenario_message(text)
+                for text in split_model_messages(scammer_reply(scammer_client, archetype, history))
+            ]
+        except Exception:  # noqa: BLE001 - preserve partial runs for explicit exclusion
+            log.exception("Simulated scammer failed at exchange %d", exchange + 1)
+            result.termination_reason = "scammer_error"
+            break
         if not scam_messages:
             result.termination_reason = "no_scammer_reply"
             break
 
     result.duration_s = time.perf_counter() - started
+    result.completed_utc = datetime.now(UTC).isoformat()
     result.transcript = history
+    result.agent_language, result.language_match = assess_language_alignment(
+        language,
+        (text for role, text in history if role == "victim"),
+    )
     result.turns = session.turn_count
     result.exchanges = session.exchange_count
     result.hvi_items = [
@@ -263,6 +361,9 @@ def run_conversation(
         str(item.get("verdict_signal") or "unknown") for item in session.sandbox_results
     ]
     result.chain_valid = chain.verify()
+    result.character_assessment = assess_character(
+        persona, history, max_turns, character_client, persona_prompt=result.persona_prompt,
+    )
 
     if evidence_pdf is not None and signing_key_path is not None:
         sealed_pdf = active_engine.close_session(
@@ -305,14 +406,21 @@ def aggregate_results(results: Iterable[RunResult]) -> dict[str, Any]:
         "runs": count,
         "total_exchanges": sum(row.exchanges for row in rows),
         "mean_duration_s": sum(row.duration_s for row in rows) / count if count else 0.0,
+        "character": aggregate_character([row.character_assessment for row in rows]),
+        "mean_response_latency_s": (
+            sum(sum(row.response_latencies_s) for row in rows)
+            / sum(len(row.response_latencies_s) for row in rows)
+            if any(row.response_latencies_s for row in rows)
+            else 0.0
+        ),
         "mean_hvis": sum(len(row.hvi_items) for row in rows) / count if count else 0.0,
-        "verdict_accuracy": (
-            sum(row.verdict_correct for row in rows) / count if count else 0.0
+        "mean_threat_indicators_per_session": (
+            sum(len(row.hvi_items) for row in rows) / count if count else 0.0
         ),
-        "bot_detection_rate": (
-            sum(row.bot_detected for row in rows) / count if count else 0.0
+        "language_alignment_rate": (
+            sum(row.language_match for row in rows) / count if count else 0.0
         ),
-        "detection_definition": DETECTION_DEFINITION,
+        "verdict_accuracy": (sum(row.verdict_correct for row in rows) / count if count else 0.0),
         "evidence_verification_rate": (
             sum(row.evidence_verified is True for row in rows) / count if count else 0.0
         ),
@@ -322,11 +430,7 @@ def aggregate_results(results: Iterable[RunResult]) -> dict[str, Any]:
             "false_negative": fn,
             "precision": precision,
             "recall": recall,
-            "f1": (
-                2 * precision * recall / (precision + recall)
-                if precision + recall
-                else 0.0
-            ),
+            "f1": (2 * precision * recall / (precision + recall) if precision + recall else 0.0),
         },
     }
 
@@ -356,26 +460,56 @@ def write_results(results: Iterable[RunResult], output_directory: str | Path) ->
             "turns",
             "exchanges",
             "duration_s",
+            "target_response_turns",
+            "character_status",
+            "character_eligible",
+            "character_session_break",
+            "character_response_break_rate",
+            "character_first_break_turn",
+            "character_assessed_turns",
+            "character_uncertain_turns",
+            "planned_response_delay_s",
+            "mean_response_latency_s",
+            "agent_language",
+            "language_match",
             "hvi_count",
             "additional_hvi_count",
+            "attachment_count",
             "verdict",
             "verdict_score",
             "verdict_correct",
             "sandbox_runs",
             "bot_probes",
             "bot_detected",
+            "seed_bot_probes",
+            "seed_bot_detected",
             "chain_valid",
             "guardrail_flags",
+            "outbound_guardrail_flags",
             "evidence_verified",
         ]
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for row in rows:
+            character = assessment_metrics(row.character_assessment)
             writer.writerow(
                 {
                     **{field: getattr(row, field) for field in fields if hasattr(row, field)},
+                    "character_status": (row.character_assessment or {}).get(
+                        "status", "not_assessed"
+                    ),
+                    **{f"character_{key}": character[key] for key in (
+                        "eligible", "session_break", "response_break_rate", "first_break_turn",
+                        "assessed_turns", "uncertain_turns",
+                    )},
                     "hvi_count": len(row.hvi_items),
                     "additional_hvi_count": len(row.additional_hvi_items),
+                    "attachment_count": len(row.attachments),
+                    "mean_response_latency_s": (
+                        sum(row.response_latencies_s) / len(row.response_latencies_s)
+                        if row.response_latencies_s
+                        else 0.0
+                    ),
                 }
             )
     return {"runs": raw_path, "summary": summary_path, "csv": csv_path}

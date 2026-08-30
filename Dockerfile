@@ -55,6 +55,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Application code remains a thin layer and runs directly from /app/src.
 COPY src ./src
+COPY evaluation/fixtures ./evaluation/fixtures
 
 # Runtime-only files, copied AFTER the heavy install so edits here are cheap.
 COPY docker ./docker

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420">
+  <rect width="720" height="420" rx="24" fill="#111820"/>
+  <text x="44" y="66" fill="#f4f0e6" font-family="Arial" font-size="28" font-weight="700">TASK REWARD CENTRE</text>
+  <rect x="44" y="96" width="300" height="124" rx="16" fill="#19232d" stroke="#344453"/>
+  <text x="68" y="138" fill="#a9b7c6" font-family="Arial" font-size="17">Commission balance</text>
+  <text x="68" y="190" fill="#62c98d" font-family="Arial" font-size="34" font-weight="700">RM 860.00</text>
+  <rect x="376" y="96" width="300" height="124" rx="16" fill="#19232d" stroke="#d7a348"/>
+  <text x="400" y="138" fill="#a9b7c6" font-family="Arial" font-size="17">Activation required</text>
+  <text x="400" y="190" fill="#efb44d" font-family="Arial" font-size="34" font-weight="700">RM 120.00</text>
+  <rect x="44" y="256" width="632" height="102" rx="16" fill="#19232d" stroke="#344453"/>
+  <text x="68" y="298" fill="#f4f0e6" font-family="Arial" font-size="18">Complete activation to unlock withdrawal</text>
+  <text x="68" y="332" fill="#a9b7c6" font-family="Arial" font-size="15">Synthetic fixture — no funds or account are real</text>
+</svg>

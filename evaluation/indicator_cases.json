@@ -2,7 +2,7 @@
   "schema_version": 1,
   "description": "Sanitized, synthetic regression cases for deterministic HVI extraction.",
   "provenance": "synthetic",
-  "corpus_version": "2026-08-22-v2",
+  "corpus_version": "2026-08-25-v3-multimodal",
   "known_limitations": [
     "The evaluation set deliberately retains a Manglish name-boundary error where the particle 'lah' is absorbed into a person name."
   ],
@@ -581,6 +581,87 @@
         {"kind": "url", "value": "https://mixed-verify.example/pay"},
         {"kind": "telegram_id", "value": "@mixed_help_my"}
       ]
+    },
+    {
+      "id": "attachment-parcel-notice-url",
+      "language": "manglish",
+      "category": "parcel_advance_fee",
+      "split": "evaluation",
+      "provenance": "synthetic_reddit_archetype",
+      "messages": [
+        {"role": "stranger", "text": "Your parcel notice is attached, settle today ya.", "fixture": "parcel_notice"}
+      ],
+      "expected": [{"kind": "url", "value": "https://parcel-release.example/pay"}]
+    },
+    {
+      "id": "attachment-loan-approval-document",
+      "language": "en",
+      "category": "loan_advance_fee",
+      "split": "evaluation",
+      "provenance": "synthetic_reddit_archetype",
+      "messages": [
+        {"role": "stranger", "text": "Your approval document is attached.", "fixture": "loan_approval"}
+      ],
+      "expected": [
+        {"kind": "bank_name", "value": "CIMB"},
+        {"kind": "bank_account", "value": "7311442200"},
+        {"kind": "url", "value": "https://loan-release.example/confirm"}
+      ]
+    },
+    {
+      "id": "attachment-marketplace-verification",
+      "language": "en",
+      "category": "marketplace_phishing",
+      "split": "evaluation",
+      "provenance": "synthetic_reddit_archetype",
+      "messages": [
+        {"role": "stranger", "text": "Seller payment screenshot attached.", "fixture": "marketplace_verification"}
+      ],
+      "expected": [{"kind": "url", "value": "https://seller-verify.example/claim"}]
+    },
+    {
+      "id": "attachment-authority-notice",
+      "language": "en",
+      "category": "authority_impersonation",
+      "split": "evaluation",
+      "provenance": "synthetic_reddit_archetype",
+      "messages": [
+        {"role": "stranger", "text": "Confidential investigation notice attached.", "fixture": "authority_letter"}
+      ],
+      "expected": [{"kind": "bank_account", "value": "8822004411"}]
+    },
+    {
+      "id": "attachment-voucher-qr-url",
+      "language": "manglish",
+      "category": "fake_voucher",
+      "split": "evaluation",
+      "provenance": "synthetic_reddit_archetype",
+      "messages": [
+        {"role": "stranger", "text": "Scan this free voucher code before midnight.", "fixture": "voucher_qr"}
+      ],
+      "expected": [{"kind": "url", "value": "https://voucher-claim.example/redeem"}]
+    },
+    {
+      "id": "attachment-task-dashboard-hard-negative",
+      "language": "en",
+      "category": "attachment_hard_negative",
+      "split": "evaluation",
+      "provenance": "synthetic",
+      "messages": [
+        {"role": "stranger", "text": "Here is the dashboard image.", "fixture": "task_dashboard"}
+      ],
+      "expected": []
+    },
+    {
+      "id": "attachment-inert-apk-no-indicator",
+      "language": "en",
+      "category": "unsafe_file_type",
+      "split": "evaluation",
+      "provenance": "synthetic",
+      "messages": [
+        {"role": "stranger", "text": "Install the attached delivery update.", "fixture": "delivery_apk"}
+      ],
+      "expected": []
     }
   ]
 }

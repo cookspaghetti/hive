@@ -9,6 +9,12 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from hive.extraction.engine import extract_contextual_hvis, extract_hvis, hvi_key, merge_hvis
+from hive.scenario_media import (
+    FIXTURES,
+    message_from_scenario,
+    scenario_message,
+    validate_fixtures,
+)
 from hive.state import HVI, Message
 
 DEFAULT_CORPUS = Path(__file__).resolve().parents[2] / "evaluation" / "indicator_cases.json"
@@ -44,24 +50,20 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
     cases = payload.get("cases")
     if payload.get("schema_version") != 1 or not isinstance(cases, list):
         raise ValueError("unsupported indicator corpus schema")
+    fixture_manifest = validate_fixtures()
 
     totals = {"tp": 0, "fp": 0, "fn": 0}
     by_kind: dict[str, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
-    by_language: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"tp": 0, "fp": 0, "fn": 0}
-    )
-    by_category: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"tp": 0, "fp": 0, "fn": 0}
-    )
-    by_split: dict[str, dict[str, int]] = defaultdict(
-        lambda: {"tp": 0, "fp": 0, "fn": 0}
-    )
+    by_language: dict[str, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
+    by_category: dict[str, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
+    by_split: dict[str, dict[str, int]] = defaultdict(lambda: {"tp": 0, "fp": 0, "fn": 0})
     composition: dict[str, dict[str, int]] = {
         "language": defaultdict(int),
         "category": defaultdict(int),
         "split": defaultdict(int),
         "provenance": defaultdict(int),
         "case_type": defaultdict(int),
+        "attachment_kind": defaultdict(int),
     }
     failures: list[dict[str, Any]] = []
     case_ids: set[str] = set()
@@ -74,23 +76,36 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
         raw_messages = case.get("messages")
         if not isinstance(raw_messages, list):
             raw_messages = [{"role": "stranger", "text": str(case["text"])}]
-        messages = [
-            Message(
-                role=cast(
-                    Literal["stranger", "agent", "system"],
-                    str(raw.get("role") or "stranger"),
-                ),
-                text=str(raw.get("text") or ""),
-                ts=float(offset),
-                msg_id=index * 100 + offset,
+        messages: list[Message] = []
+        for offset, raw in enumerate(raw_messages, start=1):
+            role = cast(
+                Literal["stranger", "agent", "system"],
+                str(raw.get("role") or "stranger"),
             )
-            for offset, raw in enumerate(raw_messages, start=1)
-        ]
+            fixture_key = str(raw.get("fixture") or "")
+            if fixture_key:
+                message = message_from_scenario(
+                    scenario_message(str(raw.get("text") or ""), fixture_key),
+                    msg_id=index * 100 + offset,
+                    ts=float(offset),
+                    platform="evaluation",
+                    pre_takeover=False,
+                )
+                message.role = role
+            else:
+                message = Message(
+                    role=role,
+                    text=str(raw.get("text") or ""),
+                    ts=float(offset),
+                    msg_id=index * 100 + offset,
+                )
+            messages.append(message)
         extracted: list[HVI] = []
         for message in messages:
             if message.role == "stranger":
                 merge_hvis(extracted, extract_hvis(message.text, message.msg_id))
         for message, raw in zip(messages, raw_messages, strict=True):
+            merge_hvis(extracted, message.media_hvis)
             media_hvis = raw.get("media_hvis", [])
             if isinstance(media_hvis, list):
                 merge_hvis(
@@ -120,7 +135,9 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
         split = str(case.get("split") or "development")
         provenance = str(case.get("provenance") or payload.get("provenance") or "unspecified")
         case_type = (
-            "media"
+            "attachment"
+            if any(raw.get("fixture") for raw in raw_messages)
+            else "media"
             if any(raw.get("media_hvis") for raw in raw_messages)
             else "multi_message"
             if len(raw_messages) > 1
@@ -137,6 +154,13 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
         composition["split"][split] += 1
         composition["provenance"][provenance] += 1
         composition["case_type"][case_type] += 1
+        attachment_kinds = {
+            FIXTURES[str(raw["fixture"])].kind for raw in raw_messages if raw.get("fixture")
+        }
+        if not attachment_kinds:
+            composition["attachment_kind"]["none"] += 1
+        for kind in attachment_kinds:
+            composition["attachment_kind"][kind] += 1
         for kind, _value in matched:
             by_kind[kind]["tp"] += 1
         for kind, _value in unexpected:
@@ -174,8 +198,13 @@ def evaluate_indicator_corpus(path: str | Path = DEFAULT_CORPUS) -> dict[str, An
             for key, values in sorted(by_split.items())
         },
         "composition": {
-            dimension: dict(sorted(values.items()))
-            for dimension, values in composition.items()
+            dimension: dict(sorted(values.items())) for dimension, values in composition.items()
+        },
+        "fixture_safety": {
+            "validated": True,
+            "fixture_count": len(fixture_manifest),
+            "executable_content": False,
+            "fixtures": fixture_manifest,
         },
         "failures": failures,
     }
@@ -190,10 +219,7 @@ def main() -> None:
     result = evaluate_indicator_corpus(args.corpus)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     overall = result["overall"]
-    if (
-        overall["precision"] < args.min_precision
-        or overall["recall"] < args.min_recall
-    ):
+    if overall["precision"] < args.min_precision or overall["recall"] < args.min_recall:
         raise SystemExit(1)
 
 

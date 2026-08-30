@@ -210,6 +210,7 @@ def test_context_rejects_status_words_and_unscoped_numbers():
 def test_qr_payload_url_classified():
     hvis = classify_payload("http://phish.example/login", 5)
     assert any(h.kind == "url" for h in hvis)
+    assert all(h.extractor == "qr" for h in hvis)
 
 
 def test_qr_payload_unknown_kept_raw():

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
 import json
 import re
 import secrets
@@ -19,6 +20,13 @@ from hive.llm.router import Tier
 from hive.redteam.runner import EvaluationSandboxRunner
 from hive.redteam.scammer import ARCHETYPES
 from hive.runtime import HiveEngine
+from hive.scenario_media import (
+    FIXTURES,
+    ScenarioMessage,
+    message_from_scenario,
+    scenario_message,
+    validate_fixtures,
+)
 from hive.state import Message
 from hive.vault.package import evidence_package_path, verify_evidence_package
 
@@ -30,7 +38,12 @@ class DemoScenario:
     description: str
     language: str
     archetype: str
-    bursts: tuple[tuple[str, ...], ...]
+    bursts: tuple[tuple[str | ScenarioMessage, ...], ...]
+
+    def events(self, burst: tuple[str | ScenarioMessage, ...]) -> tuple[ScenarioMessage, ...]:
+        return tuple(
+            item if isinstance(item, ScenarioMessage) else scenario_message(item) for item in burst
+        )
 
     def public(self) -> dict[str, Any]:
         return {
@@ -41,6 +54,28 @@ class DemoScenario:
             "archetype": self.archetype,
             "exchanges": len(self.bursts),
             "messages": sum(len(burst) for burst in self.bursts),
+            "attachments": sum(
+                bool(event.fixture) for burst in self.bursts for event in self.events(burst)
+            ),
+            "attachment_types": sorted(
+                {
+                    FIXTURES[event.fixture].kind
+                    for burst in self.bursts
+                    for event in self.events(burst)
+                    if event.fixture
+                }
+            ),
+            "content_types": sorted(
+                {
+                    FIXTURES[event.fixture].kind
+                    if event.fixture
+                    else "url"
+                    if "https://" in event.text.lower()
+                    else "text"
+                    for burst in self.bursts
+                    for event in self.events(burst)
+                }
+            ),
         }
 
 
@@ -77,7 +112,10 @@ SCENARIOS: dict[str, DemoScenario] = {
             (
                 (
                     "你好，你的包裹被海关扣住了。",
-                    "Need settle small release fee today ya.",
+                    scenario_message(
+                        "Need settle small release fee today ya. See the notice attached.",
+                        "parcel_notice",
+                    ),
                 ),
                 (
                     "Pay RM80 to Bank Islam 9012345678, name NUR AISYAH.",
@@ -98,7 +136,10 @@ SCENARIOS: dict[str, DemoScenario] = {
             (
                 (
                     "Hello, we recruit part-time product reviewers, can earn RM200 daily.",
-                    "Just use phone only, very easy one.",
+                    scenario_message(
+                        "Just use phone only, very easy one. This is the commission dashboard.",
+                        "task_dashboard",
+                    ),
                 ),
                 (
                     "Contact supervisor @hive_demo_recruiter and open https://task-job.example/apply.",
@@ -106,7 +147,10 @@ SCENARIOS: dict[str, DemoScenario] = {
                 ),
                 (
                     "Limited vacancy, complete now and withdraw commission tonight.",
-                    "Send screenshot after payment.",
+                    scenario_message(
+                        "Install this delivery helper first, then send screenshot after payment.",
+                        "delivery_apk",
+                    ),
                 ),
             ),
         ),
@@ -119,7 +163,11 @@ SCENARIOS: dict[str, DemoScenario] = {
             (
                 (
                     "Hi, I want your listing and already paid through the marketplace.",
-                    "You need verify seller account before money can release.",
+                    scenario_message(
+                        "You need verify seller account before money can release. "
+                        "Screenshot attached.",
+                        "marketplace_verification",
+                    ),
                 ),
                 (
                     "Use https://seller-verify.example/claim and enter the confirmation details.",
@@ -128,6 +176,80 @@ SCENARIOS: dict[str, DemoScenario] = {
                 (
                     "Please finish now or my payment will be cancelled.",
                     "The support agent is waiting for you.",
+                ),
+            ),
+        ),
+        DemoScenario(
+            "loan",
+            "Loan processing fee",
+            "A fake lender uses an approval document to demand an advance fee.",
+            "English / Manglish",
+            "mixed",
+            (
+                (
+                    "Your RM20,000 fast loan has been approved without credit checks.",
+                    scenario_message(
+                        "Approval letter attached, please check the amount.",
+                        "loan_approval",
+                    ),
+                ),
+                (
+                    "Pay the refundable RM350 processing fee to activate disbursement.",
+                    "Complete confirmation at https://loan-release.example/confirm.",
+                ),
+                (
+                    "Approval expires today, settle now so finance can release it.",
+                    "Do not call the bank because this is a private promotion.",
+                ),
+            ),
+        ),
+        DemoScenario(
+            "authority",
+            "Authority impersonation",
+            "A Macau-style caller applies secrecy and transfer pressure using a fake notice.",
+            "English / Manglish",
+            "impersonation",
+            (
+                (
+                    "This is the fraud investigation unit; your identity is linked "
+                    "to a criminal account.",
+                    "Do not tell family or bank staff because the case is confidential.",
+                ),
+                (
+                    scenario_message(
+                        "Read the investigation notice and follow the "
+                        "temporary-account instruction.",
+                        "authority_letter",
+                    ),
+                    "Transfer to evidence account 8822004411 for verification.",
+                ),
+                (
+                    "Stay on this chat until the transfer is completed.",
+                    "If you disconnect, an arrest instruction will be issued.",
+                ),
+            ),
+        ),
+        DemoScenario(
+            "voucher",
+            "Fake voucher QR",
+            "A prize promotion uses a QR-style image and an expiring redemption link.",
+            "English / Manglish",
+            "mixed",
+            (
+                (
+                    "Congratulations, your number was selected for a free RM100 food voucher.",
+                    scenario_message(
+                        "Scan this code to claim before midnight.",
+                        "voucher_qr",
+                    ),
+                ),
+                (
+                    "Open https://voucher-claim.example/redeem if the scanner is slow.",
+                    "Enter your card to verify you are Malaysian; no charge one.",
+                ),
+                (
+                    "Only three vouchers left, claim now.",
+                    "Forward the code to two friends after you finish.",
                 ),
             ),
         ),
@@ -233,18 +355,21 @@ class DemoService:
 
     @staticmethod
     def catalog() -> dict[str, Any]:
+        fixtures = validate_fixtures()
         return {
             "scenarios": [scenario.public() for scenario in SCENARIOS.values()],
-            "speeds": [
-                {"key": key, "label": value["label"]} for key, value in SPEEDS.items()
-            ],
-            "modes": [
-                {"key": key, **value}
-                for key, value in MODES.items()
-            ],
+            "speeds": [{"key": key, "label": value["label"]} for key, value in SPEEDS.items()],
+            "modes": [{"key": key, **value} for key, value in MODES.items()],
             "synthetic": True,
             "telegram_connected": False,
             "sandbox_mode": "deterministic_no_network",
+            "fixture_policy": {
+                "version": 1,
+                "safe": True,
+                "executable_content": False,
+                "reserved_urls_only": True,
+                "fixtures": fixtures,
+            },
         }
 
     def list(self) -> list[dict[str, Any]]:
@@ -406,7 +531,11 @@ class DemoService:
             if run is None:
                 raise DemoNotFoundError(run_id)
             if control is None or run.get("status") not in {
-                "running", "paused", "processing", "awaiting_input", "stopping"
+                "running",
+                "paused",
+                "processing",
+                "awaiting_input",
+                "stopping",
             }:
                 return self._snapshot(run)
             condition: threading.Condition = control["condition"]
@@ -523,20 +652,18 @@ class DemoService:
                         stage=f"Receiving scammer exchange {exchange_index}",
                         current_exchange=exchange_index,
                     )
-                    for text in burst:
+                    for event in burst:
                         ts = time.time()
-                        inbound = Message(
-                            role="stranger",
-                            text=text,
-                            ts=ts,
+                        inbound = message_from_scenario(
+                            event,
                             msg_id=message_id,
-                            captured_ts=ts,
                             platform="demo",
+                            ts=ts,
                             pre_takeover=exchange_index == 1,
                         )
                         message_id += 1
                         inbounds.append(inbound)
-                        history.append(("scammer", text))
+                        history.append(("scammer", event.text))
                         self._append_message(run, inbound)
                         if not self._wait(run_id, 0.25):
                             final_status = "cancelled"
@@ -628,7 +755,7 @@ class DemoService:
         scammer_client: Any,
         history: builtins.list[tuple[str, str]],
         exchange_index: int,
-    ) -> tuple[str, ...] | None:
+    ) -> tuple[ScenarioMessage, ...] | None:
         mode = str(run.get("mode") or "scripted")
         if mode == "interactive":
             if exchange_index > _MAX_INTERACTIVE_EXCHANGES:
@@ -647,7 +774,7 @@ class DemoService:
         if not self._wait(run_id, 0.55, require_step=exchange_index > 1):
             return None
         if mode == "scripted" or exchange_index == 1:
-            return scenario.bursts[exchange_index - 1]
+            return scenario.events(scenario.bursts[exchange_index - 1])
 
         self._update(
             run,
@@ -665,13 +792,13 @@ class DemoService:
             f"Scammer exchange {exchange_index} generated",
             f"{len(burst)} separate synthetic message bubble(s)",
         )
-        return burst
+        return tuple(scenario_message(text) for text in burst)
 
     def _wait_for_presenter(
         self,
         run_id: str,
         run: dict[str, Any],
-    ) -> tuple[str, ...] | None:
+    ) -> tuple[ScenarioMessage, ...] | None:
         with self._lock:
             control = self._controls.get(run_id)
         if control is None:
@@ -684,7 +811,7 @@ class DemoService:
                 inputs: list[tuple[str, float]] = control["inputs"]
                 if inputs:
                     text, _queued_ts = inputs.pop(0)
-                    return (text,)
+                    return (scenario_message(text),)
                 run["status"] = "awaiting_input"
                 run["stage"] = "Waiting for the presenter’s next scammer message"
                 self._persist(run)
@@ -803,9 +930,49 @@ class DemoService:
                     "msg_id": message.msg_id,
                     "platform": "demo",
                     "pre_takeover": message.pre_takeover,
+                    "media_kind": message.media_kind,
+                    "media_name": message.media_name,
+                    "media_mime": message.media_mime,
+                    "media_size": message.media_size,
+                    "media_sha256": message.media_sha256,
+                    "media_analysis": message.media_analysis,
+                    "content_type": (
+                        message.media_kind or ("url" if _URL.search(message.text) else "text")
+                    ),
+                    "media_url": (
+                        f"/api/demo/runs/{run['id']}/media/{message.msg_id}"
+                        if message.media_path
+                        else None
+                    ),
                 }
             )
             self._persist(run)
+
+    def media(self, run_id: str, msg_id: int) -> tuple[Path, str, str]:
+        with self._lock:
+            run = self._runs.get(run_id)
+            if run is None:
+                raise DemoNotFoundError(run_id)
+            item = next(
+                (
+                    message
+                    for message in run.get("messages", [])
+                    if int(message.get("msg_id") or 0) == msg_id and message.get("media_sha256")
+                ),
+                None,
+            )
+        if item is None:
+            raise DemoNotFoundError(f"{run_id}/{msg_id}")
+        expected_hash = str(item["media_sha256"])
+        for fixture in FIXTURES.values():
+            path = fixture.path
+            if path.is_file() and hashlib.sha256(path.read_bytes()).hexdigest() == expected_hash:
+                return (
+                    path,
+                    str(item.get("media_name") or fixture.display_name),
+                    str(item.get("media_mime") or fixture.mime),
+                )
+        raise DemoNotFoundError(f"{run_id}/{msg_id}")
 
     def _event(
         self,

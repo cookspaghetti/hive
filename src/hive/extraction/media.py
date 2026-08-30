@@ -44,6 +44,8 @@ def classify_payload(payload: str, source_msg_id: int) -> list[HVI]:
     if not payload:
         return []
     hvis = extract_regex(payload, source_msg_id)
+    for item in hvis:
+        item.extractor = "qr"
     if not hvis:
         # Unrecognised structured payload — keep it verbatim as evidence.
         hvis = [

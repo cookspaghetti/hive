@@ -19,7 +19,11 @@ def test_sanitized_indicator_corpus_meets_regression_gate() -> None:
     assert {"en", "zh", "manglish"}.issubset(result["by_language"])
     assert result["composition"]["case_type"]["hard_negative"] >= 10
     assert result["composition"]["case_type"]["media"] >= 4
+    assert result["composition"]["case_type"]["attachment"] >= 7
+    assert result["composition"]["attachment_kind"]["image"] >= 4
     assert result["composition"]["split"]["evaluation"] >= 30
+    assert result["fixture_safety"]["validated"] is True
+    assert result["fixture_safety"]["executable_content"] is False
 
 
 def test_indicator_corpus_reports_unexpected_and_missing_values(tmp_path: Path) -> None:

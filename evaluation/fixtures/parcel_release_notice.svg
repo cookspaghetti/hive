@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420">
+  <rect width="720" height="420" rx="24" fill="#111820"/>
+  <rect x="34" y="34" width="652" height="352" rx="18" fill="#19232d" stroke="#d7a348"/>
+  <text x="64" y="88" fill="#f4f0e6" font-family="Arial" font-size="28" font-weight="700">PARCEL RELEASE NOTICE</text>
+  <text x="64" y="132" fill="#a9b7c6" font-family="Arial" font-size="18">Synthetic courier fixture • Tracking MY-DEMO-2048</text>
+  <text x="64" y="190" fill="#f4f0e6" font-family="Arial" font-size="22">Customs release fee</text>
+  <text x="560" y="190" fill="#efb44d" font-family="Arial" font-size="24" font-weight="700">RM80</text>
+  <line x1="64" y1="220" x2="656" y2="220" stroke="#344453"/>
+  <text x="64" y="268" fill="#f4f0e6" font-family="Arial" font-size="18">parcel-release.example/pay</text>
+  <rect x="64" y="306" width="210" height="46" rx="8" fill="#d7a348"/>
+  <text x="92" y="336" fill="#111820" font-family="Arial" font-size="17" font-weight="700">RELEASE PARCEL</text>
+</svg>

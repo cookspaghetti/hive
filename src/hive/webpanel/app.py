@@ -12,6 +12,7 @@ import secrets
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any, cast
 
@@ -43,6 +44,12 @@ from hive.history import HistoryStore, build_history_store
 from hive.logging_setup import get_logger
 from hive.provisioning import EnvStore, TelethonLoginManager
 from hive.reanalysis_service import ReanalysisRunner, ReanalysisService
+from hive.redteam.character import CATEGORIES, RUBRIC, assessment_metrics, response_turns
+from hive.redteam.character_reviews import (
+    CharacterReviewStore,
+    ReviewConflict,
+    assessment_for_record,
+)
 from hive.reporting import reporting_guidance
 from hive.retention import (
     RetentionPolicy,
@@ -496,6 +503,7 @@ def create_app(
         runtime_manager = _LegacyRuntime(engine, userbot, settings)
     runtime = runtime_manager
     project_root = Path(root).resolve()
+    character_reviews = CharacterReviewStore(project_root / "evidence" / "evaluation_reviews")
     token = session_token or getattr(settings, "panel_token", "") or secrets.token_urlsafe(32)
     store = env_store or EnvStore(project_root / ".env")
     configured = settings or load_settings()
@@ -1126,6 +1134,15 @@ def create_app(
                 continue
             if not isinstance(payload, list):
                 continue
+            metadata: dict[str, Any] = {}
+            try:
+                raw_metadata = json.loads(
+                    (source.parent / "redteam_metadata.json").read_text(encoding="utf-8")
+                )
+                if isinstance(raw_metadata, dict):
+                    metadata = raw_metadata
+            except (OSError, ValueError):
+                pass
             relative = source.relative_to(evaluation_root).as_posix()
             for index, raw in enumerate(payload):
                 if not isinstance(raw, dict):
@@ -1146,11 +1163,21 @@ def create_app(
                     and evaluation_root in package.parents
                     and parse_evidence_package_name(package.name) is not None
                 )
+                recorded_ts = source.stat().st_mtime
+                recorded_value = raw.get("completed_utc") or metadata.get("created_utc")
+                if recorded_value:
+                    try:
+                        recorded_ts = datetime.fromisoformat(
+                            str(recorded_value).replace("Z", "+00:00")
+                        ).timestamp()
+                    except ValueError:
+                        pass
                 records[run_id] = {
                     **raw,
                     "id": run_id,
                     "run_group": source.parent.relative_to(evaluation_root).as_posix(),
-                    "recorded_ts": source.stat().st_mtime,
+                    "recorded_ts": recorded_ts,
+                    "run_metadata": metadata,
                     "package_available": package_available,
                     "package_filename": package.name if package_available else None,
                     "package_download_url": (
@@ -1160,6 +1187,23 @@ def create_app(
                     ),
                     "_package_path": package if package_available else None,
                 }
+                record = records[run_id]
+                automated = assessment_for_record(record)
+                reviews = character_reviews.history(run_id)
+                current = reviews[-1] if reviews else None
+                # A review bound to different source bytes must never be silently reused.
+                assessment = automated
+                if current and current["assessment"]["source_sha256"] == automated["source_sha256"]:
+                    assessment = current["assessment"]
+                record.update({
+                    "character_assessment": assessment,
+                    "character_automated_assessment": automated,
+                    "character_metrics": assessment_metrics(assessment),
+                    "character_status": assessment["status"],
+                    "character_target_turns": assessment["target_turns"],
+                    "character_review": current,
+                    "character_review_history": reviews,
+                })
         return records
 
     @app.get("/api/evaluations", dependencies=[Depends(auth)])
@@ -1183,10 +1227,20 @@ def create_app(
                         "turns",
                         "exchanges",
                         "duration_s",
+                        "character_metrics",
+                        "character_status",
+                        "character_target_turns",
+                        "planned_response_delay_s",
+                        "agent_language",
+                        "language_match",
                         "verdict",
                         "verdict_score",
                         "verdict_correct",
                         "bot_detected",
+                        "bot_probes",
+                        "seed_bot_probes",
+                        "seed_bot_detected",
+                        "outbound_guardrail_flags",
                         "guardrail_flags",
                         "chain_valid",
                         "evidence_verified",
@@ -1197,6 +1251,12 @@ def create_app(
                 }
                 | {
                     "hvi_count": len(record.get("hvi_items") or []),
+                    "mean_response_latency_s": (
+                        sum(record.get("response_latencies_s") or [])
+                        / len(record.get("response_latencies_s") or [])
+                        if record.get("response_latencies_s")
+                        else None
+                    ),
                     "precision": extraction.get("precision"),
                     "recall": extraction.get("recall"),
                     "f1": extraction.get("f1"),
@@ -1209,7 +1269,59 @@ def create_app(
         record = evaluation_records().get(run_id)
         if record is None:
             raise HTTPException(status_code=404, detail="evaluation run not found")
-        return {key: value for key, value in record.items() if not key.startswith("_")}
+        detail = {
+            key: value for key, value in record.items()
+            if not key.startswith("_")
+            and key not in {"engagement_duration_s", "engagement_duration_basis"}
+        }
+        detail["character_rubric"] = {"categories": CATEGORIES, "instructions": RUBRIC}
+        detail["character_response_turns"] = response_turns(record.get("transcript") or [])
+        persona = PERSONAS.get(str(record.get("persona") or ""))
+        detail["character_persona"] = record.get("persona_prompt") or (
+            "Legacy run: original persona snapshot unavailable. Current reference profile:\n"
+            + (persona.system_prompt if persona else "Unknown persona")
+        )
+        extraction = record.get("extraction") or {}
+        latencies = record.get("response_latencies_s") or []
+        detail.update(
+            {
+                "hvi_count": len(record.get("hvi_items") or []),
+                "mean_response_latency_s": (
+                    sum(latencies) / len(latencies) if latencies else None
+                ),
+                "precision": extraction.get("precision"),
+                "recall": extraction.get("recall"),
+                "f1": extraction.get("f1"),
+            }
+        )
+        path = record.get("_package_path")
+        if isinstance(path, Path) and path.is_file():
+            detail["current_evidence_verification"] = verify_evidence_package(path)
+        return detail
+
+    @app.post("/api/evaluations/{run_id}/character-review", dependencies=[Depends(auth)])
+    def evaluation_character_review(
+        run_id: str, payload: Annotated[dict[str, Any], Body()],
+    ) -> dict[str, Any]:
+        record = evaluation_records().get(run_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="evaluation run not found")
+        try:
+            review = character_reviews.save(run_id, record, payload)
+        except ReviewConflict as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        audit.append(
+            "evaluation_review", "character_review_recorded", component="webpanel",
+            payload={"run_id": run_id, "review_id": review["id"],
+                     "source_sha256": review["assessment"]["source_sha256"],
+                     "review_sha256": hashlib.sha256(
+                         json.dumps(review, sort_keys=True, ensure_ascii=False).encode("utf-8")
+                     ).hexdigest(),
+                     "reviewer": review["reviewer"]},
+        )
+        return evaluation_detail(run_id)
 
     @app.get("/api/evaluations/{run_id}/evidence")
     def evaluation_evidence(
@@ -1325,6 +1437,27 @@ def create_app(
         except DemoNotFoundError as exc:
             raise HTTPException(status_code=404, detail="demo evidence not found") from exc
         return FileResponse(path, media_type="application/zip", filename=path.name)
+
+    @app.get("/api/demo/runs/{run_id}/media/{msg_id}")
+    def demo_media(
+        run_id: str,
+        msg_id: int,
+        token: str = "",
+        x_hive_token: str = Header(default=""),
+    ) -> FileResponse:
+        if not authorised(x_hive_token or token):
+            raise HTTPException(status_code=401, detail="unauthorised")
+        try:
+            path, filename, media_type = demos.media(run_id, msg_id)
+        except DemoNotFoundError as exc:
+            raise HTTPException(status_code=404, detail="demo media not found") from exc
+        disposition = "inline" if media_type.startswith("image/") else "attachment"
+        return FileResponse(
+            path,
+            media_type=media_type,
+            filename=filename,
+            content_disposition_type=disposition,
+        )
 
     @app.get("/api/history", dependencies=[Depends(auth)])
     def takeover_history() -> list[dict[str, Any]]:

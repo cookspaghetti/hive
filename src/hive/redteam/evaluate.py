@@ -10,6 +10,7 @@ from pathlib import Path
 
 from hive.agent.personas import PERSONAS
 from hive.config import load_settings
+from hive.redteam.character import RUBRIC_VERSION
 from hive.redteam.runner import (
     EvaluationSandboxRunner,
     aggregate_results,
@@ -21,10 +22,24 @@ from hive.redteam.scenarios import DEFAULT_SCENARIOS
 from hive.runtime import build_engine
 
 
+def timestamped_output_directory(root: str | Path, created: datetime) -> Path:
+    """Return an append-only run directory beneath the configured result root."""
+    run_id = created.astimezone(UTC).strftime("%Y%m%dT%H%M%S.%fZ")
+    return Path(root) / run_id
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", default="evaluation/results/redteam")
-    parser.add_argument("--max-turns", type=int, default=8)
+    parser.add_argument(
+        "--output",
+        default="evaluation/results/redteam",
+        help="Result root; each invocation creates a timestamped child directory",
+    )
+    parser.add_argument("--max-turns", type=int, default=20)
+    parser.add_argument(
+        "--no-character-judge", action="store_true",
+        help="Skip the provisional model judge; retain turns for human review, not as passes",
+    )
     parser.add_argument("--persona", action="append", choices=sorted(PERSONAS))
     parser.add_argument("--scenario", action="append")
     parser.add_argument(
@@ -38,6 +53,8 @@ def main() -> None:
         help="Use the configured disposable Docker browser instead of the safe deterministic stub",
     )
     args = parser.parse_args()
+    if not 1 <= args.max_turns <= 100:
+        parser.error("--max-turns must be between 1 and 100")
 
     settings = load_settings()
     signing_key = Path(settings.signing_key_path)
@@ -55,10 +72,19 @@ def main() -> None:
         available = ", ".join(scenario.key for scenario in DEFAULT_SCENARIOS)
         parser.error(f"unknown scenario; available values: {available}")
     personas = args.persona or list(PERSONAS)
-    output = Path(args.output)
+    created = datetime.now(UTC)
+    output = timestamped_output_directory(args.output, created)
     evidence = output / "evidence"
     evidence.mkdir(parents=True, exist_ok=True)
-    engine = build_engine(settings, load_ner=not args.regex_only)
+    # Evaluation must not index synthetic cases into the operational case store.
+    evaluation_settings = settings.model_copy(
+        update={"database_url": "", "use_case_similarity": False}
+    )
+    engine = build_engine(evaluation_settings, load_ner=not args.regex_only)
+    engine.case_intelligence = None
+    engine.enable_early_exit = False
+    engine.max_turns = 0  # The harness counts response exchanges, not inbound bubbles.
+    engine.max_session_minutes = 0
     if not args.live_sandbox:
         engine.sandbox_runner = EvaluationSandboxRunner()
 
@@ -80,14 +106,25 @@ def main() -> None:
                 signing_key_path=signing_key,
                 scenario_key=scenario.key,
                 language=scenario.language,
+                opener_fixtures=scenario.fixture_keys,
+                character_client=None if args.no_character_judge else engine.agent_client,
             )
             results.append(result)
+            # Preserve every finished run even if a later model/evidence operation fails.
+            write_results(results, output)
 
     paths = write_results(results, output)
     metadata = {
-        "schema_version": 1,
-        "created_utc": datetime.now(UTC).isoformat(),
-        "scenario_set": "default-v1",
+        "schema_version": 2,
+        "character_rubric": RUBRIC_VERSION,
+        "character_judge": (
+            "disabled; human review required" if args.no_character_judge
+            else "configured strong model; provisional scoring, not independent human validation"
+        ),
+        "created_utc": created.isoformat(),
+        "run_id": output.name,
+        "output_policy": "timestamped_append_only",
+        "scenario_set": "default-v2-multimodal",
         "scenario_count": len(selected),
         "personas": personas,
         "runs": len(results),
@@ -129,7 +166,12 @@ def main() -> None:
     print(f"Raw results: {paths['runs']}")
     print(f"CSV: {paths['csv']}")
     print(f"Metadata: {metadata_path}")
-    if not all(result.chain_valid and result.evidence_verified for result in results):
+    if not all(
+        result.chain_valid and result.evidence_verified
+        and result.termination_reason == "max_exchanges"
+        and (result.character_assessment or {}).get("status") != "error"
+        for result in results
+    ):
         sys.exit(1)
 
 

@@ -29,6 +29,7 @@ dependencies = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
     "psycopg[binary]>=3.2",
+    "svglib>=2.2.0",
 ]
 
 [project.optional-dependencies]

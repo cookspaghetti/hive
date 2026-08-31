@@ -34,6 +34,15 @@ _BRAND_PAPER = "#F6F4EF"
 _BRAND_MUTED = "#667085"
 _BRAND_LINE = "#D9D5CB"
 
+_SOCIAL_TACTIC_LABELS = {
+    "urgency": "Urgency and pressure",
+    "authority_impersonation": "Authority impersonation",
+    "romance_framing": "Romance grooming",
+    "investment_framing": "Investment pitch",
+    "payment_request": "Payment request",
+    "inconsistency": "Inconsistent narrative",
+}
+
 
 def s90a_certificate(session: SessionState, operator_name: str) -> str:
     """Return the Section 90A certificate text for the operator to sign."""
@@ -307,9 +316,7 @@ def _data_table(
     ]
     for row in range(1, len(rows)):
         if row % 2 == 0:
-            commands.append(
-                ("BACKGROUND", (0, row), (-1, row), colors.HexColor(_BRAND_PAPER))
-            )
+            commands.append(("BACKGROUND", (0, row), (-1, row), colors.HexColor(_BRAND_PAPER)))
     table.setStyle(TableStyle(commands))
     return table
 
@@ -338,17 +345,33 @@ def _embedded_image_card(message: Any, width: float, styles: dict[str, Any]) -> 
     ):
         return None
     try:
-        image_width, image_height = ImageReader(str(path)).getSize()
-        if image_width <= 0 or image_height <= 0:
-            raise ValueError("image dimensions are unavailable")
         max_image_width = min(width, 120 * mm)
         max_image_height = 95 * mm
-        scale = min(max_image_width / image_width, max_image_height / image_height, 1.0)
-        preview = Image(
-            str(path),
-            width=image_width * scale,
-            height=image_height * scale,
-        )
+        is_svg = media_mime in {"image/svg+xml", "image/svg"} or path.suffix.lower() == ".svg"
+        if is_svg:
+            from svglib.svglib import svg2rlg
+
+            preview = svg2rlg(str(path))
+            if preview is None or preview.width <= 0 or preview.height <= 0:
+                raise ValueError("SVG dimensions are unavailable")
+            scale = min(
+                max_image_width / preview.width,
+                max_image_height / preview.height,
+                1.0,
+            )
+            preview.scale(scale, scale)
+            preview.width *= scale
+            preview.height *= scale
+        else:
+            image_width, image_height = ImageReader(str(path)).getSize()
+            if image_width <= 0 or image_height <= 0:
+                raise ValueError("image dimensions are unavailable")
+            scale = min(max_image_width / image_width, max_image_height / image_height, 1.0)
+            preview = Image(
+                str(path),
+                width=image_width * scale,
+                height=image_height * scale,
+            )
     except Exception as exc:  # noqa: BLE001 - corrupt evidence must not abort sealing
         log.warning("evidence image preview skipped: path=%s error=%s", path, exc)
         return None
@@ -414,6 +437,62 @@ def _sandbox_finding_xml(index: int, result: dict[str, Any]) -> str:
     if result.get("error"):
         values.append(("Error detail", result["error"]))
     return "<br/>".join(f"<b>{_xml(label)}:</b> {_xml(value)}" for label, value in values)
+
+
+def _social_engineering_tactics(session: SessionState) -> list[dict[str, Any]]:
+    """Return de-duplicated classifier tactics with captured-message provenance."""
+    messages = {
+        message.msg_id: message
+        for message in session.messages
+        if isinstance(message.msg_id, int) and not isinstance(message.msg_id, bool)
+    }
+    grouped: dict[str, dict[str, Any]] = {}
+    for signal in session.signal_trail:
+        if not isinstance(signal, dict):
+            continue
+        for contribution in signal.get("contributions") or []:
+            if not isinstance(contribution, dict):
+                continue
+            reason = str(contribution.get("reason") or "")
+            if not reason.startswith("soft:"):
+                continue
+            key = reason.removeprefix("soft:").strip()
+            if not key:
+                continue
+            try:
+                confidence = max(0.0, min(1.0, float(contribution.get("confidence") or 0)))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            item = grouped.setdefault(
+                key,
+                {
+                    "key": key,
+                    "label": _SOCIAL_TACTIC_LABELS.get(key, key.replace("_", " ").strip().title()),
+                    "confidence": 0.0,
+                    "sources": {},
+                },
+            )
+            item["confidence"] = max(float(item["confidence"]), confidence)
+            for source_id in contribution.get("source_message_ids") or []:
+                if not isinstance(source_id, int) or isinstance(source_id, bool):
+                    continue
+                source = messages.get(source_id)
+                item["sources"].setdefault(
+                    source_id,
+                    {
+                        "msg_id": source_id,
+                        "role": source.role if source is not None else "unknown",
+                        "ts": source.ts if source is not None else None,
+                        "text": source.text if source is not None else "",
+                        "available": source is not None,
+                    },
+                )
+
+    tactics: list[dict[str, Any]] = []
+    for item in grouped.values():
+        item["sources"] = [item["sources"][key] for key in sorted(item["sources"])]
+        tactics.append(item)
+    return sorted(tactics, key=lambda item: (-float(item["confidence"]), item["label"]))
 
 
 def build_bundle(
@@ -610,7 +689,7 @@ def build_bundle(
             else ""
         )
         body = Paragraph(
-            f"<font name=\"{bold_font}\" size=\"7\">{role} | {provenance} | "
+            f'<font name="{bold_font}" size="7">{role} | {provenance} | '
             f"Message {_xml(message.msg_id)} | {_xml(_timestamp(message.ts))}{captured}"
             f"</font><br/>{_message_xml(message.text, emoji_font)}",
             styles["message"],
@@ -655,6 +734,70 @@ def build_bundle(
         story.append(_data_table(rows, [35 * mm, 86 * mm, 20 * mm, 20 * mm]))
     else:
         story.append(Paragraph("No high-value indicators were extracted.", styles["body"]))
+
+    _section(story, "Social-engineering tactics", styles)
+    tactics = _social_engineering_tactics(session)
+    if tactics:
+        story.append(
+            Paragraph(
+                "Model-classified tactics are grouped below with the captured messages "
+                "cited as their source evidence.",
+                styles["small"],
+            )
+        )
+        for tactic in tactics:
+            details = [
+                f"<b>{_xml(tactic['label'])}</b>",
+                f"Classifier confidence: {float(tactic['confidence']):.0%}",
+            ]
+            sources = list(tactic["sources"])
+            if sources:
+                details.append("<b>Source-message provenance</b>")
+                for source in sources:
+                    if source["available"]:
+                        role = (
+                            "External party"
+                            if source["role"] == "stranger"
+                            else str(source["role"]).replace("_", " ").title()
+                        )
+                        details.append(
+                            f"Message {_xml(source['msg_id'])} | {_xml(role)} | "
+                            f"{_xml(_timestamp(source['ts']))}<br/>"
+                            f"{_message_xml(source['text'], emoji_font)}"
+                        )
+                    else:
+                        details.append(
+                            f"Message {_xml(source['msg_id'])} | "
+                            "Not available in the captured transcript"
+                        )
+            else:
+                details.append("Source-message provenance was not recorded.")
+            card = Table(
+                [[Paragraph("<br/>".join(details), styles["body"])]],
+                colWidths=[doc.width],
+            )
+            card.setStyle(
+                TableStyle(
+                    [
+                        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF8E6")),
+                        ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor(_BRAND_GOLD)),
+                        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor(_BRAND_LINE)),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+                        ("TOPPADDING", (0, 0), (-1, -1), 8),
+                        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+                    ]
+                )
+            )
+            story.append(card)
+            story.append(Spacer(1, 3 * mm))
+    else:
+        story.append(
+            Paragraph(
+                "No social-engineering tactics were recorded by the classifier.",
+                styles["body"],
+            )
+        )
 
     _section(story, "Media intelligence", styles)
     if session.media_analysis:
@@ -747,14 +890,13 @@ def build_bundle(
     story.append(Paragraph(_xml(guidance["disclaimer"]), styles["small"]))
     for index, step in enumerate(guidance["steps"], start=1):
         source = (
-            f"<br/><font size=\"7\">Official source: {_xml(step['source_url'])}</font>"
+            f'<br/><font size="7">Official source: {_xml(step["source_url"])}</font>'
             if step["source_url"]
             else ""
         )
         story.append(
             Paragraph(
-                f"<b>{index}. {_xml(step['title'])}</b><br/>"
-                f"{_xml(step['action'])}{source}",
+                f"<b>{index}. {_xml(step['title'])}</b><br/>{_xml(step['action'])}{source}",
                 styles["body"],
             )
         )
@@ -804,11 +946,13 @@ def build_bundle(
     story.append(integrity_box)
     story.append(Spacer(1, 6 * mm))
 
-    chain_rows = [[
-        Paragraph("#", styles["table_header"]),
-        Paragraph("ENTRY HASH (SHA-256)", styles["table_header"]),
-        Paragraph("PREVIOUS HASH", styles["table_header"]),
-    ]]
+    chain_rows = [
+        [
+            Paragraph("#", styles["table_header"]),
+            Paragraph("ENTRY HASH (SHA-256)", styles["table_header"]),
+            Paragraph("PREVIOUS HASH", styles["table_header"]),
+        ]
+    ]
     chain_rows.extend(
         [
             Paragraph(str(entry.index), styles["table"]),

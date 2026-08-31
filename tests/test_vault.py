@@ -11,7 +11,12 @@ from pathlib import Path
 import pytest
 
 from hive.state import HVI, Message, SessionState
-from hive.vault.bundle import _message_xml, _sandbox_finding_xml, _xml
+from hive.vault.bundle import (
+    _message_xml,
+    _sandbox_finding_xml,
+    _social_engineering_tactics,
+    _xml,
+)
 from hive.vault.hashchain import HashChain
 from hive.vault.package import evidence_package_path, verify_evidence_package
 from hive.vault.signer import (
@@ -58,9 +63,7 @@ def test_signing_key_details_expose_stable_public_identity_only(keypair):
 
 
 def test_transcript_emoji_uses_font_or_explicit_unicode_fallback():
-    assert _message_xml("wait 😰 now", "EmojiFont") == (
-        'wait <font name="EmojiFont">😰</font> now'
-    )
+    assert _message_xml("wait 😰 now", "EmojiFont") == ('wait <font name="EmojiFont">😰</font> now')
     assert _message_xml("wait 😰 now", None) == "wait [emoji U+1F630] now"
 
 
@@ -117,9 +120,15 @@ def _populated_session() -> tuple[SessionState, HashChain]:
         HVI(kind="bank_account", value="1234567890", source_msg_id=0, confidence=0.9),
         HVI(kind="account_holder", value="王小明", source_msg_id=2, confidence=0.85),
     ]
-    s.sandbox_results = [{"url": "http://x.co", "final_url": "http://phish.ru",
-                          "verdict_signal": "malicious", "dest_ip": "1.2.3.4",
-                          "cloaking_suspected": False}]
+    s.sandbox_results = [
+        {
+            "url": "http://x.co",
+            "final_url": "http://phish.ru",
+            "verdict_signal": "malicious",
+            "dest_ip": "1.2.3.4",
+            "cloaking_suspected": False,
+        }
+    ]
     s.threat_intelligence = [
         {
             "provider": "semak_mule",
@@ -140,10 +149,76 @@ def _populated_session() -> tuple[SessionState, HashChain]:
             "indicator_count": 1,
         }
     ]
+    s.signal_trail = [
+        {
+            "turn": 2,
+            "contributions": [
+                {
+                    "reason": "soft:payment_request",
+                    "confidence": 0.86,
+                    "source_message_ids": [0, 2],
+                },
+                {
+                    "reason": "soft:urgency",
+                    "confidence": 0.72,
+                    "source_message_ids": [0],
+                },
+                {
+                    "reason": "hvi:bank_account",
+                    "confidence": 0.9,
+                    "source_message_ids": [0],
+                },
+            ],
+        }
+    ]
     chain = HashChain()
     chain.append({"event": "msg", "text": "transfer to Maybank 1234567890"}, ts=1.0)
     chain.append({"event": "hvi", "value": "1234567890"}, ts=2.0)
     return s, chain
+
+
+def test_social_engineering_tactics_group_and_preserve_source_provenance():
+    session, _chain = _populated_session()
+    session.signal_trail.append(
+        {
+            "turn": 3,
+            "contributions": [
+                {
+                    "reason": "soft:payment_request",
+                    "confidence": 0.91,
+                    "source_message_ids": [2, 404],
+                },
+                {
+                    "reason": "soft:unknown_tactic",
+                    "confidence": 0.5,
+                    "source_message_ids": [],
+                },
+            ],
+        }
+    )
+
+    tactics = _social_engineering_tactics(session)
+
+    assert [item["key"] for item in tactics] == [
+        "payment_request",
+        "urgency",
+        "unknown_tactic",
+    ]
+    payment = tactics[0]
+    assert payment["label"] == "Payment request"
+    assert payment["confidence"] == pytest.approx(0.91)
+    assert [source["msg_id"] for source in payment["sources"]] == [0, 2, 404]
+    assert payment["sources"][1]["text"] == "请转账到这个账户，收款人是王小明。"
+    assert payment["sources"][2]["available"] is False
+    assert tactics[2]["label"] == "Unknown Tactic"
+    assert tactics[2]["sources"] == []
+
+
+def test_social_engineering_tactics_empty_state_has_no_false_findings():
+    session, _chain = _populated_session()
+    session.signal_trail = [{"contributions": [{"reason": "hvi:url"}]}]
+
+    assert _social_engineering_tactics(session) == []
 
 
 def test_build_bundle_creates_portable_verified_evidence_package(tmp_path, keypair):
@@ -172,13 +247,12 @@ def test_build_bundle_creates_portable_verified_evidence_package(tmp_path, keypa
     verification = verify_evidence_package(package)
     assert verification["ok"] is True
     assert all(verification["checks"].values())
-    assert verification["manifest"]["signing_key_fingerprint"] == (
-        signing_key_details(priv)["fingerprint"]
+    assert (
+        verification["manifest"]["signing_key_fingerprint"]
+        == (signing_key_details(priv)["fingerprint"])
     )
     assert verification["checks"]["attachment_001_checksum"] is True
-    assert verification["manifest"]["attachments"][0]["source_name"] == (
-        "courier notice.txt"
-    )
+    assert verification["manifest"]["attachments"][0]["source_name"] == ("courier notice.txt")
     with zipfile.ZipFile(package) as archive:
         assert "attachment_001_courier_notice.txt" in archive.namelist()
 
@@ -190,9 +264,7 @@ def test_build_bundle_embeds_received_image_preview(tmp_path, keypair):
 
     priv, _pub = keypair
     without_image, chain = _populated_session()
-    baseline = Path(
-        build_bundle(without_image, chain, str(tmp_path / "without-image.pdf"), priv)
-    )
+    baseline = Path(build_bundle(without_image, chain, str(tmp_path / "without-image.pdf"), priv))
 
     with_image, image_chain = _populated_session()
     received = tmp_path / "received-photo.png"
@@ -204,13 +276,38 @@ def test_build_bundle_embeds_received_image_preview(tmp_path, keypair):
     message.media_mime = "image/png"
     message.media_size = received.stat().st_size
     message.media_sha256 = "a" * 64
-    embedded = Path(
-        build_bundle(with_image, image_chain, str(tmp_path / "with-image.pdf"), priv)
-    )
+    embedded = Path(build_bundle(with_image, image_chain, str(tmp_path / "with-image.pdf"), priv))
 
     assert embedded.read_bytes().count(b"/Subtype /Image") > baseline.read_bytes().count(
         b"/Subtype /Image"
     )
+
+
+def test_build_bundle_embeds_received_svg_as_vector_preview(tmp_path, keypair, caplog):
+    from hive.vault.bundle import build_bundle
+
+    priv, pub = keypair
+    session, chain = _populated_session()
+    received = tmp_path / "task-dashboard.svg"
+    received.write_text(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180" '
+        'viewBox="0 0 320 180"><rect width="320" height="180" fill="#f5b942"/>'
+        '<text x="20" y="90" font-size="22">Commission task</text></svg>',
+        encoding="utf-8",
+    )
+    message = session.messages[0]
+    message.media_path = str(received)
+    message.media_name = received.name
+    message.media_kind = "image"
+    message.media_mime = "image/svg+xml"
+    message.media_size = received.stat().st_size
+    message.media_sha256 = "b" * 64
+
+    pdf = Path(build_bundle(session, chain, str(tmp_path / "with-svg.pdf"), priv))
+
+    assert pdf.exists() and pdf.stat().st_size > 0
+    assert verify_signature(pdf.read_bytes(), Path(str(pdf) + ".sig").read_bytes(), pub) is True
+    assert "evidence image preview skipped" not in caplog.text
 
 
 def test_evidence_package_verifier_rejects_tampering(tmp_path, keypair):

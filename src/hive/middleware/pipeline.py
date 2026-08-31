@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from hive.middleware.chunking import Pace, plan_reply
+from hive.middleware.language import LanguageAlignment, assess_language_alignment
 from hive.middleware.linguistic import has_manglish_particle, inject_noise
 from hive.middleware.temporal import (
     calibrate_pace,
@@ -29,6 +30,22 @@ class MiddlewareResult:
     message_delays_s: tuple[float, ...] = ()
     message_typing_s: tuple[float, ...] = ()
     pace: Pace = "normal"
+    language_alignment: LanguageAlignment = LanguageAlignment(
+        expected="unknown",
+        observed="unknown",
+        status="uncertain",
+        reason="language has not been assessed",
+    )
+
+    @property
+    def planned_total_delay_s(self) -> float:
+        """Total planned wait across all outbound bubbles."""
+        return sum(self.message_delays_s)
+
+    @property
+    def planned_typing_s(self) -> float:
+        """Total portion of the plan shown as active typing."""
+        return sum(self.message_typing_s)
 
 
 def apply(
@@ -89,6 +106,20 @@ def apply(
         )
         for index, message in enumerate(messages)
     )
+    alignment = assess_language_alignment(incoming_text, "\n".join(messages))
+    if alignment.status != "aligned":
+        # Do not translate or rewrite automatically: doing so can alter persona
+        # details or accidentally weaken outbound safety. The result is exposed
+        # to the audit/evaluation path so a caller can review the mismatch.
+        from hive.logging_setup import get_logger
+
+        get_logger(__name__).warning(
+            "L1 language alignment: expected=%s observed=%s status=%s reason=%s",
+            alignment.expected,
+            alignment.observed,
+            alignment.status,
+            alignment.reason,
+        )
     return MiddlewareResult(
         text="\n\n".join(messages),
         delay_s=delays[0],
@@ -96,4 +127,5 @@ def apply(
         message_delays_s=delays,
         message_typing_s=typing,
         pace=cast(Pace, pace),
+        language_alignment=alignment,
     )

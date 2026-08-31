@@ -50,6 +50,10 @@ class TurnOutput:
     message_delays_s: tuple[float, ...] = ()  # delay before each bubble
     message_typing_s: tuple[float, ...] = ()  # visible typing portion of each delay
     pace: str = "normal"  # model-selected engagement pace
+    language_expected: str = "unknown"
+    language_observed: str = "unknown"
+    language_alignment: str = "uncertain"
+    language_alignment_reason: str = ""
     handed_back: bool = False  # early-exit: conversation deemed benign
     terminated: bool = False   # budget exhausted (max_turns / max_duration)
     reason: str = ""           # "" | "benign" | "max_turns" | "max_duration"
@@ -226,6 +230,10 @@ class HiveEngine:
                 message_delays_s=tuple(final.get("message_delays_s", ())),
                 message_typing_s=tuple(final.get("message_typing_s", ())),
                 pace=final.get("pace", "normal"),
+                language_expected=final.get("language_expected", "unknown"),
+                language_observed=final.get("language_observed", "unknown"),
+                language_alignment=final.get("language_alignment", "uncertain"),
+                language_alignment_reason=final.get("language_alignment_reason", ""),
                 handed_back=(reason == "benign"),
                 terminated=bool(final.get("terminate")) and reason in ("max_turns", "max_duration"),
                 reason=reason,
@@ -245,6 +253,12 @@ class HiveEngine:
                     "delays_s": list(output.message_delays_s),
                     "typing_s": list(output.message_typing_s),
                     "pace": output.pace,
+                    "planned_total_delay_s": sum(output.message_delays_s),
+                    "planned_typing_s": sum(output.message_typing_s),
+                    "language_expected": output.language_expected,
+                    "language_observed": output.language_observed,
+                    "language_alignment": output.language_alignment,
+                    "language_alignment_reason": output.language_alignment_reason,
                     "verdict": output.verdict,
                     "reason": output.reason,
                     "handed_back": output.handed_back,

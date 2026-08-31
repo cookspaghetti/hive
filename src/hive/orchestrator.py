@@ -62,6 +62,10 @@ class TurnState(TypedDict, total=False):
     message_delays_s: list[float]
     message_typing_s: list[float]
     pace: str
+    language_expected: str
+    language_observed: str
+    language_alignment: str
+    language_alignment_reason: str
     delay_s: float
     terminate: bool
     reason: str  # "" | "benign" | "max_turns" | "max_duration"
@@ -404,6 +408,7 @@ def build_turn_graph(engine: HiveEngine) -> Any:
         )
         messages = mw.messages or ((mw.text,) if mw.text else ())
         session.reply_pace = mw.pace
+        language = mw.language_alignment
         audit_event(
             "reply_plan",
             "reply_plan_created",
@@ -413,7 +418,13 @@ def build_turn_graph(engine: HiveEngine) -> Any:
                 "messages": list(messages),
                 "delays_s": list(mw.message_delays_s),
                 "typing_s": list(mw.message_typing_s),
+                "planned_total_delay_s": mw.planned_total_delay_s,
+                "planned_typing_s": mw.planned_typing_s,
                 "pace": mw.pace,
+                "language_expected": language.expected,
+                "language_observed": language.observed,
+                "language_alignment": language.status,
+                "language_alignment_reason": language.reason,
             },
             peer_id=session.peer_id,
             session_id=session.session_id,
@@ -433,6 +444,10 @@ def build_turn_graph(engine: HiveEngine) -> Any:
             "message_delays_s": list(mw.message_delays_s),
             "message_typing_s": list(mw.message_typing_s),
             "pace": mw.pace,
+            "language_expected": language.expected,
+            "language_observed": language.observed,
+            "language_alignment": language.status,
+            "language_alignment_reason": language.reason,
             "delay_s": mw.delay_s,
         }
 

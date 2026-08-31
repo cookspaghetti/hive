@@ -1,6 +1,7 @@
 """L1 human-emulation middleware tests (fyp.txt L1)."""
 
 from hive.middleware.chunking import plan_reply, split_reply
+from hive.middleware.language import assess_language_alignment, detect_language
 from hive.middleware.linguistic import inject_noise
 from hive.middleware.pipeline import apply
 from hive.middleware.temporal import compute_delay, compute_phone_check_delay
@@ -26,6 +27,38 @@ def test_zero_rate_no_typos_but_maybe_particle():
 def test_mandarin_is_not_corrupted_by_latin_typo_emulation():
     text = "请告诉我你们公司的名字和地址。"
     assert inject_noise(text, "confused_elderly", rate=1.0, manglish=True, seed=2) == text
+
+
+def test_language_detector_supports_english_mandarin_and_code_switching():
+    assert detect_language("You need to verify your account lah") == "english"
+    assert detect_language("请告诉我你的银行账号") == "mandarin"
+    assert detect_language("请你 open your banking app now") == "mixed"
+
+
+def test_language_alignment_flags_clear_switch_without_rewriting_reply():
+    reply = "I need a moment to check this"
+
+    assessment = assess_language_alignment("请现在转账给我", reply)
+    result = apply(reply, "confused_elderly", incoming_text="请现在转账给我", seed=3)
+
+    assert assessment.status == "mismatch"
+    assert assessment.expected == "mandarin"
+    assert assessment.observed == "english"
+    assert result.language_alignment == assessment
+    assert result.text == reply
+
+
+def test_mandarin_reply_with_short_security_acronym_remains_aligned():
+    result = apply(
+        "我没有收到 OTP，可以再发吗？",
+        "confused_elderly",
+        incoming_text="请把 OTP 发给我",
+        seed=5,
+    )
+
+    assert result.language_alignment.status == "aligned"
+    assert result.language_alignment.expected == "mandarin"
+    assert result.language_alignment.observed == "mandarin"
 
 
 def test_delay_within_bounds_and_scales_with_length():
@@ -87,6 +120,8 @@ def test_explicit_reply_bubbles_are_preserved_and_timed():
             strict=True,
         )
     )
+    assert result.planned_total_delay_s == sum(result.message_delays_s)
+    assert result.planned_typing_s == sum(result.message_typing_s)
 
 
 def test_model_selected_pace_is_removed_and_scales_timing():

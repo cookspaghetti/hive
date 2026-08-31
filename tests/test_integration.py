@@ -51,6 +51,9 @@ def test_full_scam_session(tmp_path):
         out = eng.process_turn(session, chain, Message("stranger", text, time.time(), i * 2))
         assert out.text  # agent replied
         assert out.delay_s >= 2.0
+        assert out.language_expected == "english"
+        assert out.language_observed == "english"
+        assert out.language_alignment == "aligned"
 
     # HVIs harvested (bank account + url at least)
     kinds = {h.kind for h in session.hvis}

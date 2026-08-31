@@ -11,6 +11,7 @@ from pathlib import Path
 from hive.agent.personas import PERSONAS
 from hive.config import load_settings
 from hive.redteam.character import RUBRIC_VERSION
+from hive.redteam.integrity import finalize_result_directory
 from hive.redteam.runner import (
     EvaluationSandboxRunner,
     aggregate_results,
@@ -44,6 +45,18 @@ def main() -> None:
     parser.add_argument("--persona", action="append", choices=sorted(PERSONAS))
     parser.add_argument("--scenario", action="append")
     parser.add_argument(
+        "--language",
+        action="append",
+        choices=sorted({scenario.language for scenario in DEFAULT_SCENARIOS}),
+        help="Limit the matrix to one or more scenario languages",
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help="Run each selected scenario/persona combination this many times",
+    )
+    parser.add_argument(
         "--regex-only",
         action="store_true",
         help="Skip GLiNER loading and record a regex-only run",
@@ -56,6 +69,8 @@ def main() -> None:
     args = parser.parse_args()
     if not 1 <= args.max_turns <= 100:
         parser.error("--max-turns must be between 1 and 100")
+    if not 1 <= args.repeat <= 20:
+        parser.error("--repeat must be between 1 and 20")
 
     settings = load_settings()
     signing_key = Path(settings.signing_key_path)
@@ -67,11 +82,14 @@ def main() -> None:
     selected = [
         scenario
         for scenario in DEFAULT_SCENARIOS
-        if not args.scenario or scenario.key in set(args.scenario)
+        if (not args.scenario or scenario.key in set(args.scenario))
+        and (not args.language or scenario.language in set(args.language))
     ]
     if args.scenario and len(selected) != len(set(args.scenario)):
         available = ", ".join(scenario.key for scenario in DEFAULT_SCENARIOS)
         parser.error(f"unknown scenario; available values: {available}")
+    if not selected:
+        parser.error("the selected scenario and language filters produced an empty matrix")
     personas = args.persona or list(PERSONAS)
     created = datetime.now(UTC)
     output = timestamped_output_directory(args.output, created)
@@ -93,27 +111,29 @@ def main() -> None:
     results = []
     for scenario_index, scenario in enumerate(selected, start=1):
         for persona_index, persona in enumerate(personas, start=1):
-            filename = f"bundle_{scenario_index}_{persona_index}.pdf"
-            result = run_conversation(
-                engine.agent_client,
-                engine.agent_client,
-                ARCHETYPES[scenario.archetype],
-                persona,
-                max_turns=args.max_turns,
-                opener=scenario.opener,
-                engine=engine,
-                expected_hvis=scenario.expected_hvis,
-                expected_verdict=scenario.expected_verdict,
-                evidence_pdf=evidence / filename,
-                signing_key_path=signing_key,
-                scenario_key=scenario.key,
-                language=scenario.language,
-                opener_fixtures=scenario.fixture_keys,
-                character_client=None if args.no_character_judge else engine.agent_client,
-            )
-            results.append(result)
-            # Preserve every finished run even if a later model/evidence operation fails.
-            write_results(results, output)
+            for replicate in range(1, args.repeat + 1):
+                filename = f"bundle_{scenario_index}_{persona_index}_{replicate}.pdf"
+                result = run_conversation(
+                    engine.agent_client,
+                    engine.agent_client,
+                    ARCHETYPES[scenario.archetype],
+                    persona,
+                    max_turns=args.max_turns,
+                    opener=scenario.opener,
+                    engine=engine,
+                    expected_hvis=scenario.expected_hvis,
+                    expected_verdict=scenario.expected_verdict,
+                    evidence_pdf=evidence / filename,
+                    signing_key_path=signing_key,
+                    scenario_key=scenario.key,
+                    replicate=replicate,
+                    language=scenario.language,
+                    opener_fixtures=scenario.fixture_keys,
+                    character_client=None if args.no_character_judge else engine.agent_client,
+                )
+                results.append(result)
+                # Preserve every finished run even if a later model/evidence operation fails.
+                write_results(results, output)
 
     paths = write_results(results, output)
     metadata = {
@@ -128,7 +148,12 @@ def main() -> None:
         "output_policy": "timestamped_append_only",
         "scenario_set": "default-v2-multimodal",
         "scenario_count": len(selected),
+        "scenarios": [scenario.key for scenario in selected],
+        "languages": args.language or sorted({scenario.language for scenario in selected}),
         "personas": personas,
+        "persona_count": len(personas),
+        "repeat_count": args.repeat,
+        "expected_runs": len(selected) * len(personas) * args.repeat,
         "runs": len(results),
         "max_turns": args.max_turns,
         "ner_mode": "regex_only" if args.regex_only else "regex_plus_gliner",
@@ -176,6 +201,8 @@ def main() -> None:
         for result in results
     ):
         sys.exit(1)
+    manifest_path = finalize_result_directory(output)
+    print(f"Integrity manifest: {manifest_path}")
 
 
 if __name__ == "__main__":

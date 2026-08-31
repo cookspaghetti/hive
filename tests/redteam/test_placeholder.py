@@ -3,6 +3,8 @@
 import json
 from datetime import UTC, datetime
 
+import pytest
+
 from hive.extraction.engine import extract_hvis
 from hive.redteam.evaluate import timestamped_output_directory
 from hive.redteam.runner import (
@@ -148,6 +150,7 @@ def test_run_conversation_exercises_pipeline_metrics_and_evidence(tmp_path):
     )
 
     assert result.turns == 2
+    assert result.replicate == 1
     assert result.exchanges == 2
     assert result.extraction is not None
     assert result.extraction.true_positive == 2
@@ -171,9 +174,39 @@ def test_run_conversation_exercises_pipeline_metrics_and_evidence(tmp_path):
     assert "mean_engagement_duration_s" not in summary
     assert summary["character"]["automated"]["session_break_rate"] is None
     assert summary["mean_threat_indicators_per_session"] == len(result.hvi_items)
+    assert summary["hash_chain_validity_rate"] == 1.0
+    assert summary["evidence_verification_rate"] == 1.0
+    assert summary["forensic_log_integrity"] == {
+        "evaluated_sessions": 1,
+        "hash_chain_valid_sessions": 1,
+        "hash_chain_validity_rate": 1.0,
+        "evidence_verified_sessions": 1,
+        "evidence_verification_rate": 1.0,
+    }
     paths = write_results([result], tmp_path / "results")
     assert json.loads(paths["summary"].read_text(encoding="utf-8"))["runs"] == 1
     assert paths["csv"].read_text(encoding="utf-8").startswith("archetype,persona")
+
+
+def test_run_conversation_records_and_validates_replicate():
+    result = run_conversation(
+        agent_client=fake_client("Wait ah"),
+        scammer_client=fake_client("Pay now"),
+        archetype=ARCHETYPES["investment"],
+        persona="confused_elderly",
+        max_turns=1,
+        replicate=3,
+    )
+    assert result.replicate == 3
+    with pytest.raises(ValueError, match="replicate"):
+        run_conversation(
+            agent_client=fake_client("Wait ah"),
+            scammer_client=fake_client("Pay now"),
+            archetype=ARCHETYPES["investment"],
+            persona="confused_elderly",
+            max_turns=1,
+            replicate=0,
+        )
 
 
 def test_redteam_records_no_network_threat_intelligence_observations():
@@ -220,7 +253,7 @@ def test_all_required_scam_archetypes_are_defined():
 
 
 def test_versioned_scenario_labels_match_deterministic_extraction():
-    assert len(DEFAULT_SCENARIOS) == 19
+    assert len(DEFAULT_SCENARIOS) == 30
     assert {scenario.language for scenario in DEFAULT_SCENARIOS} == {
         "English",
         "Mandarin",

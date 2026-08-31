@@ -17,6 +17,7 @@ from hive.guardrails.injection import screen
 from hive.llm.client import LLMClient
 from hive.logging_setup import get_logger
 from hive.redteam.character import aggregate_character, assess_character, assessment_metrics
+from hive.redteam.integrity import invalidate_result_manifest
 from hive.redteam.scammer import Archetype, scammer_reply
 from hive.runtime import HiveEngine
 from hive.sandbox.runner import RawFindings
@@ -70,6 +71,7 @@ class RunResult:
     archetype: str
     persona: str
     scenario: str = ""
+    replicate: int = 1
     language: str = "unspecified"
     persona_prompt: str = ""
     transcript: list[tuple[str, str]] = field(default_factory=list)
@@ -196,6 +198,7 @@ def run_conversation(
     evidence_pdf: str | Path | None = None,
     signing_key_path: str | Path | None = None,
     scenario_key: str = "",
+    replicate: int = 1,
     language: str = "unspecified",
     opener_fixtures: Iterable[str] = (),
     character_client: LLMClient | None = None,
@@ -208,6 +211,8 @@ def run_conversation(
     """
     if max_turns < 1:
         raise ValueError("max_turns must be at least 1")
+    if replicate < 1:
+        raise ValueError("replicate must be at least 1")
     if (evidence_pdf is None) != (signing_key_path is None):
         raise ValueError("evidence_pdf and signing_key_path must be supplied together")
 
@@ -225,6 +230,7 @@ def run_conversation(
         archetype=archetype.key,
         persona=persona,
         scenario=scenario_key,
+        replicate=replicate,
         language=language,
         persona_prompt=get_persona(persona).system_prompt,
         expected_verdict=expected_verdict,
@@ -399,6 +405,8 @@ def aggregate_results(results: Iterable[RunResult]) -> dict[str, Any]:
     """Aggregate run-level outcomes with explicit denominators."""
     rows = list(results)
     count = len(rows)
+    hash_chain_valid_sessions = sum(row.chain_valid is True for row in rows)
+    evidence_verified_sessions = sum(row.evidence_verified is True for row in rows)
     tp = sum(row.extraction.true_positive for row in rows if row.extraction)
     fp = sum(row.extraction.false_positive for row in rows if row.extraction)
     fn = sum(row.extraction.false_negative for row in rows if row.extraction)
@@ -426,9 +434,23 @@ def aggregate_results(results: Iterable[RunResult]) -> dict[str, Any]:
             sum(row.language_match for row in rows) / count if count else 0.0
         ),
         "verdict_accuracy": (sum(row.verdict_correct for row in rows) / count if count else 0.0),
-        "evidence_verification_rate": (
-            sum(row.evidence_verified is True for row in rows) / count if count else 0.0
+        "hash_chain_validity_rate": (
+            hash_chain_valid_sessions / count if count else 0.0
         ),
+        "evidence_verification_rate": (
+            evidence_verified_sessions / count if count else 0.0
+        ),
+        "forensic_log_integrity": {
+            "evaluated_sessions": count,
+            "hash_chain_valid_sessions": hash_chain_valid_sessions,
+            "hash_chain_validity_rate": (
+                hash_chain_valid_sessions / count if count else 0.0
+            ),
+            "evidence_verified_sessions": evidence_verified_sessions,
+            "evidence_verification_rate": (
+                evidence_verified_sessions / count if count else 0.0
+            ),
+        },
         "extraction": {
             "true_positive": tp,
             "false_positive": fp,
@@ -445,6 +467,9 @@ def write_results(results: Iterable[RunResult], output_directory: str | Path) ->
     rows = list(results)
     output = Path(output_directory)
     output.mkdir(parents=True, exist_ok=True)
+    # Presence of redteam_manifest.json is the machine-readable completion
+    # marker. Any progress write must invalidate it before artifacts change.
+    invalidate_result_manifest(output)
     raw_path = output / "redteam_runs.json"
     summary_path = output / "redteam_summary.json"
     csv_path = output / "redteam_runs.csv"
@@ -461,6 +486,7 @@ def write_results(results: Iterable[RunResult], output_directory: str | Path) ->
             "archetype",
             "persona",
             "scenario",
+            "replicate",
             "language",
             "turns",
             "exchanges",

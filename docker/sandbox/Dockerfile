@@ -12,6 +12,10 @@ FROM python:3.12-slim-trixie@sha256:2c941e860699f878900b0edc2403613c234d4b32eda3
 ARG SCRAPLING_VERSION=0.4.14
 ARG PLAYWRIGHT_VERSION=1.62.0
 ARG PATCHRIGHT_VERSION=1.62.1
+LABEL io.hive.sandbox.contract="hive-scrapling-v1" \
+      io.hive.sandbox.scrapling-version="${SCRAPLING_VERSION}" \
+      io.hive.sandbox.playwright-version="${PLAYWRIGHT_VERSION}" \
+      io.hive.sandbox.patchright-version="${PATCHRIGHT_VERSION}"
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

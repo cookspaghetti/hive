@@ -135,6 +135,11 @@ def test_result_shape_is_sandbox_entry():
         "certificate_error",
         "runtime_ms",
         "fetcher",
+        "sandbox_image",
+        "sandbox_image_id",
+        "sandbox_contract",
+        "sandbox_python_version",
+        "sandbox_scrapling_version",
     ):
         assert key in r
     assert r["certificate_age_days"] == 17

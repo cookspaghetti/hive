@@ -52,6 +52,16 @@ def test_application_and_sandbox_base_images_are_immutable():
     assert "FROM python:3.11-slim@sha256:" in backend
     assert "FROM nginx:1.27-alpine@sha256:" in frontend
     assert "FROM python:3.12-slim-trixie@sha256:" in sandbox
+    assert 'io.hive.sandbox.contract="hive-scrapling-v1"' in sandbox
+
+
+def test_dind_rebuilds_stale_sandbox_and_probes_runtime_capabilities():
+    entrypoint = (ROOT / "docker" / "app-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert 'installed_contract' in entrypoint
+    assert 'io.hive.sandbox.contract' in entrypoint
+    assert 'from scrapling.fetchers import StealthyFetcher' in entrypoint
+    assert 'docker build -t "$sandbox_image" /app/docker/sandbox' in entrypoint
 
 
 def test_task_run_migrates_away_from_the_legacy_single_container():

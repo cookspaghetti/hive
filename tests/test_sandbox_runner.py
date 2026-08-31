@@ -6,6 +6,7 @@ ensure_network() create-if-missing behaviour. No Docker is executed; we assert
 the command construction and mock subprocess for ensure_network.
 """
 
+import json
 import subprocess
 from pathlib import Path
 from unittest import mock
@@ -14,10 +15,23 @@ import pytest
 
 from hive.sandbox.runner import (
     _SCRAPLING_SCRIPT,
+    SANDBOX_IMAGE_CONTRACT,
+    SandboxImageCapabilities,
+    SandboxImageError,
     ScraplingDockerRunner,
     configured_sandbox_runner,
     validate_public_url,
 )
+
+
+def _mark_image_verified(runner: ScraplingDockerRunner) -> None:
+    runner._image_capabilities = SandboxImageCapabilities(
+        image=runner.image,
+        image_id="sha256:test-image",
+        contract=SANDBOX_IMAGE_CONTRACT,
+        python_version="3.12.0",
+        scrapling_version="0.4.14",
+    )
 
 
 def test_docker_cmd_uses_dedicated_network_not_default():
@@ -27,7 +41,7 @@ def test_docker_cmd_uses_dedicated_network_not_default():
 
 
 def test_docker_cmd_no_conflicting_user_override():
-    # The image already runs as pwuser; we must NOT force --user nobody.
+    # The image already runs as its non-root sandbox user.
     cmd = ScraplingDockerRunner()._docker_cmd("http://x.example/")
     assert "nobody" not in cmd
     assert "--user" not in cmd
@@ -103,6 +117,93 @@ def test_configured_runner_uses_resource_limits_by_default(monkeypatch):
     assert runner.pids_limit == 128
 
 
+def test_configured_runner_honours_image_override(monkeypatch):
+    monkeypatch.setenv("HIVE_SANDBOX_IMAGE", "registry.example/hive-sandbox:tested")
+
+    runner = configured_sandbox_runner()
+
+    assert runner.image == "registry.example/hive-sandbox:tested"
+
+
+def test_image_preflight_rejects_stale_contract_with_rebuild_instruction(tmp_path):
+    runner = ScraplingDockerRunner(out_dir=str(tmp_path))
+    inspect_result = mock.Mock(
+        returncode=0,
+        stdout=(
+            '[{"Id":"sha256:old","Config":{"Labels":'
+            '{"io.hive.sandbox.contract":"legacy-playwright"}}}]'
+        ),
+        stderr="",
+    )
+    with mock.patch("subprocess.run", return_value=inspect_result) as run:
+        with pytest.raises(SandboxImageError, match="stale or incompatible") as error:
+            runner.ensure_image_capabilities()
+
+    assert "docker build -t hive-sandbox:latest docker/sandbox" in str(error.value)
+    assert run.call_count == 1
+
+
+def test_image_preflight_proves_python_and_scrapling_and_caches_result(tmp_path):
+    runner = ScraplingDockerRunner(out_dir=str(tmp_path))
+    inspect_result = mock.Mock(
+        returncode=0,
+        stdout=json.dumps(
+            [
+                {
+                    "Id": "sha256:correct",
+                    "Config": {"Labels": {"io.hive.sandbox.contract": SANDBOX_IMAGE_CONTRACT}},
+                }
+            ]
+        ),
+        stderr="",
+    )
+    probe_result = mock.Mock(
+        returncode=0,
+        stdout='{"python":"3.12.11","scrapling":"0.4.14"}\n',
+        stderr="",
+    )
+    with mock.patch("subprocess.run", side_effect=[inspect_result, probe_result]) as run:
+        first = runner.ensure_image_capabilities()
+        second = runner.ensure_image_capabilities()
+
+    assert first is second
+    assert first.image_id == "sha256:correct"
+    assert first.python_version == "3.12.11"
+    assert first.scrapling_version == "0.4.14"
+    assert run.call_count == 2
+    probe_command = run.call_args_list[1].args[0]
+    assert probe_command[:4] == ["docker", "run", "--rm", "--network"]
+    assert probe_command[probe_command.index("--network") + 1] == "none"
+    assert "--read-only" in probe_command
+
+
+def test_image_preflight_reports_missing_python_as_capability_failure(tmp_path):
+    runner = ScraplingDockerRunner(out_dir=str(tmp_path))
+    inspect_result = mock.Mock(
+        returncode=0,
+        stdout=json.dumps(
+            [
+                {
+                    "Id": "sha256:mislabelled",
+                    "Config": {"Labels": {"io.hive.sandbox.contract": SANDBOX_IMAGE_CONTRACT}},
+                }
+            ]
+        ),
+        stderr="",
+    )
+    probe_result = mock.Mock(
+        returncode=127,
+        stdout="",
+        stderr='exec: "python": executable file not found',
+    )
+    with mock.patch("subprocess.run", side_effect=[inspect_result, probe_result]):
+        with pytest.raises(SandboxImageError, match="Python/Scrapling capability") as error:
+            runner.ensure_image_capabilities()
+
+    assert "executable file not found" in str(error.value)
+    assert "Rebuild it with" in str(error.value)
+
+
 def test_scrapling_script_enables_stealth_and_preserves_request_guards():
     compile(_SCRAPLING_SCRIPT, "<sandbox>", "exec")
     assert "sys.argv[1]" in _SCRAPLING_SCRIPT
@@ -116,7 +217,7 @@ def test_scrapling_script_enables_stealth_and_preserves_request_guards():
     assert "blocked_requests" in _SCRAPLING_SCRIPT
     assert 'access_state="challenge"' in _SCRAPLING_SCRIPT
     assert "request.frame == page.main_frame" in _SCRAPLING_SCRIPT
-    assert 'full_page=False' in _SCRAPLING_SCRIPT
+    assert "full_page=False" in _SCRAPLING_SCRIPT
     assert "ssl.create_default_context" in _SCRAPLING_SCRIPT
     assert "ssl.cert_time_to_seconds" in _SCRAPLING_SCRIPT
     assert 'observed["certificate_age_days"]' in _SCRAPLING_SCRIPT
@@ -156,9 +257,12 @@ def test_ensure_network_noop_when_present():
 
 def test_run_ensures_network_before_docker_run(tmp_path):
     runner = ScraplingDockerRunner(network="custom-net", out_dir=str(tmp_path))
-    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
-        runner, "ensure_network"
-    ) as ensure, mock.patch("subprocess.run") as run:
+    _mark_image_verified(runner)
+    with (
+        mock.patch("hive.sandbox.runner.validate_public_url"),
+        mock.patch.object(runner, "ensure_network") as ensure,
+        mock.patch("subprocess.run") as run,
+    ):
         run.return_value = mock.Mock(
             stdout=(
                 '{"final_url":"https://x/","redirect_chain":[],"body_len":1000,'
@@ -178,11 +282,16 @@ def test_run_ensures_network_before_docker_run(tmp_path):
 
 def test_run_returns_error_when_network_setup_fails(tmp_path):
     runner = ScraplingDockerRunner(network="custom-net", out_dir=str(tmp_path))
-    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
-        runner,
-        "ensure_network",
-        side_effect=subprocess.CalledProcessError(1, ["docker", "network", "create"]),
-    ), mock.patch("subprocess.run") as run:
+    _mark_image_verified(runner)
+    with (
+        mock.patch("hive.sandbox.runner.validate_public_url"),
+        mock.patch.object(
+            runner,
+            "ensure_network",
+            side_effect=subprocess.CalledProcessError(1, ["docker", "network", "create"]),
+        ),
+        mock.patch("subprocess.run") as run,
+    ):
         result = runner.run("http://x/")
         assert "docker" in result.error
         run.assert_not_called()
@@ -190,10 +299,13 @@ def test_run_returns_error_when_network_setup_fails(tmp_path):
 
 def test_dns_preflight_failure_is_not_counted_as_a_blocked_request(tmp_path):
     runner = ScraplingDockerRunner(out_dir=str(tmp_path))
-    with mock.patch(
-        "hive.sandbox.runner.validate_public_url",
-        side_effect=ValueError("sandbox could not resolve hostname: missing.example"),
-    ), mock.patch.object(runner, "ensure_network") as ensure:
+    with (
+        mock.patch(
+            "hive.sandbox.runner.validate_public_url",
+            side_effect=ValueError("sandbox could not resolve hostname: missing.example"),
+        ),
+        mock.patch.object(runner, "ensure_network") as ensure,
+    ):
         result = runner.run("https://missing.example/")
 
     assert result.access_state == "preflight_failed"
@@ -216,9 +328,12 @@ def test_blocked_preflight_destination_is_counted(tmp_path):
 
 def test_run_reports_nonzero_container_exit_with_stderr(tmp_path):
     runner = ScraplingDockerRunner(out_dir=str(tmp_path))
-    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
-        runner, "ensure_network"
-    ), mock.patch("subprocess.run") as run:
+    _mark_image_verified(runner)
+    with (
+        mock.patch("hive.sandbox.runner.validate_public_url"),
+        mock.patch.object(runner, "ensure_network"),
+        mock.patch("subprocess.run") as run,
+    ):
         run.return_value = mock.Mock(stdout="", stderr="cgroup failed", returncode=125)
 
         result = runner.run("http://x/")
@@ -229,10 +344,13 @@ def test_run_reports_nonzero_container_exit_with_stderr(tmp_path):
 
 def test_run_removes_named_container_after_timeout(tmp_path):
     runner = ScraplingDockerRunner(out_dir=str(tmp_path), run_timeout_s=12)
+    _mark_image_verified(runner)
     timeout = subprocess.TimeoutExpired(["docker", "run"], 12)
-    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
-        runner, "ensure_network"
-    ), mock.patch("subprocess.run") as run:
+    with (
+        mock.patch("hive.sandbox.runner.validate_public_url"),
+        mock.patch.object(runner, "ensure_network"),
+        mock.patch("subprocess.run") as run,
+    ):
         run.side_effect = [timeout, mock.Mock(returncode=0)]
 
         result = runner.run("http://x.example/")
@@ -245,6 +363,7 @@ def test_run_removes_named_container_after_timeout(tmp_path):
 
 def test_run_preserves_challenge_checkpoint_after_timeout(tmp_path):
     runner = ScraplingDockerRunner(out_dir=str(tmp_path), run_timeout_s=12)
+    _mark_image_verified(runner)
 
     def run_side_effect(command, **kwargs):
         if command[:3] == ["docker", "run", "--rm"]:
@@ -259,12 +378,33 @@ def test_run_preserves_challenge_checkpoint_after_timeout(tmp_path):
             raise subprocess.TimeoutExpired(command, 12)
         return mock.Mock(returncode=0)
 
-    with mock.patch("hive.sandbox.runner.validate_public_url"), mock.patch.object(
-        runner, "ensure_network"
-    ), mock.patch("subprocess.run", side_effect=run_side_effect):
+    with (
+        mock.patch("hive.sandbox.runner.validate_public_url"),
+        mock.patch.object(runner, "ensure_network"),
+        mock.patch("subprocess.run", side_effect=run_side_effect),
+    ):
         result = runner.run("https://x.example/")
 
     assert result.access_state == "challenge"
     assert result.challenge_detected is True
     assert result.challenge_provider == "cloudflare"
     assert result.error == "sandbox timed out after 12s"
+
+
+def test_run_stops_before_network_or_container_when_image_is_stale(tmp_path):
+    runner = ScraplingDockerRunner(out_dir=str(tmp_path))
+    with (
+        mock.patch("hive.sandbox.runner.validate_public_url"),
+        mock.patch.object(
+            runner,
+            "ensure_image_capabilities",
+            side_effect=SandboxImageError("stale image; rebuild it"),
+        ),
+        mock.patch.object(runner, "ensure_network") as ensure_network,
+    ):
+        result = runner.run("https://x.example/")
+
+    assert result.access_state == "image_preflight_failed"
+    assert result.sandbox_image == "hive-sandbox:latest"
+    assert "stale image" in result.error
+    ensure_network.assert_not_called()

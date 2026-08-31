@@ -48,15 +48,36 @@ if [ "$ready" -ne 1 ]; then
     exit 1
 fi
 
-# Build the disposable sandbox image inside the inner daemon if absent.
-if ! docker image inspect hive-sandbox:latest > /dev/null 2>&1; then
+# Build the disposable sandbox image inside the inner daemon if absent or when
+# a persisted DinD volume contains an older, incompatible image with the same
+# tag. The contract label changes whenever the runner/image interface changes.
+sandbox_image="${HIVE_SANDBOX_IMAGE:-hive-sandbox:latest}"
+sandbox_contract="hive-scrapling-v1"
+installed_contract=$(docker image inspect \
+    --format '{{ index .Config.Labels "io.hive.sandbox.contract" }}' \
+    "$sandbox_image" 2>/dev/null || true)
+if [ "$installed_contract" != "$sandbox_contract" ]; then
     sandbox_started=$(date +%s)
-    echo "[startup][sandbox] INITIALIZING image=hive-sandbox:latest source=build"
-    docker build -t hive-sandbox:latest /app/docker/sandbox
-    echo "[startup][sandbox] READY image=hive-sandbox:latest duration=$(($(date +%s) - sandbox_started))s"
+    echo "[startup][sandbox] INITIALIZING image=$sandbox_image source=build installed_contract=${installed_contract:-missing} expected_contract=$sandbox_contract"
+    docker build -t "$sandbox_image" /app/docker/sandbox
+    echo "[startup][sandbox] READY image=$sandbox_image duration=$(($(date +%s) - sandbox_started))s"
 else
-    echo "[startup][sandbox] READY image=hive-sandbox:latest source=cache"
+    echo "[startup][sandbox] READY image=$sandbox_image source=cache contract=$installed_contract"
 fi
+
+# A correct-looking label is not enough: prove the cached/built image can run
+# the exact Python and Scrapling imports required by the forensic runner. This
+# probe is offline and uses the same read-only/non-privileged boundary.
+if ! sandbox_probe=$(docker run --rm --network none --read-only \
+    --tmpfs /tmp:rw,size=16m -e HOME=/tmp --cap-drop ALL \
+    --security-opt no-new-privileges "$sandbox_image" python -c \
+    'import json, platform; from importlib.metadata import version; from scrapling.fetchers import StealthyFetcher; print(json.dumps({"python": platform.python_version(), "scrapling": version("scrapling")}))' \
+    2>&1); then
+    echo "[startup][sandbox] ERROR image capability probe failed: $sandbox_probe" >&2
+    echo "[startup][sandbox] ERROR rebuild with: docker build -t $sandbox_image /app/docker/sandbox" >&2
+    exit 1
+fi
+echo "[startup][sandbox] VERIFIED image=$sandbox_image contract=$sandbox_contract capabilities=$sandbox_probe"
 
 # Verify mode: prove the DinD plumbing works without needing real credentials.
 if [ "${HIVE_VERIFY_ONLY:-}" = "1" ]; then

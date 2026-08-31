@@ -40,6 +40,24 @@ EGRESS_FIREWALL_HINT = (
 
 log = get_logger(__name__)
 
+SANDBOX_IMAGE_CONTRACT = "hive-scrapling-v1"
+SANDBOX_IMAGE_REBUILD_COMMAND = "docker build -t {image} docker/sandbox"
+
+
+class SandboxImageError(RuntimeError):
+    """The configured image cannot satisfy the sandbox runner contract."""
+
+
+@dataclass(frozen=True)
+class SandboxImageCapabilities:
+    """Identity and runtime versions proven by the offline image preflight."""
+
+    image: str
+    image_id: str
+    contract: str
+    python_version: str
+    scrapling_version: str
+
 
 @dataclass
 class RawFindings:
@@ -62,6 +80,11 @@ class RawFindings:
     access_state: str = ""
     challenge_detected: bool = False
     challenge_provider: str = ""
+    sandbox_image: str = ""
+    sandbox_image_id: str = ""
+    sandbox_contract: str = ""
+    sandbox_python_version: str = ""
+    sandbox_scrapling_version: str = ""
     error: str = ""
 
 
@@ -426,14 +449,142 @@ class ScraplingDockerRunner:
         self.memory_limit = memory_limit
         self.pids_limit = pids_limit
         self.run_timeout_s = run_timeout_s
+        self._image_capabilities: SandboxImageCapabilities | None = None
         Path(self.out_dir).mkdir(parents=True, exist_ok=True)
+
+    def ensure_image_capabilities(self) -> SandboxImageCapabilities:
+        """Verify image identity plus Python/Scrapling capability once per runner.
+
+        The image tag may survive across deployments in Docker's persistent
+        storage. Requiring a contract label prevents an older image with the
+        same tag from reaching a live URL inspection. The offline container
+        probe then proves that the required runtime and import actually work.
+        """
+        if self._image_capabilities is not None:
+            return self._image_capabilities
+
+        rebuild = SANDBOX_IMAGE_REBUILD_COMMAND.format(image=self.image)
+        try:
+            inspected = subprocess.run(
+                ["docker", "image", "inspect", self.image],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise SandboxImageError(
+                "sandbox image preflight failed: Docker CLI is unavailable"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise SandboxImageError(
+                "sandbox image preflight failed: Docker image inspection timed out"
+            ) from exc
+        if inspected.returncode != 0:
+            detail = inspected.stderr.strip() or inspected.stdout.strip() or "image not found"
+            raise SandboxImageError(
+                f"sandbox image preflight failed for {self.image}: {detail[:500]}. "
+                f"Build it with `{rebuild}`."
+            )
+        try:
+            image_data = json.loads(inspected.stdout)[0]
+            image_id = str(image_data.get("Id") or "")
+            labels = (image_data.get("Config") or {}).get("Labels") or {}
+            contract = str(labels.get("io.hive.sandbox.contract") or "")
+        except (IndexError, TypeError, ValueError) as exc:
+            raise SandboxImageError(
+                f"sandbox image preflight failed for {self.image}: "
+                "Docker returned invalid image metadata"
+            ) from exc
+        if contract != SANDBOX_IMAGE_CONTRACT:
+            installed = contract or "missing"
+            raise SandboxImageError(
+                f"sandbox image {self.image} is stale or incompatible: expected contract "
+                f"{SANDBOX_IMAGE_CONTRACT}, found {installed}. Rebuild it with `{rebuild}`."
+            )
+
+        probe_script = (
+            "import json, platform; "
+            "from importlib.metadata import version; "
+            "from scrapling.fetchers import StealthyFetcher; "
+            "print(json.dumps({'python': platform.python_version(), "
+            "'scrapling': version('scrapling')}))"
+        )
+        probe_command = [
+            "docker",
+            "run",
+            "--rm",
+            "--network",
+            "none",
+            "--read-only",
+            "--tmpfs",
+            "/tmp:rw,size=16m",
+            "-e",
+            "HOME=/tmp",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
+            self.image,
+            "python",
+            "-c",
+            probe_script,
+        ]
+        try:
+            probed = subprocess.run(
+                probe_command,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+            raise SandboxImageError(
+                f"sandbox image capability probe could not run for {self.image}: {exc}. "
+                f"Rebuild it with `{rebuild}`."
+            ) from exc
+        if probed.returncode != 0:
+            detail = probed.stderr.strip() or probed.stdout.strip() or "no probe output"
+            raise SandboxImageError(
+                f"sandbox image {self.image} failed the Python/Scrapling capability "
+                f"probe: {detail[:500]}. Rebuild it with `{rebuild}`."
+            )
+        try:
+            probe_data = json.loads(probed.stdout.strip().splitlines()[-1])
+            python_version = str(probe_data["python"])
+            scrapling_version = str(probe_data["scrapling"])
+        except (IndexError, KeyError, TypeError, ValueError) as exc:
+            raise SandboxImageError(
+                f"sandbox image capability probe returned invalid output for {self.image}"
+            ) from exc
+
+        capabilities = SandboxImageCapabilities(
+            image=self.image,
+            image_id=image_id,
+            contract=contract,
+            python_version=python_version,
+            scrapling_version=scrapling_version,
+        )
+        self._image_capabilities = capabilities
+        log.info(
+            "L4 sandbox: verified image=%s id=%s contract=%s python=%s scrapling=%s",
+            capabilities.image,
+            capabilities.image_id,
+            capabilities.contract,
+            capabilities.python_version,
+            capabilities.scrapling_version,
+        )
+        return capabilities
 
     @staticmethod
     def ensure_network(name: str = "hive-sandbox-net") -> None:
         """Create the dedicated sandbox bridge network if it does not exist."""
-        exists = subprocess.run(
-            ["docker", "network", "inspect", name], capture_output=True, text=True
-        ).returncode == 0
+        exists = (
+            subprocess.run(
+                ["docker", "network", "inspect", name], capture_output=True, text=True
+            ).returncode
+            == 0
+        )
         if not exists:
             subprocess.run(["docker", "network", "create", "--driver", "bridge", name], check=True)
             log.info("L4 sandbox: created network %s", name)
@@ -444,30 +595,45 @@ class ScraplingDockerRunner:
         container_name: str = "",
         output_dir: str = "",
     ) -> list[str]:
-        resource_limits = (
-            ["--pids-limit", str(self.pids_limit)] if self.pids_limit else []
-        )
+        resource_limits = ["--pids-limit", str(self.pids_limit)] if self.pids_limit else []
         if self.memory_limit:
             resource_limits = ["--memory", self.memory_limit, *resource_limits]
         identity = ["--name", container_name] if container_name else []
         mount_source = Path(output_dir or self.out_dir).expanduser().resolve()
         return [
-            "docker", "run", "--rm",
+            "docker",
+            "run",
+            "--rm",
             *identity,
-            "--network", self.network,
+            "--network",
+            self.network,
             "--read-only",
-            "--tmpfs", "/tmp:rw,size=256m",
-            "-e", "HOME=/tmp",
-            "--cap-drop", "ALL",
-            "--security-opt", "no-new-privileges",
+            "--tmpfs",
+            "/tmp:rw,size=256m",
+            "-e",
+            "HOME=/tmp",
+            "--cap-drop",
+            "ALL",
+            "--security-opt",
+            "no-new-privileges",
             *resource_limits,
-            "--dns", self.dns,
-            "-v", f"{mount_source}:/out",
-            self.image, "python", "-c", _SCRAPLING_SCRIPT, url,
+            "--dns",
+            self.dns,
+            "-v",
+            f"{mount_source}:/out",
+            self.image,
+            "python",
+            "-c",
+            _SCRAPLING_SCRIPT,
+            url,
         ]
 
     @staticmethod
-    def _findings_from_data(data: dict[str, Any], output_dir: Path) -> RawFindings:
+    def _findings_from_data(
+        data: dict[str, Any],
+        output_dir: Path,
+        capabilities: SandboxImageCapabilities | None = None,
+    ) -> RawFindings:
         return RawFindings(
             final_url=str(data.get("final_url") or ""),
             redirect_chain=list(data.get("redirect_chain") or []),
@@ -490,6 +656,11 @@ class ScraplingDockerRunner:
             access_state=str(data.get("access_state") or "error"),
             challenge_detected=bool(data.get("challenge_detected")),
             challenge_provider=str(data.get("challenge_provider") or ""),
+            sandbox_image=(capabilities.image if capabilities else ""),
+            sandbox_image_id=(capabilities.image_id if capabilities else ""),
+            sandbox_contract=(capabilities.contract if capabilities else ""),
+            sandbox_python_version=(capabilities.python_version if capabilities else ""),
+            sandbox_scrapling_version=(capabilities.scrapling_version if capabilities else ""),
             error=str(data.get("error") or ""),
         )
 
@@ -497,8 +668,10 @@ class ScraplingDockerRunner:
         started = time.monotonic()
         container_name = f"hive-sandbox-{uuid.uuid4().hex[:12]}"
         output_dir = Path(self.out_dir) / container_name
+        capabilities: SandboxImageCapabilities | None = None
         try:
             validate_public_url(url)
+            capabilities = self.ensure_image_capabilities()
             output_dir.mkdir(parents=True, exist_ok=False)
             output_dir.chmod(0o777)
             self.ensure_network(self.network)
@@ -516,6 +689,15 @@ class ScraplingDockerRunner:
                 blocked_requests=[url] if detail.startswith("sandbox blocked") else [],
                 runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
                 access_state="preflight_failed",
+            )
+        except SandboxImageError as exc:
+            detail = str(exc)
+            log.error("L4 sandbox: %s", detail)
+            return RawFindings(
+                error=detail,
+                runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+                access_state="image_preflight_failed",
+                sandbox_image=self.image,
             )
         except subprocess.TimeoutExpired:
             try:
@@ -536,19 +718,23 @@ class ScraplingDockerRunner:
                 progress = None
             if isinstance(progress, dict):
                 progress["error"] = error
-                progress["runtime_ms"] = max(
-                    0, round((time.monotonic() - started) * 1000)
-                )
-                return self._findings_from_data(progress, output_dir)
+                progress["runtime_ms"] = max(0, round((time.monotonic() - started) * 1000))
+                return self._findings_from_data(progress, output_dir, capabilities)
             return RawFindings(
                 error=error,
                 runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+                sandbox_image=(capabilities.image if capabilities else self.image),
+                sandbox_image_id=(capabilities.image_id if capabilities else ""),
+                sandbox_contract=(capabilities.contract if capabilities else ""),
             )
         except (FileNotFoundError, subprocess.CalledProcessError) as exc:
             log.error("L4 sandbox: container run failed: %s", exc)
             return RawFindings(
                 error=str(exc),
                 runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+                sandbox_image=(capabilities.image if capabilities else self.image),
+                sandbox_image_id=(capabilities.image_id if capabilities else ""),
+                sandbox_contract=(capabilities.contract if capabilities else ""),
             )
         if proc.returncode != 0:
             error = proc.stderr.strip() or proc.stdout.strip() or "no container output"
@@ -556,6 +742,9 @@ class ScraplingDockerRunner:
             return RawFindings(
                 error=f"container exited {proc.returncode}: {error[:1000]}",
                 runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+                sandbox_image=(capabilities.image if capabilities else self.image),
+                sandbox_image_id=(capabilities.image_id if capabilities else ""),
+                sandbox_contract=(capabilities.contract if capabilities else ""),
             )
         try:
             data = json.loads(proc.stdout.strip().splitlines()[-1])
@@ -564,9 +753,12 @@ class ScraplingDockerRunner:
             return RawFindings(
                 error=f"unparseable output: {detail[:1000]}",
                 runtime_ms=max(0, round((time.monotonic() - started) * 1000)),
+                sandbox_image=(capabilities.image if capabilities else self.image),
+                sandbox_image_id=(capabilities.image_id if capabilities else ""),
+                sandbox_contract=(capabilities.contract if capabilities else ""),
             )
         data["runtime_ms"] = max(0, round((time.monotonic() - started) * 1000))
-        return self._findings_from_data(data, output_dir)
+        return self._findings_from_data(data, output_dir, capabilities)
 
 
 # Compatibility for callers that imported the original runner name.
@@ -583,6 +775,8 @@ def configured_sandbox_runner(
     pids_value = os.getenv("HIVE_SANDBOX_PIDS_LIMIT", "128").strip()
     pids_limit = int(pids_value) if pids_value else None
     return ScraplingDockerRunner(
+        image=os.getenv("HIVE_SANDBOX_IMAGE", "hive-sandbox:latest").strip()
+        or "hive-sandbox:latest",
         out_dir=out_dir,
         memory_limit=memory_limit,
         pids_limit=pids_limit,

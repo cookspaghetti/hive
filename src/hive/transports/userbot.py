@@ -53,6 +53,15 @@ class ObservedChat:
     pending_messages: list[Message] = field(default_factory=list)
 
 
+@dataclass(frozen=True, slots=True)
+class _DeliveryAuthorization:
+    """Short-lived proof that a reply was produced for captured inbound data."""
+
+    peer_id: int
+    session_id: str
+    inbound_message_ids: tuple[int, ...]
+
+
 class UserbotTransport:
     def __init__(
         self,
@@ -105,6 +114,7 @@ class UserbotTransport:
         self._inbound_check_at: dict[int, float] = {}
         self._inbound_events: dict[int, asyncio.Event] = {}
         self._inflight_batches: dict[int, list[Message]] = {}
+        self._delivery_authorizations: dict[int, _DeliveryAuthorization] = {}
         self._media_analysis_tasks: dict[int, dict[int, asyncio.Task[Any]]] = {}
         self._takeover_seed_messages: dict[int, list[Message]] = {}
         self._paused_recoveries: set[int] = set()
@@ -363,7 +373,9 @@ class UserbotTransport:
         try:
             sender = await event.get_sender()
         except Exception:
-            return "", "", True
+            # Fail closed: without an identity we cannot prove this is a private
+            # human rather than a bot, support account, or the logged-in user.
+            return "", "", False
         eligible = not any(
             bool(getattr(sender, attribute, False))
             for attribute in ("bot", "support", "is_self")
@@ -859,7 +871,7 @@ class UserbotTransport:
             captured_ts=captured_ts,
             platform="telegram",
         )
-        if peer_id in self._paused_recoveries:
+        if peer_id in self._paused_recoveries or peer_id in self._paused_limits:
             queued = self._takeover_seed_messages.setdefault(peer_id, [])
             if not any(item.msg_id == message.msg_id for item in queued):
                 queued.append(message)
@@ -1046,12 +1058,58 @@ class UserbotTransport:
             self._media_analysis_tasks.pop(peer_id, None)
 
     async def _process_inbound_batch(self, peer_id: int, batch: list[Message]) -> None:
+        """Process only a captured Telegram inbound batch and authorise its replies."""
+        entry = self._sessions.get(peer_id)
+        if entry is None:
+            return
+        session = entry[0]
+        if session.phase in {Phase.CLOSING, Phase.SEALED}:
+            return
+        if peer_id in self._paused_recoveries or peer_id in self._paused_limits:
+            return
+        if not batch or any(
+            message.role != "stranger" or message.platform != "telegram"
+            for message in batch
+        ):
+            audit_event(
+                "reply_delivery",
+                "outbound_authorization_rejected",
+                component="transport.userbot",
+                payload={
+                    "reason": "missing_eligible_telegram_inbound",
+                    "message_count": len(batch),
+                },
+                peer_id=peer_id,
+                session_id=session.session_id,
+                level="warning",
+            )
+            return
+        authorization = _DeliveryAuthorization(
+            peer_id=peer_id,
+            session_id=session.session_id,
+            inbound_message_ids=tuple(message.msg_id for message in batch),
+        )
+        self._delivery_authorizations[peer_id] = authorization
+        try:
+            await self._process_authorized_inbound_batch(
+                peer_id,
+                batch,
+                authorization,
+            )
+        finally:
+            if self._delivery_authorizations.get(peer_id) is authorization:
+                self._delivery_authorizations.pop(peer_id, None)
+
+    async def _process_authorized_inbound_batch(
+        self,
+        peer_id: int,
+        batch: list[Message],
+        authorization: _DeliveryAuthorization,
+    ) -> None:
         entry = self._sessions.get(peer_id)
         if entry is None:
             return
         session, chain = entry
-        if session.phase in {Phase.CLOSING, Phase.SEALED}:
-            return
         self._inflight_batches[peer_id] = list(batch)
         self._checkpoint(peer_id)
         await self._resolve_media_analysis(peer_id, batch, session)
@@ -1190,6 +1248,7 @@ class UserbotTransport:
                         typing_s=min(1.0, typing_durations[index]),
                         interruptible=False,
                         delayed_recording=delayed_recording,
+                        authorization=authorization,
                     )
                 else:
                     audit_event(
@@ -1213,6 +1272,7 @@ class UserbotTransport:
                 typing_s=typing_durations[index],
                 interruptible=True,
                 delayed_recording=delayed_recording,
+                authorization=authorization,
             )
             if interrupted:
                 new_inbounds = list(self._inbound_buffers.get(peer_id, ()))
@@ -1229,6 +1289,7 @@ class UserbotTransport:
                         typing_s=min(1.0, typing_durations[index]),
                         interruptible=False,
                         delayed_recording=delayed_recording,
+                        authorization=authorization,
                     )
                 else:
                     audit_event(
@@ -1319,14 +1380,52 @@ class UserbotTransport:
         typing_s: float,
         interruptible: bool,
         delayed_recording: bool,
+        authorization: _DeliveryAuthorization | None = None,
     ) -> bool:
+        current_entry = self._sessions.get(peer_id)
+        current_authorization = self._delivery_authorizations.get(peer_id)
+        authorized = (
+            authorization is not None
+            and current_authorization is authorization
+            and authorization.peer_id == peer_id
+            and bool(authorization.inbound_message_ids)
+            and current_entry is not None
+            and current_entry[0] is session
+            and authorization.session_id == session.session_id
+            and session.phase not in {Phase.CLOSING, Phase.SEALED}
+            and peer_id not in self._paused_recoveries
+            and peer_id not in self._paused_limits
+        )
+        if not authorized:
+            audit_event(
+                "reply_delivery",
+                "unsolicited_outbound_blocked",
+                component="transport.userbot",
+                payload={
+                    "reason": "missing_or_stale_inbound_authorization",
+                    "text_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                },
+                peer_id=peer_id,
+                session_id=session.session_id,
+                level="warning",
+            )
+            return False
+        loop = asyncio.get_running_loop()
+        delivery_started = loop.time()
+        delivery_started_ts = time.time()
         typing_delay = min(max(0.0, typing_s), max(0.0, delay))
         idle_delay = max(0.0, delay - typing_delay)
         if interruptible and await self._wait_interruptible(peer_id, idle_delay):
             return False
         if await self._typing_wait(peer_id, typing_delay, interruptible=interruptible):
             return False
-        if peer_id not in self._sessions:
+        if (
+            peer_id not in self._sessions
+            or session.phase in {Phase.CLOSING, Phase.SEALED}
+            or self._delivery_authorizations.get(peer_id) is not authorization
+            or peer_id in self._paused_recoveries
+            or peer_id in self._paused_limits
+        ):
             return False
         if interruptible and self._inbound_buffers.get(peer_id):
             return False
@@ -1334,7 +1433,12 @@ class UserbotTransport:
             "reply_delivery",
             "telegram_send_attempted",
             component="transport.userbot",
-            payload={"text": text, "planned_delay_s": delay, "typing_s": typing_delay},
+            payload={
+                "text": text,
+                "planned_delay_s": delay,
+                "planned_send_ts": delivery_started_ts + delay,
+                "typing_s": typing_delay,
+            },
             peer_id=peer_id,
             session_id=session.session_id,
         )
@@ -1351,11 +1455,22 @@ class UserbotTransport:
                 level="error",
             )
             raise
+        sent_ts = time.time()
+        observed_delay = loop.time() - delivery_started
         audit_event(
             "reply_delivery",
             "telegram_send_succeeded",
             component="transport.userbot",
-            payload={"text": text},
+            payload={
+                "text": text,
+                "planned_delay_s": delay,
+                "observed_delay_s": observed_delay,
+                "delay_delta_s": observed_delay - delay,
+                "typing_s": typing_delay,
+                "delivery_started_ts": delivery_started_ts,
+                "planned_send_ts": delivery_started_ts + delay,
+                "sent_ts": sent_ts,
+            },
             peer_id=peer_id,
             session_id=session.session_id,
         )
@@ -1431,6 +1546,7 @@ class UserbotTransport:
         self._inbound_check_at.pop(peer_id, None)
         self._inbound_events.pop(peer_id, None)
         self._inflight_batches.pop(peer_id, None)
+        self._delivery_authorizations.pop(peer_id, None)
         task = self._inbound_tasks.pop(peer_id, None)
         try:
             current = asyncio.current_task()

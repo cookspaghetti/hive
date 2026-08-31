@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from hive.active_takeovers import PAUSED_AFTER_LIMIT, FileActiveTakeoverStore
 from hive.runtime import TurnOutput
 from hive.state import Message, Phase
-from hive.transports.userbot import UserbotTransport
+from hive.transports.userbot import UserbotTransport, _DeliveryAuthorization
 
 
 class FakeEngine:
@@ -59,6 +59,144 @@ def _transport(engine, **kwargs):
 
 def _run(coro):
     return asyncio.get_event_loop().run_until_complete(coro)
+
+
+def test_delivery_audit_compares_observed_and_planned_latency(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        "hive.transports.userbot.audit_event",
+        lambda event_type, action, **kwargs: events.append((event_type, action, kwargs)),
+    )
+    ub = _transport(FakeEngine(handed_back=False))
+    ub.begin_takeover(554, "confused_elderly")
+    session, chain = ub._sessions[554]
+    authorization = _DeliveryAuthorization(554, session.session_id, (1,))
+    ub._delivery_authorizations[554] = authorization
+
+    async def send(peer_id, text):
+        assert peer_id == 554
+        assert text == "wait ah"
+
+    ub.send_as_user = send
+    delivered = _run(
+        ub._deliver_bubble(
+            554,
+            session,
+            chain,
+            "wait ah",
+            delay=0.0,
+            typing_s=0.0,
+            interruptible=False,
+            delayed_recording=False,
+            authorization=authorization,
+        )
+    )
+
+    assert delivered is True
+    payload = next(
+        kwargs["payload"]
+        for event_type, action, kwargs in events
+        if event_type == "reply_delivery" and action == "telegram_send_succeeded"
+    )
+    assert payload["planned_delay_s"] == 0.0
+    assert payload["observed_delay_s"] >= 0.0
+    assert payload["delay_delta_s"] == payload["observed_delay_s"]
+    assert payload["delivery_started_ts"] <= payload["sent_ts"]
+    assert payload["planned_send_ts"] == payload["delivery_started_ts"]
+
+
+def test_delivery_without_captured_inbound_authorization_is_blocked(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        "hive.transports.userbot.audit_event",
+        lambda event_type, action, **kwargs: events.append((event_type, action, kwargs)),
+    )
+    ub = _transport(FakeEngine(handed_back=False))
+    ub.begin_takeover(553, "confused_elderly")
+    session, chain = ub._sessions[553]
+    sent = []
+
+    async def send(peer_id, text):
+        sent.append((peer_id, text))
+
+    ub.send_as_user = send
+    delivered = _run(
+        ub._deliver_bubble(
+            553,
+            session,
+            chain,
+            "unsolicited draft",
+            delay=0.0,
+            typing_s=0.0,
+            interruptible=False,
+            delayed_recording=False,
+        )
+    )
+
+    assert delivered is False
+    assert sent == []
+    assert any(action == "unsolicited_outbound_blocked" for _, action, _ in events)
+
+
+def test_non_inbound_batch_cannot_authorize_a_reply(monkeypatch):
+    events = []
+    monkeypatch.setattr(
+        "hive.transports.userbot.audit_event",
+        lambda event_type, action, **kwargs: events.append((event_type, action, kwargs)),
+    )
+    ub = _transport(FakeEngine(handed_back=False))
+    ub.begin_takeover(551, "confused_elderly")
+    sent = []
+
+    async def send(peer_id, text):
+        sent.append((peer_id, text))
+
+    ub.send_as_user = send
+    _run(
+        ub._process_inbound_batch(
+            551,
+            [Message("agent", "fabricated outbound", 1.0, -1, platform="telegram")],
+        )
+    )
+
+    assert sent == []
+    assert ub._delivery_authorizations == {}
+    assert any(action == "outbound_authorization_rejected" for _, action, _ in events)
+
+
+def test_reply_is_cancelled_if_takeover_closes_during_delay():
+    ub = _transport(FakeEngine(handed_back=False))
+    ub.begin_takeover(552, "confused_elderly")
+    session, chain = ub._sessions[552]
+    authorization = _DeliveryAuthorization(552, session.session_id, (9,))
+    ub._delivery_authorizations[552] = authorization
+    sent = []
+
+    async def send(peer_id, text):
+        sent.append((peer_id, text))
+
+    ub.send_as_user = send
+
+    async def scenario():
+        delivery = asyncio.create_task(
+            ub._deliver_bubble(
+                552,
+                session,
+                chain,
+                "stale queued reply",
+                delay=0.04,
+                typing_s=0.04,
+                interruptible=False,
+                delayed_recording=False,
+                authorization=authorization,
+            )
+        )
+        await asyncio.sleep(0.01)
+        session.phase = Phase.CLOSING
+        return await delivery
+
+    assert _run(scenario()) is False
+    assert sent == []
 
 
 def test_benign_handback_ends_takeover_and_notifies():
@@ -121,6 +259,32 @@ def test_budget_limit_pauses_and_preserves_takeover_for_operator(tmp_path):
     assert [message.msg_id for message in checkpoint.pending_messages] == []
     refreshed = store.list()[0]
     assert [message.msg_id for message in refreshed.pending_messages] == [2]
+
+
+def test_terminated_result_cannot_send_queued_reply_and_future_inbound_is_queued():
+    class TerminatingEngine(FakeEngine):
+        def process_turn(self, session, chain, inbound):
+            return TurnOutput(
+                text="must not send",
+                messages=("must not send",),
+                terminated=True,
+                reason="max_turns",
+            )
+
+    ub = _transport(TerminatingEngine(handed_back=False))
+    ub.begin_takeover(558, "confused_elderly")
+    sent = []
+
+    async def send(peer_id, text):
+        sent.append((peer_id, text))
+
+    ub.send_as_user = send
+    _run(ub.on_message(558, "first inbound", 1, 1.0))
+    _run(ub.on_message(558, "after termination", 2, 2.0))
+
+    assert sent == []
+    assert ub.recovery_status(558) == PAUSED_AFTER_LIMIT
+    assert [message.msg_id for message in ub._takeover_seed_messages[558]] == [2]
 
 
 def test_active_conversation_keeps_session():
@@ -561,30 +725,39 @@ def test_recent_inbound_dialogs_seed_observed_chats():
     assert chats[0]["last_message"] == "existing inbound message"
 
 
-def test_live_discovery_accepts_private_humans_and_rejects_bots_and_groups():
+def test_live_discovery_accepts_private_humans_and_rejects_ineligible_senders():
     ub = UserbotTransport(1, "hash", "sess", FakeEngine(handed_back=True))
 
     class FakeEvent:
-        def __init__(self, *, private, bot=False):
+        def __init__(self, *, private, bot=False, support=False, is_self=False, fails=False):
             self.is_private = private
+            self.fails = fails
             self._sender = SimpleNamespace(
                 first_name="Sender",
                 last_name="",
                 username="sender",
                 bot=bot,
-                support=False,
-                is_self=False,
+                support=support,
+                is_self=is_self,
             )
 
         async def get_sender(self):
+            if self.fails:
+                raise OSError("identity unavailable")
             return self._sender
 
     human = _run(ub._event_identity(FakeEvent(private=True)))
     bot = _run(ub._event_identity(FakeEvent(private=True, bot=True)))
+    support = _run(ub._event_identity(FakeEvent(private=True, support=True)))
+    own_account = _run(ub._event_identity(FakeEvent(private=True, is_self=True)))
+    unknown = _run(ub._event_identity(FakeEvent(private=True, fails=True)))
     group = _run(ub._event_identity(FakeEvent(private=False)))
 
     assert human == ("Sender", "sender", True)
     assert bot[2] is False
+    assert support[2] is False
+    assert own_account[2] is False
+    assert unknown[2] is False
     assert group[2] is False
 
 
@@ -632,6 +805,7 @@ def test_message_burst_is_processed_once_and_sent_as_separate_bubbles():
         ["hello", "are you there?"]
     ]
     assert sent == [(808, "wait ah"), (808, "which account?")]
+    assert ub._delivery_authorizations == {}
 
 
 def test_new_message_during_thinking_can_discard_stale_draft():

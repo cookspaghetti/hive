@@ -15,25 +15,15 @@ import time
 import warnings
 from typing import Protocol
 
+from hive.extraction.knowledge import KNOWLEDGE
 from hive.logging_setup import get_logger
 from hive.state import HVI
 
 log = get_logger(__name__)
 
-# GLiNER labels -> our HVI.kind taxonomy.
-LABEL_TO_KIND: dict[str, str] = {
-    "bank name": "bank_name",
-    "bank account number": "bank_account",
-    "phone number": "phone",
-    "telegram id": "telegram_id",
-    "person name": "person_name",
-    "company name": "organization",
-    "organization": "organization",
-    "location": "location",
-    "url": "url",
-}
-
-DEFAULT_LABELS = list(LABEL_TO_KIND.keys())
+# Public aliases retained for callers; the packaged YAML is the source of truth.
+LABEL_TO_KIND: dict[str, str] = dict(KNOWLEDGE.label_to_kind)
+DEFAULT_LABELS = list(KNOWLEDGE.labels)
 
 
 class NerBackend(Protocol):
@@ -48,8 +38,8 @@ class GlinerBackend:
 
     def __init__(
         self,
-        model_name: str = "urchade/gliner_multi-v2.1",
-        threshold: float = 0.5,
+        model_name: str = KNOWLEDGE.model_id,
+        threshold: float = KNOWLEDGE.default_threshold,
     ) -> None:
         from gliner import GLiNER  # lazy import
 
@@ -64,7 +54,7 @@ class GlinerBackend:
 _DEFAULT_BACKEND: NerBackend | None = None
 
 
-def get_default_backend(model_name: str = "urchade/gliner_multi-v2.1") -> NerBackend:
+def get_default_backend(model_name: str = KNOWLEDGE.model_id) -> NerBackend:
     """Lazily load and cache a single GLiNER backend for the process.
 
     Loading the model is expensive, so this is a process-wide singleton. Call
@@ -85,8 +75,9 @@ def get_default_backend(model_name: str = "urchade/gliner_multi-v2.1") -> NerBac
             )
             _DEFAULT_BACKEND = GlinerBackend(model_name)
         log.info(
-            "[startup][ner] READY model=%s duration=%.2fs",
+            "[startup][ner] READY model=%s knowledge=%s duration=%.2fs",
             model_name,
+            KNOWLEDGE.version,
             time.perf_counter() - started,
         )
     return _DEFAULT_BACKEND
@@ -102,7 +93,14 @@ def extract_entities(
     labels = labels or DEFAULT_LABELS
     hvis: list[HVI] = []
     for label, value, score in backend.predict(text, labels):
-        kind = LABEL_TO_KIND.get(label.lower(), label.lower().replace(" ", "_"))
+        label_key = label.casefold()
+        threshold = KNOWLEDGE.label_thresholds.get(
+            label_key,
+            KNOWLEDGE.default_threshold,
+        )
+        if score < threshold:
+            continue
+        kind = LABEL_TO_KIND.get(label_key, label_key.replace(" ", "_"))
         hvis.append(
             HVI(
                 kind=kind,

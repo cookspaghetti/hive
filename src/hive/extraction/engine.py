@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from urllib.parse import urlparse
 
+from hive.extraction.knowledge import KNOWLEDGE
 from hive.extraction.ner import NerBackend, extract_entities
 from hive.extraction.regex_rules import account_numbers, extract_regex, has_bank_context
 from hive.logging_setup import get_logger
@@ -26,16 +27,27 @@ _PERSON_HONORIFICS = re.compile(r"^(?:mr|mrs|ms|miss|dr|dato|datuk)\.?\s+", re.I
 _PHONE_MY = re.compile(r"^(?:\+?60|0)1\d{8,9}$")
 _LATIN_NAME = re.compile(r"[A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3}")
 _CJK_NAME = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]{2,6}")
+_ENGLISH_NAME_INTRODUCTIONS = "|".join(
+    re.escape(value)
+    for value in sorted(KNOWLEDGE.english_name_introductions, key=len, reverse=True)
+)
+_MANDARIN_NAME_INTRODUCTIONS = "|".join(
+    re.escape(value)
+    for value in sorted(KNOWLEDGE.mandarin_name_introductions, key=len, reverse=True)
+)
+_NAME_BOUNDARY_PARTICLES = "|".join(
+    re.escape(value)
+    for value in sorted(KNOWLEDGE.name_boundary_particles, key=len, reverse=True)
+)
 _DIRECT_NAME_PATTERNS = (
     re.compile(
-        r"\b(?:my name is|name'?s|call me|my agent is|agent'?s name is|"
-        r"account holder is|beneficiary is|under the name of)\s+"
+        rf"\b(?:{_ENGLISH_NAME_INTRODUCTIONS})\s+"
         r"([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})",
         re.IGNORECASE,
     ),
     re.compile(r"\b(?:i am|i'm)\s+([A-Za-z][A-Za-z'.-]*)\b", re.IGNORECASE),
     re.compile(
-        r"(?:我叫|我的名字是|姓名是|名字是|代理叫|代理是|户名是|账户名是|收款人是)"
+        rf"(?:{_MANDARIN_NAME_INTRODUCTIONS})"
         r"\s*([\u3400-\u4dbf\u4e00-\u9fff]{2,6})"
     ),
 )
@@ -50,43 +62,7 @@ _AGENT_REFERENCE = re.compile(
     r"\bmy\s+agent\b|(?:这是|他是|她是).{0,8}(?:代理|经纪人)",
     re.IGNORECASE,
 )
-_NAME_STOPWORDS = {
-    "and",
-    "agent",
-    "bro",
-    "fine",
-    "from",
-    "good",
-    "hello",
-    "here",
-    "hi",
-    "no",
-    "nope",
-    "ok",
-    "okay",
-    "on",
-    "quick",
-    "ready",
-    "thanks",
-    "the",
-    "the website",
-    "this my agent",
-    "website",
-    "with",
-    "yes",
-    "auntie",
-    "calling",
-    "hacker",
-    "he",
-    "i",
-    "madam",
-    "me",
-    "she",
-    "sir",
-    "they",
-    "uncle",
-    "you",
-}
+_NAME_STOPWORDS = KNOWLEDGE.name_stopwords
 
 
 def _validate_hvi(item: HVI, source_text: str) -> HVI | None:
@@ -98,7 +74,11 @@ def _validate_hvi(item: HVI, source_text: str) -> HVI | None:
     if item.kind in {"phone", "phone_my", "bank_account"}:
         digits = re.sub(r"\D", "", item.value)
         if item.kind == "bank_account":
-            if not 8 <= len(digits) <= 17:
+            if not (
+                KNOWLEDGE.account_minimum_digits
+                <= len(digits)
+                <= KNOWLEDGE.account_maximum_digits
+            ):
                 return None
             item.value = digits
             return item
@@ -146,7 +126,7 @@ def _context_name(text: str) -> str | None:
         match = pattern.search(text)
         if match:
             candidate = re.split(
-                r"\b(?:and|from|with|at|who|lah|ah|leh|lor|meh)\b",
+                rf"\b(?:{_NAME_BOUNDARY_PARTICLES})\b",
                 match.group(1),
                 maxsplit=1,
                 flags=re.IGNORECASE,

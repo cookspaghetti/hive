@@ -11,11 +11,14 @@ from typing import Any, Protocol
 from uuid import UUID, uuid4
 
 from hive.audit import audit_event
+from hive.extraction.knowledge import KNOWLEDGE
 from hive.state import SessionState
 
 ANALYSIS_SCHEMA_VERSION = 1
 ANALYSIS_VERSIONS = {
     "extractor": "grounded-hvi-v1",
+    "extraction_knowledge": KNOWLEDGE.version,
+    "extraction_knowledge_sha256": KNOWLEDGE.sha256,
     "behavior_classifier": "message-evidence-v1",
     "verdict": "cumulative-evidence-v1",
     "report": "branded-unicode-v1",

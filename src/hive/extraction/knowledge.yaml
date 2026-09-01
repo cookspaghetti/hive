@@ -1,0 +1,140 @@
+schema_version: 1
+knowledge_version: "2026-09-01-v1"
+
+model:
+  id: "urchade/gliner_multi-v2.1"
+  default_threshold: 0.50
+
+entities:
+  - kind: bank_name
+    labels: ["bank name"]
+    threshold: 0.55
+  - kind: bank_account
+    labels: ["bank account number"]
+    threshold: 0.60
+  - kind: phone
+    labels: ["phone number"]
+    threshold: 0.60
+  - kind: telegram_id
+    labels: ["telegram id"]
+    threshold: 0.55
+  - kind: person_name
+    labels: ["person name"]
+    threshold: 0.60
+  - kind: organization
+    labels: ["company name", "organization"]
+    threshold: 0.60
+  - kind: location
+    labels: ["location"]
+    threshold: 0.60
+  - kind: url
+    labels: ["url"]
+    threshold: 0.70
+
+bank_names:
+  Maybank: ["maybank", "mbb"]
+  CIMB: ["cimb"]
+  Public Bank: ["public bank", "pbb"]
+  RHB: ["rhb"]
+  Hong Leong Bank: ["hong leong", "hlb"]
+  AmBank: ["ambank"]
+  Bank Islam: ["bank islam"]
+  BSN: ["bsn"]
+  UOB: ["uob"]
+  OCBC: ["ocbc"]
+  HSBC: ["hsbc"]
+  Affin Bank: ["affin"]
+  Alliance Bank: ["alliance bank"]
+
+account:
+  minimum_digits: 8
+  maximum_digits: 17
+  context_terms:
+    - "bank account"
+    - "account"
+    - "acct"
+    - "acc"
+    - "a/c"
+    - "账户"
+    - "账号"
+    - "银行"
+  negated_phrases:
+    - "not an account"
+    - "not my account"
+    - "not the account"
+    - "not a bank account"
+    - "isn't an account"
+    - "is not an account"
+    - "不是账号"
+    - "不是账户"
+    - "不是银行账号"
+    - "不是银行账户"
+    - "并非账号"
+    - "并非账户"
+    - "并非银行账号"
+    - "并非银行账户"
+
+names:
+  stopwords:
+    - "and"
+    - "agent"
+    - "auntie"
+    - "bro"
+    - "calling"
+    - "fine"
+    - "from"
+    - "good"
+    - "hacker"
+    - "he"
+    - "hello"
+    - "here"
+    - "hi"
+    - "i"
+    - "madam"
+    - "me"
+    - "no"
+    - "nope"
+    - "ok"
+    - "okay"
+    - "on"
+    - "quick"
+    - "ready"
+    - "she"
+    - "sir"
+    - "thanks"
+    - "the"
+    - "the website"
+    - "they"
+    - "this my agent"
+    - "uncle"
+    - "website"
+    - "with"
+    - "yes"
+    - "you"
+  boundary_particles: ["and", "from", "with", "at", "who", "lah", "ah", "leh", "lor", "meh"]
+  english_introductions:
+    - "my name is"
+    - "name's"
+    - "call me"
+    - "my agent is"
+    - "agent's name is"
+    - "account holder is"
+    - "beneficiary is"
+    - "under the name of"
+  mandarin_introductions:
+    - "我叫"
+    - "我的名字是"
+    - "姓名是"
+    - "名字是"
+    - "代理叫"
+    - "代理是"
+    - "户名是"
+    - "账户名是"
+    - "收款人是"
+
+future_enhancements:
+  fine_tuning:
+    status: deferred
+    note: >-
+      Accumulate reviewed, anonymised indicator corrections and evaluate a
+      separately versioned HIVE-specific GLiNER checkpoint before any rollout.

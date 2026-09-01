@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 
+from hive.extraction.knowledge import KNOWLEDGE
 from hive.state import HVI
 
 # High-precision structural patterns. Scam messages commonly omit the scheme
@@ -37,50 +38,34 @@ PATTERNS: dict[str, re.Pattern[str]] = {
     "phone_my": re.compile(r"\b(?:\+?60|0)1\d[-\s]?\d{3,4}[-\s]?\d{4}\b"),
 }
 
-# Malaysian bank keywords for context-gated account detection.
-_BANK_NAMES: dict[str, tuple[str, ...]] = {
-    "Maybank": ("maybank", "mbb"),
-    "CIMB": ("cimb",),
-    "Public Bank": ("public bank", "pbb"),
-    "RHB": ("rhb",),
-    "Hong Leong Bank": ("hong leong", "hlb"),
-    "AmBank": ("ambank",),
-    "Bank Islam": ("bank islam",),
-    "BSN": ("bsn",),
-    "UOB": ("uob",),
-    "OCBC": ("ocbc",),
-    "HSBC": ("hsbc",),
-    "Affin Bank": ("affin",),
-    "Alliance Bank": ("alliance bank",),
-}
-_ACCOUNT_CONTEXT = re.compile(
-    r"\b(?:bank\s+account|account|acct|acc|a/c)\b|(?:账户|账号|银行)",
-    re.IGNORECASE,
+# Account bounds and vocabulary come from the versioned knowledge registry.
+_ACCOUNT_RE = re.compile(
+    rf"\b\d[\d\s-]{{{KNOWLEDGE.account_minimum_digits - 2},"
+    rf"{KNOWLEDGE.account_maximum_digits * 2}}}\d\b"
 )
-# 8–17 digit run, optionally spaced/hyphenated, near a bank keyword.
-_ACCOUNT_RE = re.compile(r"\b\d[\d\s-]{6,16}\d\b")
-_NEGATED_BANK_CONTEXT = re.compile(
-    r"\b(?:not|isn'?t|is not)\s+(?:a\s+|my\s+|the\s+)?(?:bank\s+)?account\b|"
-    r"(?:不是|并非)(?:银行)?(?:账号|账户)",
-    re.IGNORECASE,
-)
+
+
+def _contains_term(text: str, term: str) -> bool:
+    if term.isascii():
+        return bool(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text, re.IGNORECASE))
+    return term in text
 
 
 def has_bank_context(text: str) -> bool:
     """Return whether text contains a bank or account marker."""
-    if _NEGATED_BANK_CONTEXT.search(text):
+    if any(_contains_term(text, phrase) for phrase in KNOWLEDGE.account_negated_phrases):
         return False
-    return bool(bank_names(text) or _ACCOUNT_CONTEXT.search(text))
+    return bool(
+        bank_names(text)
+        or any(_contains_term(text, term) for term in KNOWLEDGE.account_context_terms)
+    )
 
 
 def bank_names(text: str) -> list[str]:
     """Return canonical bank names explicitly mentioned in text."""
     names: list[str] = []
-    for canonical, aliases in _BANK_NAMES.items():
-        if any(
-            re.search(rf"(?<!\w){re.escape(alias)}(?!\w)", text, re.IGNORECASE)
-            for alias in aliases
-        ):
+    for canonical, aliases in KNOWLEDGE.bank_names.items():
+        if any(_contains_term(text, alias) for alias in aliases):
             names.append(canonical)
     return names
 
@@ -90,7 +75,7 @@ def account_numbers(text: str) -> list[str]:
     numbers: list[str] = []
     for match in _ACCOUNT_RE.finditer(text):
         digits = re.sub(r"\D", "", match.group(0))
-        if 8 <= len(digits) <= 17:
+        if KNOWLEDGE.account_minimum_digits <= len(digits) <= KNOWLEDGE.account_maximum_digits:
             numbers.append(digits)
     return list(dict.fromkeys(numbers))
 

@@ -10,11 +10,14 @@ entities:
     labels: ["bank name"]
     threshold: 0.55
   - kind: bank_account
-    labels: ["bank account number"]
+    labels: ["bank account number", "Malaysian bank account number"]
     threshold: 0.60
   - kind: phone
-    labels: ["phone number"]
+    labels: ["phone number", "Malaysian phone number"]
     threshold: 0.60
+  - kind: email
+    labels: ["email address"]
+    threshold: 0.75
   - kind: telegram_id
     labels: ["telegram id"]
     threshold: 0.55
@@ -55,9 +58,15 @@ account:
     - "acct"
     - "acc"
     - "a/c"
+    - "beneficiary"
+    - "payee"
     - "账户"
     - "账号"
     - "银行"
+    - "银行账户"
+    - "银行账号"
+    - "收款账户"
+    - "收款账号"
   negated_phrases:
     - "not an account"
     - "not my account"
@@ -73,6 +82,38 @@ account:
     - "并非账户"
     - "并非银行账号"
     - "并非银行账户"
+
+# Declarative Malaysian identifier knowledge retained for a future generic
+# post-NER validator. The current loader safely ignores this reference-only
+# section; active labels, thresholds and account vocabulary above are consumed.
+deterministic_validation:
+  status: reference_only
+  context:
+    window_words: 5
+    matching: token_boundaries
+  phone_my:
+    region: "MY"
+    require_allocated_number: true
+    reject_overlapping: [bank_account, my_nric]
+  bank_account:
+    common_minimum_digits: 10
+    common_maximum_digits: 16
+    require_context_for_weak_match: true
+  email:
+    require_public_suffix: true
+    public_suffix_source: bundled_offline_snapshot
+  my_nric:
+    active: false
+    formats: ["YYMMDD-PB-####", "YYMMDD PB ####", "YYMMDDPB####"]
+    require_valid_birth_date: true
+    reject_repeated_digits: true
+    reject_zero_serial: true
+  my_passport:
+    active: false
+    pattern: "one letter followed by eight digits"
+    known_prefixes: ["A", "H", "K"]
+    context_terms: ["passport", "travel document", "immigration"]
+    reject_repeated_digits: true
 
 names:
   stopwords:
@@ -139,3 +180,8 @@ future_enhancements:
     note: >-
       Accumulate reviewed, anonymised indicator corrections and evaluate a
       separately versioned HIVE-specific GLiNER checkpoint before any rollout.
+  privacy_sensitive_identifiers:
+    status: deferred
+    note: >-
+      MyKad and passport recognition remains inactive until retention,
+      redaction, verdict-weighting, and stolen-identity handling are reviewed.

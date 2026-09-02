@@ -123,7 +123,7 @@ export function Segmented<T extends string>({ value, items, onChange, label }: {
 }
 
 export function IndicatorList({ items = [], compact = false }: { items?: Indicator[]; compact?: boolean }) {
-  if (!items.length) return <EmptyState title="No indicators yet" copy="Validated values will appear as the conversation develops." />;
+  if (!items.length) return <EmptyState title="No indicators yet" copy="Auto-accepted values will appear as the conversation develops." />;
   return <div className={`indicator-grid ${compact ? "compact" : ""}`}>{items.map((item, index) => <article className="indicator-card" key={`${item.kind}-${item.value}-${index}`}><div><span>{titleCase(item.kind)}</span>{typeof item.confidence === "number" && <strong>{item.confidence.toFixed(2)}</strong>}</div><code>{item.value || "—"}</code><p>Message {item.source_msg_id ?? "—"} · {item.extractor || "pipeline"}</p></article>)}</div>;
 }
 

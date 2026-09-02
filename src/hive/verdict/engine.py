@@ -38,9 +38,11 @@ HARD_WEIGHTS: dict[str, float] = {
     "phone_my": 0.2,
     "telegram_id": 0.25,
     "bank_name": 0.15,
-    "person_name": 0.05,
+    # Identity context is useful for investigation, but is not scam evidence
+    # without a separate suspicious behaviour or observable.
+    "person_name": 0.0,
     "organization": 0.05,
-    "location": 0.03,
+    "location": 0.0,
 }
 _HARD_DEFAULT = 0.2
 

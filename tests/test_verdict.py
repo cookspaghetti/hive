@@ -99,6 +99,18 @@ def test_signal_trail_omits_zero_weight_noise_and_records_batch_sources():
     assert last["contributions"][0]["source_message_ids"] == [7, 8]
 
 
+def test_identity_context_alone_does_not_increase_scam_risk():
+    s = _session()
+    s.hvis = [
+        HVI(kind="person_name", value="John Tan", source_msg_id=9, confidence=0.95),
+        HVI(kind="location", value="Kajang", source_msg_id=9, confidence=0.95),
+    ]
+
+    assert update_verdict(s) == "likely_benign"
+    assert s.verdict_score == 0.0
+    assert s.signal_trail[-1]["contributions"] == []
+
+
 def test_scam_risk_does_not_regress_on_a_quieter_later_message():
     s = _session()
     assert update_verdict(

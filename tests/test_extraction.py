@@ -217,6 +217,17 @@ def test_context_rejects_status_words_and_unscoped_numbers():
     assert extract_contextual_hvis(messages, {110, 111, 112, 113}) == []
 
 
+def test_context_does_not_treat_generic_i_am_phrases_as_names():
+    messages = [
+        Message("stranger", "I am your agent", 1.0, 120),
+        Message("stranger", "I'm only trying to help", 2.0, 121),
+        Message("stranger", "I am done", 3.0, 122),
+        Message("stranger", "I'm serious", 4.0, 123),
+    ]
+
+    assert extract_contextual_hvis(messages, {120, 121, 122, 123}) == []
+
+
 def test_qr_payload_url_classified():
     hvis = classify_payload("http://phish.example/login", 5)
     assert any(h.kind == "url" for h in hvis)

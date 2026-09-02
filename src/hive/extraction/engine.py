@@ -45,7 +45,6 @@ _DIRECT_NAME_PATTERNS = (
         r"([A-Za-z][A-Za-z'.-]*(?:\s+[A-Za-z][A-Za-z'.-]*){0,3})",
         re.IGNORECASE,
     ),
-    re.compile(r"\b(?:i am|i'm)\s+([A-Za-z][A-Za-z'.-]*)\b", re.IGNORECASE),
     re.compile(
         rf"(?:{_MANDARIN_NAME_INTRODUCTIONS})"
         r"\s*([\u3400-\u4dbf\u4e00-\u9fff]{2,6})"

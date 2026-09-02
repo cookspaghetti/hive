@@ -84,8 +84,7 @@ def test_replay_preserves_transcript_and_reruns_grounded_analysis():
     assert replayed.turn_count == 2
     assert progress == [(1, 2), (2, 2)]
     contributions = replayed.signal_trail[-1]["contributions"]
-    assert all(item["reason"] != "soft:payment_request" for item in contributions)
-    assert contributions[-1]["source_message_ids"] == [1]
+    assert contributions == []
 
 
 def test_replay_recovers_cross_message_agent_alias():

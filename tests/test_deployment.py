@@ -64,6 +64,24 @@ def test_dind_rebuilds_stale_sandbox_and_probes_runtime_capabilities():
     assert 'docker build -t "$sandbox_image" /app/docker/sandbox' in entrypoint
 
 
+def test_dind_recovers_stale_runtime_files_and_cleans_up_children():
+    entrypoint = (ROOT / "docker" / "app-entrypoint.sh").read_text(encoding="utf-8")
+
+    assert "/var/run/docker.pid" in entrypoint
+    assert "/var/run/docker/containerd/containerd.pid" in entrypoint
+    assert "reset_docker_runtime_files" in entrypoint
+    assert "trap cleanup_children EXIT" in entrypoint
+    assert "trap handle_shutdown TERM INT" in entrypoint
+    assert "python -m hive &" in entrypoint
+    assert 'wait "$APP_PID"' in entrypoint
+
+
+def test_backend_healthcheck_allows_for_cold_model_startup():
+    dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "--start-period=90s" in dockerfile
+
+
 def test_task_run_migrates_away_from_the_legacy_single_container():
     taskfile = (ROOT / "Taskfile.yml").read_text(encoding="utf-8")
 

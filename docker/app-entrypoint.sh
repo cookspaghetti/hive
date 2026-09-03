@@ -9,6 +9,62 @@ set -uo pipefail
 export DOCKER_HOST=unix:///var/run/docker.sock
 unset DOCKER_CONTEXT DOCKER_TLS_VERIFY DOCKER_CERT_PATH 2>/dev/null || true
 
+DOCKERD_PID=""
+APP_PID=""
+docker_runtime_files=(
+    /var/run/docker.pid
+    /var/run/docker.sock
+    /var/run/docker/containerd/containerd.pid
+    /var/run/docker/containerd/containerd.sock
+    /var/run/docker/containerd/containerd.sock.ttrpc
+    /var/run/docker/containerd/containerd-debug.sock
+)
+
+reset_docker_runtime_files() {
+    local found=0
+    local path
+    for path in "${docker_runtime_files[@]}"; do
+        if [ -e "$path" ] || [ -S "$path" ]; then
+            found=1
+            break
+        fi
+    done
+    if [ "$found" -eq 1 ] && [ "${1:-}" = "announce" ]; then
+        echo "[startup][docker] RECOVERING stale runtime files from previous container stop"
+    fi
+    rm -f -- "${docker_runtime_files[@]}"
+}
+
+cleanup_children() {
+    local status=$?
+    local i
+    trap - EXIT
+    if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
+        kill -TERM "$APP_PID" 2>/dev/null || true
+        wait "$APP_PID" 2>/dev/null || true
+    fi
+    if [ -n "$DOCKERD_PID" ] && kill -0 "$DOCKERD_PID" 2>/dev/null; then
+        kill -TERM "$DOCKERD_PID" 2>/dev/null || true
+        for i in $(seq 1 10); do
+            kill -0 "$DOCKERD_PID" 2>/dev/null || break
+            sleep 1
+        done
+        kill -KILL "$DOCKERD_PID" 2>/dev/null || true
+        wait "$DOCKERD_PID" 2>/dev/null || true
+    fi
+    reset_docker_runtime_files
+    exit "$status"
+}
+
+handle_shutdown() {
+    [ -z "$APP_PID" ] || kill -TERM "$APP_PID" 2>/dev/null || true
+    exit 143
+}
+
+trap cleanup_children EXIT
+trap handle_shutdown TERM INT
+reset_docker_runtime_files announce
+
 # Force the vfs storage driver: overlay2/fuse-overlayfs are unavailable when
 # running DinD on top of Docker Desktop's overlay filesystem. vfs is slower but
 # works everywhere.
@@ -87,4 +143,9 @@ fi
 
 echo "[startup][container] READY bootstrap completed duration=$(($(date +%s) - container_started))s"
 echo "[startup][application] STARTING command='python -m hive'"
-exec python -m hive
+python -m hive &
+APP_PID=$!
+wait "$APP_PID"
+app_status=$?
+APP_PID=""
+exit "$app_status"

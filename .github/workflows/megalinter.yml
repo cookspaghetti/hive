@@ -23,9 +23,13 @@ jobs:
         env:
           # Only linters relevant to this stack (Python/Docker/TS/YAML/MD)
           ENABLE: PYTHON,DOCKER,JSON,MARKDOWN,YAML
-          # black excluded: the repo's formatter of record is ruff (pyproject [tool.ruff]);
+          # ruff-format is the repo's formatter of record (pyproject [tool.ruff]);
           # isort kept but aligned to ruff via .isort.cfg
+          PYTHON_DEFAULT_STYLE: ruff
           PYTHON_DISABLE: black
+          # prettier is the markdown formatter of record; markdown-table-formatter
+          # disagrees with prettier's table style — kept off to avoid fighting formatters
+          MARKDOWN_DISABLE: markdown-table-formatter
           # Don't gate merges on style nits yet; report findings
           APPLY_FIXES_MODE: none
           VALIDATE_ALL_CODEBASE: true

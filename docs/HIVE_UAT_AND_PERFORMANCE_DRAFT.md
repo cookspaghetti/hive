@@ -419,7 +419,7 @@ warm-process conditions.
 ### 9.1 Requirement result summary
 
 | Requirement | Cases run | Passed | Failed | Blocked | Pass rate | Key evidence | Final judgement |
-| ----------- | --------: | -----: | -----: | ------: | --------: | ------------ | --------------- |
+| ----------- | --------- | ------ | ------ | ------- | --------- | ------------ | --------------- |
 | UR-01       |           |        |        |         |           |              |                 |
 | UR-02       |           |        |        |         |           |              |                 |
 | UR-03       |           |        |        |         |           |              |                 |
@@ -436,7 +436,7 @@ warm-process conditions.
 ### 9.2 Participant summary
 
 | Tester | Tasks attempted | Completed unaided | Completed with help | Failed | Completion % | SUS /100 | Explicitly detected agent? | Main issue |
-| ------ | --------------: | ----------------: | ------------------: | -----: | -----------: | -------: | -------------------------- | ---------- |
+| ------ | --------------- | ----------------- | ------------------- | ------ | ------------ | -------- | -------------------------- | ---------- |
 | T01    |                 |                   |                     |        |              |          |                            |            |
 | T02    |                 |                   |                     |        |              |          |                            |            |
 | T03    |                 |                   |                     |        |              |          |                            |            |

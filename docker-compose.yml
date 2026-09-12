@@ -17,7 +17,9 @@ services:
     build: .
     image: hive-backend:latest
     privileged: true
-    env_file: .env
+    env_file:
+      - path: .env
+        required: false
     environment:
       HIVE_PANEL_HOST: 0.0.0.0
       HIVE_PANEL_ALLOW_NON_LOOPBACK: "true"

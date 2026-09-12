@@ -44,16 +44,16 @@ Malaysia remains future work.
 
 ## What makes HIVE distinctive
 
-| Specialty | Implemented approach |
-| --- | --- |
-| Operator-gated, response-only operation | A Telegram userbot may reply only within an approved takeover and under a short-lived authorization tied to the active peer, session, and captured inbound message IDs. |
-| Human-like conversation pacing | HIVE batches rapid inbound messages, selects a contextual fast/normal/slow pace, waits and types before delivery, and sends compact thoughts as separate chat bubbles. |
-| Multilingual persona consistency | Four Malaysian personas operate in English, Mandarin, and Manglish. HIVE records expected language, observed reply language, alignment, planned delay, and actual delivery delay. |
-| Forensics from the first message | Trigger messages, identity observations, original timestamps, Telegram IDs, media, extracted indicators, model decisions, delivery events, and operator actions retain source provenance. |
-| Safe URL investigation | Each URL is inspected in a short-lived Scrapling browser container with public-address enforcement, redirect/subresource checks, a read-only filesystem, dropped capabilities, and cleanup on timeout. |
-| Evidence rather than screenshots alone | Every sealed case produces a PDF, detached RSA-PSS signature, signed checksum manifest, embedded public key, original attachments, and an offline-verifiable `.evidence.zip`. |
-| Exact facts separated from similarity | PostgreSQL stores authoritative cases and exact shared-identifier relationships. Qdrant stores privacy-reduced vectors only for candidate scam-pattern retrieval. |
-| Reproducible evaluation | Versioned scenarios, personas, repeats, raw results, summary metrics, signed evidence, declared denominators, and a checksum inventory support controlled assessment. |
+| Specialty                               | Implemented approach                                                                                                                                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Operator-gated, response-only operation | A Telegram userbot may reply only within an approved takeover and under a short-lived authorization tied to the active peer, session, and captured inbound message IDs.                                |
+| Human-like conversation pacing          | HIVE batches rapid inbound messages, selects a contextual fast/normal/slow pace, waits and types before delivery, and sends compact thoughts as separate chat bubbles.                                 |
+| Multilingual persona consistency        | Four Malaysian personas operate in English, Mandarin, and Manglish. HIVE records expected language, observed reply language, alignment, planned delay, and actual delivery delay.                      |
+| Forensics from the first message        | Trigger messages, identity observations, original timestamps, Telegram IDs, media, extracted indicators, model decisions, delivery events, and operator actions retain source provenance.              |
+| Safe URL investigation                  | Each URL is inspected in a short-lived Scrapling browser container with public-address enforcement, redirect/subresource checks, a read-only filesystem, dropped capabilities, and cleanup on timeout. |
+| Evidence rather than screenshots alone  | Every sealed case produces a PDF, detached RSA-PSS signature, signed checksum manifest, embedded public key, original attachments, and an offline-verifiable `.evidence.zip`.                          |
+| Exact facts separated from similarity   | PostgreSQL stores authoritative cases and exact shared-identifier relationships. Qdrant stores privacy-reduced vectors only for candidate scam-pattern retrieval.                                      |
+| Reproducible evaluation                 | Versioned scenarios, personas, repeats, raw results, summary metrics, signed evidence, declared denominators, and a checksum inventory support controlled assessment.                                  |
 
 ## Feature catalogue
 
@@ -146,12 +146,12 @@ limitation; a hardened deployment should use a dedicated VM or rootless isolatio
 
 HIVE enriches extracted observables through bounded, cached provider adapters:
 
-| Provider | Observable | Key requirement | Claim boundary |
-| --- | --- | --- | --- |
-| Semak Mule | Malaysian bank account or phone | None | A provider result is corroboration, not identity proof. |
-| VirusTotal | Canonical URL or existing APK hash | API key | HIVE does not upload an unknown APK. |
-| AbuseIPDB | Public destination IP returned by the sandbox | API key | HIVE does not treat a no-hit result as proof of safety. |
-| RDAP | Domain/IP registration information | None | Registration data may be incomplete or privacy-redacted. |
+| Provider   | Observable                                    | Key requirement | Claim boundary                                           |
+| ---------- | --------------------------------------------- | --------------- | -------------------------------------------------------- |
+| Semak Mule | Malaysian bank account or phone               | None            | A provider result is corroboration, not identity proof.  |
+| VirusTotal | Canonical URL or existing APK hash            | API key         | HIVE does not upload an unknown APK.                     |
+| AbuseIPDB  | Public destination IP returned by the sandbox | API key         | HIVE does not treat a no-hit result as proof of safety.  |
+| RDAP       | Domain/IP registration information            | None            | Registration data may be incomplete or privacy-redacted. |
 
 Normalized findings retain provider, observable, time, status, risk, response digest, and
 source provenance. Synthetic evaluation fixtures never call external providers.
@@ -273,16 +273,16 @@ flowchart LR
     Agent --> Data
 ```
 
-| Layer | Main modules | Responsibility |
-| --- | --- | --- |
-| L1 Human emulation | `src/hive/middleware/` | Language alignment, bubble splitting, pacing, delay and typing plans |
-| L2 Deceptive agent | `src/hive/agent/`, `src/hive/llm/` | Personas, bounded context, reply generation and model-tier routing |
-| L3 Extraction | `src/hive/extraction/` | Regex/GLiNER indicators, QR/OCR and media analysis |
-| L4 Sandbox | `src/hive/sandbox/` | Disposable Scrapling browser, URL controls and observable collection |
-| L5 Evidence | `src/hive/vault/`, `src/hive/audit.py` | Hash chains, signed PDFs/packages and custody records |
-| S6 Verdict | `src/hive/verdict/` | Cumulative hard/soft signal scoring |
-| S7 Safeguards | `src/hive/guardrails/`, `src/hive/security/` | Prompt defence, session encryption and security boundaries |
-| S8 Runtime | `src/hive/runtime.py`, `src/hive/orchestrator.py`, `src/hive/transports/` | Session lifecycle, response authorization, Telegram IO and operator coordination |
+| Layer              | Main modules                                                              | Responsibility                                                                   |
+| ------------------ | ------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
+| L1 Human emulation | `src/hive/middleware/`                                                    | Language alignment, bubble splitting, pacing, delay and typing plans             |
+| L2 Deceptive agent | `src/hive/agent/`, `src/hive/llm/`                                        | Personas, bounded context, reply generation and model-tier routing               |
+| L3 Extraction      | `src/hive/extraction/`                                                    | Regex/GLiNER indicators, QR/OCR and media analysis                               |
+| L4 Sandbox         | `src/hive/sandbox/`                                                       | Disposable Scrapling browser, URL controls and observable collection             |
+| L5 Evidence        | `src/hive/vault/`, `src/hive/audit.py`                                    | Hash chains, signed PDFs/packages and custody records                            |
+| S6 Verdict         | `src/hive/verdict/`                                                       | Cumulative hard/soft signal scoring                                              |
+| S7 Safeguards      | `src/hive/guardrails/`, `src/hive/security/`                              | Prompt defence, session encryption and security boundaries                       |
+| S8 Runtime         | `src/hive/runtime.py`, `src/hive/orchestrator.py`, `src/hive/transports/` | Session lifecycle, response authorization, Telegram IO and operator coordination |
 
 Session lifecycle:
 
@@ -292,30 +292,30 @@ IDLE -> ARMED -> ACTIVE -> PROBING -> CLOSING -> SEALED
 
 Compose deployment:
 
-| Service | Responsibility | Host exposure |
-| --- | --- | --- |
-| `frontend` | Nginx static panel and same-origin API proxy | `127.0.0.1:9130` |
-| `backend` | FastAPI, HIVE runtime, Telegram transports and sandbox orchestration | Internal only |
-| `postgres` | Cases, transcripts, exact relationships, analyses and audit mirror | Internal only |
-| `qdrant` | Privacy-reduced cross-case scam-pattern candidate vectors | Internal only |
+| Service    | Responsibility                                                       | Host exposure    |
+| ---------- | -------------------------------------------------------------------- | ---------------- |
+| `frontend` | Nginx static panel and same-origin API proxy                         | `127.0.0.1:9130` |
+| `backend`  | FastAPI, HIVE runtime, Telegram transports and sandbox orchestration | Internal only    |
+| `postgres` | Cases, transcripts, exact relationships, analyses and audit mirror   | Internal only    |
+| `qdrant`   | Privacy-reduced cross-case scam-pattern candidate vectors            | Internal only    |
 
 ### Technology stack
 
-| Area | Technology | Role in HIVE |
-| --- | --- | --- |
-| Backend runtime | Python 3.11+, FastAPI, Uvicorn, Pydantic Settings | Control API, setup, runtime coordination and configuration |
-| Conversation orchestration | LangGraph and HIVE's stateful runtime | Ordered guardrail, extraction, verdict, sandbox, intelligence and reply stages |
-| Telegram data plane | Telethon | Observes eligible private chats and sends only authorised takeover replies |
-| Telegram control plane | `python-telegram-bot` | Operator-only interactive takeover, status, persona and sealing controls |
-| LLM integration | OpenAI-compatible HTTP APIs with cheap/light/strong/vision roles | Persona generation, steering, behavioural classification and optional vision analysis |
-| Entity extraction | Regex, GLiNER `urchade/gliner_multi-v2.1`, versioned YAML knowledge | Multilingual indicators with deterministic normalization and confidence filtering |
-| Media analysis | OpenCV, pyzbar, Tesseract OCR | Local QR decoding and English/Mandarin text extraction before vision fallback |
-| URL analysis | Scrapling `StealthyFetcher` with Chromium/Playwright inside Docker | Disposable public-page inspection with SSRF and container controls |
-| Authoritative storage | PostgreSQL 17 via Psycopg | Case history, analysis runs, exact indicators/relationships, checkpoints and audit mirror |
-| Semantic candidate retrieval | FastEmbed and Qdrant 1.18 | Privacy-reduced cross-case scam-pattern similarity candidates |
-| Evidence | ReportLab, Cryptography, SHA-256 and RSA-PSS | Unicode PDF reports, hash chains, detached signatures and portable packages |
-| Control-panel frontend | React 19, TypeScript 5, esbuild, Nginx | Responsive case operations, live updates, history, intelligence and setup views |
-| Packaging and operations | `uv`, Task, Docker Compose, GitHub Actions | Locked dependencies, repeatable commands, four-service deployment and regression gates |
+| Area                         | Technology                                                          | Role in HIVE                                                                              |
+| ---------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Backend runtime              | Python 3.11+, FastAPI, Uvicorn, Pydantic Settings                   | Control API, setup, runtime coordination and configuration                                |
+| Conversation orchestration   | LangGraph and HIVE's stateful runtime                               | Ordered guardrail, extraction, verdict, sandbox, intelligence and reply stages            |
+| Telegram data plane          | Telethon                                                            | Observes eligible private chats and sends only authorised takeover replies                |
+| Telegram control plane       | `python-telegram-bot`                                               | Operator-only interactive takeover, status, persona and sealing controls                  |
+| LLM integration              | OpenAI-compatible HTTP APIs with cheap/light/strong/vision roles    | Persona generation, steering, behavioural classification and optional vision analysis     |
+| Entity extraction            | Regex, GLiNER `urchade/gliner_multi-v2.1`, versioned YAML knowledge | Multilingual indicators with deterministic normalization and confidence filtering         |
+| Media analysis               | OpenCV, pyzbar, Tesseract OCR                                       | Local QR decoding and English/Mandarin text extraction before vision fallback             |
+| URL analysis                 | Scrapling `StealthyFetcher` with Chromium/Playwright inside Docker  | Disposable public-page inspection with SSRF and container controls                        |
+| Authoritative storage        | PostgreSQL 17 via Psycopg                                           | Case history, analysis runs, exact indicators/relationships, checkpoints and audit mirror |
+| Semantic candidate retrieval | FastEmbed and Qdrant 1.18                                           | Privacy-reduced cross-case scam-pattern similarity candidates                             |
+| Evidence                     | ReportLab, Cryptography, SHA-256 and RSA-PSS                        | Unicode PDF reports, hash chains, detached signatures and portable packages               |
+| Control-panel frontend       | React 19, TypeScript 5, esbuild, Nginx                              | Responsive case operations, live updates, history, intelligence and setup views           |
+| Packaging and operations     | `uv`, Task, Docker Compose, GitHub Actions                          | Locked dependencies, repeatable commands, four-service deployment and regression gates    |
 
 The text, vision and OSINT providers are configurable external dependencies. PostgreSQL,
 Qdrant, the audit ledger and evidence vault remain local in the reference deployment.
@@ -394,14 +394,14 @@ a new analysis run and never rewrites the sealed transcript or earlier findings.
 
 ### 4. Data authority and cross-case memory
 
-| Data class | Authoritative location | Derived or secondary copy |
-| --- | --- | --- |
-| Active checkpoint and delivery authorization | PostgreSQL or the configured checkpoint store | In-memory runtime state |
-| Sealed transcript, indicators and analysis history | Configured history store (PostgreSQL in Compose) and signed evidence files | Panel projections and reports |
-| Exact shared bank account, phone, handle or URL relationship | PostgreSQL | None; exact facts are never inferred from vector similarity |
-| Scam-pattern similarity | Authoritative case profile (PostgreSQL in Compose) | Identifier-redacted FastEmbed vector and Qdrant payload |
-| Permanent internal actions and messages | Hash-linked JSONL audit ledger | PostgreSQL query mirror |
-| Media and evidence packages | Local evidence filesystem | Authenticated panel downloads |
+| Data class                                                   | Authoritative location                                                     | Derived or secondary copy                                   |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Active checkpoint and delivery authorization                 | PostgreSQL or the configured checkpoint store                              | In-memory runtime state                                     |
+| Sealed transcript, indicators and analysis history           | Configured history store (PostgreSQL in Compose) and signed evidence files | Panel projections and reports                               |
+| Exact shared bank account, phone, handle or URL relationship | PostgreSQL                                                                 | None; exact facts are never inferred from vector similarity |
+| Scam-pattern similarity                                      | Authoritative case profile (PostgreSQL in Compose)                         | Identifier-redacted FastEmbed vector and Qdrant payload     |
+| Permanent internal actions and messages                      | Hash-linked JSONL audit ledger                                             | PostgreSQL query mirror                                     |
+| Media and evidence packages                                  | Local evidence filesystem                                                  | Authenticated panel downloads                               |
 
 Qdrant is deliberately not conversational memory. It proposes previously encountered cases
 with similar tactics, channels and redacted scripts so the operator can investigate a possible
@@ -587,19 +587,19 @@ Taskfile.yml                Development and verification commands
 
 ## Documentation map
 
-| Document | Purpose |
-| --- | --- |
-| [Complete final-report outline](docs/FYP_FINAL_REPORT_OUTLINE.md) | Handoff-ready Chapters 1-6 structure, research gap, methods, evaluation matrix, figures, tables, appendices and source map |
-| [Part 2 plan and gap audit](docs/FYP_PART_2_PLAN_AND_HIVE_GAPS.md) | Chapters 1-6 corrections, design outline and dated implementation/gap history; update superseded baselines before using it in the final report |
-| [Revised 25-test UAT form](docs/HIVE_UAT_Form_25_Tests_revised.docx) | Formal participant checklist and feedback/signature fields |
-| [UAT and performance draft](docs/HIVE_UAT_AND_PERFORMANCE_DRAFT.md) | Chapter 5 protocol, measurement definitions and result templates; reconcile against the revised 25-test form before execution |
-| [Operational runbook](docs/OPERATIONAL_RUNBOOK.md) | Deployment acceptance, restart, recovery, incidents and shutdown |
-| [Privacy and retention](docs/PRIVACY_AND_RETENTION.md) | Data flows, protected classes, review policy and unresolved retention decisions |
-| [Signing-key lifecycle](docs/SIGNING_KEY_LIFECYCLE.md) | Key creation, rotation, retention and historical verification |
-| [Audit backup and restore](docs/AUDIT_BACKUP_RESTORE.md) | Immutable audit snapshot and isolated restore drill |
-| [Case-vector reindexing](docs/CASE_VECTOR_REINDEX.md) | Fingerprint-compatible PostgreSQL-to-Qdrant rebuild |
-| [CPU runtime dependencies](docs/CPU_RUNTIME_DEPENDENCIES.md) | CPU-only Torch and model-cache deployment decision |
-| [Static type checking](docs/STATIC_TYPE_CHECKING.md) | Python 3.11/mypy compatibility and quality gate |
+| Document                                                             | Purpose                                                                                                                                        |
+| -------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| [Complete final-report outline](docs/FYP_FINAL_REPORT_OUTLINE.md)    | Handoff-ready Chapters 1-6 structure, research gap, methods, evaluation matrix, figures, tables, appendices and source map                     |
+| [Part 2 plan and gap audit](docs/FYP_PART_2_PLAN_AND_HIVE_GAPS.md)   | Chapters 1-6 corrections, design outline and dated implementation/gap history; update superseded baselines before using it in the final report |
+| [Revised 25-test UAT form](docs/HIVE_UAT_Form_25_Tests_revised.docx) | Formal participant checklist and feedback/signature fields                                                                                     |
+| [UAT and performance draft](docs/HIVE_UAT_AND_PERFORMANCE_DRAFT.md)  | Chapter 5 protocol, measurement definitions and result templates; reconcile against the revised 25-test form before execution                  |
+| [Operational runbook](docs/OPERATIONAL_RUNBOOK.md)                   | Deployment acceptance, restart, recovery, incidents and shutdown                                                                               |
+| [Privacy and retention](docs/PRIVACY_AND_RETENTION.md)               | Data flows, protected classes, review policy and unresolved retention decisions                                                                |
+| [Signing-key lifecycle](docs/SIGNING_KEY_LIFECYCLE.md)               | Key creation, rotation, retention and historical verification                                                                                  |
+| [Audit backup and restore](docs/AUDIT_BACKUP_RESTORE.md)             | Immutable audit snapshot and isolated restore drill                                                                                            |
+| [Case-vector reindexing](docs/CASE_VECTOR_REINDEX.md)                | Fingerprint-compatible PostgreSQL-to-Qdrant rebuild                                                                                            |
+| [CPU runtime dependencies](docs/CPU_RUNTIME_DEPENDENCIES.md)         | CPU-only Torch and model-cache deployment decision                                                                                             |
+| [Static type checking](docs/STATIC_TYPE_CHECKING.md)                 | Python 3.11/mypy compatibility and quality gate                                                                                                |
 
 For the final report, this README is an implementation overview rather than a replacement for
 the required academic structure. The report still needs corrected Chapters 1-3, completed

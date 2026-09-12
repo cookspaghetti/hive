@@ -46,3 +46,12 @@ qdrant_storage/
 .vscode/
 .claude/
 .DS_Store
+
+# --- Local generated artifacts and document scratch work ---
+/output/
+/docs/_docx_work/
+/docs/_xlsx_work/
+
+*.dot
+*.png
+*.svg

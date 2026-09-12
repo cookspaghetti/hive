@@ -79,4 +79,3 @@ Rotation cannot retroactively restore trust to already disputed signatures.
   schedule, legal-hold engine, or secure-deletion implementation.
 - The rotation audit record establishes what this HIVE instance observed; an
   independent timestamp/custody authority would provide stronger assurance.
-

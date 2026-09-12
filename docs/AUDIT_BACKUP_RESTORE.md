@@ -63,4 +63,3 @@ separate custody requirements. A future whole-system recovery plan still needs
 coordinated database dumps, Qdrant snapshots, evidence-file manifests, encrypted
 secret escrow decisions, recovery ordering, and stated recovery-point and
 recovery-time objectives.
-

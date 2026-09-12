@@ -16,14 +16,14 @@ rescans the inventory.
 
 ## Artifact classes and default review policy
 
-| Artifact class | Default | Current treatment |
-| --- | ---: | --- |
-| Signed evidence, authoritative case profiles, history and analysis runs | Indefinite | Protected; no expiry calculation or deletion |
-| Captured Telegram media | Review after 30 days | Flag only |
-| Synthetic Demo Lab runs | Review after 90 days | Flag only |
-| Evaluation results | Review after 180 days | Flag only |
-| Hash-linked audit ledger and backups | Indefinite | Protected to preserve audit continuity |
-| Unfinished takeover checkpoints | Review after 7 days | Protected; stale state is flagged for recovery/abandonment review |
+| Artifact class                                                          |               Default | Current treatment                                                 |
+| ----------------------------------------------------------------------- | --------------------: | ----------------------------------------------------------------- |
+| Signed evidence, authoritative case profiles, history and analysis runs |            Indefinite | Protected; no expiry calculation or deletion                      |
+| Captured Telegram media                                                 |  Review after 30 days | Flag only                                                         |
+| Synthetic Demo Lab runs                                                 |  Review after 90 days | Flag only                                                         |
+| Evaluation results                                                      | Review after 180 days | Flag only                                                         |
+| Hash-linked audit ledger and backups                                    |            Indefinite | Protected to preserve audit continuity                            |
+| Unfinished takeover checkpoints                                         |   Review after 7 days | Protected; stale state is flagged for recovery/abandonment review |
 
 Thresholds may be set from 1 to 3,650 days. Signed evidence and audit records
 cannot be converted to expiring classes through this interface.

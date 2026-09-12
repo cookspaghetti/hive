@@ -12,7 +12,6 @@ signed evidence bundle.
 > for impersonation or harassment. Use it only for consented anti-scam research
 > and evidence preservation.
 
-
 <p align="center"><img src="docs/assets/console-overview.png" alt="HIVE control panel" width="800"></p>
 
 ## What Is Implemented
@@ -63,18 +62,18 @@ The runtime entrypoint is `python -m hive`, which loads settings, decrypts the
 Telethon session, builds a `HiveEngine`, starts both transports, and waits on the
 Telethon client.
 
-| Layer | Module | Role |
-| --- | --- | --- |
-| L1 Human emulation | `src/hive/middleware/` | Typo injection, Manglish markers, tarpit delay |
-| L2 Deceptive agent | `src/hive/agent/` | Persona prompts, message construction, model-tier routing |
-| L3 Extraction | `src/hive/extraction/` | Regex HVIs, optional GLiNER NER, local QR decoding |
-| L4 Sandbox | `src/hive/sandbox/` | Disposable Playwright Docker runner and URL verdict signals |
-| Threat intelligence | `src/hive/threat_intelligence.py` | Cached external corroboration for extracted accounts, phones, URLs, IPs, domains, and APK hashes |
-| L5 Evidence vault | `src/hive/vault/` | Hash chain, PDF bundle, RSA signature |
-| Audit ledger | `src/hive/audit.py` | Permanent hash-chained action and message journal |
-| S6 Verdict | `src/hive/verdict/` | Hard + soft signal scoring |
-| S7 Guardrails | `src/hive/guardrails/`, `src/hive/security/` | Prompt-injection defense and encrypted session storage |
-| S8 Runtime | `src/hive/runtime.py`, `src/hive/transports/` | Per-turn orchestration and Telegram IO |
+| Layer               | Module                                        | Role                                                                                             |
+| ------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| L1 Human emulation  | `src/hive/middleware/`                        | Typo injection, Manglish markers, tarpit delay                                                   |
+| L2 Deceptive agent  | `src/hive/agent/`                             | Persona prompts, message construction, model-tier routing                                        |
+| L3 Extraction       | `src/hive/extraction/`                        | Regex HVIs, optional GLiNER NER, local QR decoding                                               |
+| L4 Sandbox          | `src/hive/sandbox/`                           | Disposable Playwright Docker runner and URL verdict signals                                      |
+| Threat intelligence | `src/hive/threat_intelligence.py`             | Cached external corroboration for extracted accounts, phones, URLs, IPs, domains, and APK hashes |
+| L5 Evidence vault   | `src/hive/vault/`                             | Hash chain, PDF bundle, RSA signature                                                            |
+| Audit ledger        | `src/hive/audit.py`                           | Permanent hash-chained action and message journal                                                |
+| S6 Verdict          | `src/hive/verdict/`                           | Hard + soft signal scoring                                                                       |
+| S7 Guardrails       | `src/hive/guardrails/`, `src/hive/security/`  | Prompt-injection defense and encrypted session storage                                           |
+| S8 Runtime          | `src/hive/runtime.py`, `src/hive/transports/` | Per-turn orchestration and Telegram IO                                                           |
 
 Session state moves through:
 
@@ -451,12 +450,12 @@ message cannot erase an earlier high-confidence scam finding.
 
 Compose runs four separate services:
 
-| Service | Responsibility | Host exposure |
-| --- | --- | --- |
-| `frontend` | Nginx static control panel and same-origin API proxy | `127.0.0.1:9130` |
-| `backend` | FastAPI, Telegram runtime, evidence, and sandbox orchestration | Internal only |
-| `postgres` | Durable takeover transcripts and history index | Internal only |
-| `qdrant` | Cross-case scam-pattern candidate vectors (`hive_cases`) | Internal only |
+| Service    | Responsibility                                                 | Host exposure    |
+| ---------- | -------------------------------------------------------------- | ---------------- |
+| `frontend` | Nginx static control panel and same-origin API proxy           | `127.0.0.1:9130` |
+| `backend`  | FastAPI, Telegram runtime, evidence, and sandbox orchestration | Internal only    |
+| `postgres` | Durable takeover transcripts and history index                 | Internal only    |
+| `qdrant`   | Cross-case scam-pattern candidate vectors (`hive_cases`)       | Internal only    |
 
 The backend still runs **Docker-in-Docker** because HIVE spawns disposable
 Layer 4 sandbox containers. Its inner daemon remains isolated from the host

@@ -20,15 +20,15 @@ wheels for reproducible Windows development and Linux container deployment.
 
 ## Verified result (23 August 2026)
 
-| Check | Before | CPU-only build |
-| --- | ---: | ---: |
-| Backend image size | 3,337,709,323 bytes (3.34 GB decimal) | 789,796,786 bytes (790 MB decimal) |
-| Reduction | - | 76.3% |
-| Deployed Torch | `2.12.1+cu130` | `2.12.1+cpu` |
-| CUDA build metadata | `13.0` | `None` |
-| CUDA available | `false` | `false` |
-| Locked CUDA/NVIDIA packages | 18 plus Triton | 0 |
-| Python regression | - | 352 passed, 1 skipped, 1 known deprecation warning |
+| Check                       |                                Before |                                     CPU-only build |
+| --------------------------- | ------------------------------------: | -------------------------------------------------: |
+| Backend image size          | 3,337,709,323 bytes (3.34 GB decimal) |                 789,796,786 bytes (790 MB decimal) |
+| Reduction                   |                                     - |                                              76.3% |
+| Deployed Torch              |                        `2.12.1+cu130` |                                       `2.12.1+cpu` |
+| CUDA build metadata         |                                `13.0` |                                             `None` |
+| CUDA available              |                               `false` |                                            `false` |
+| Locked CUDA/NVIDIA packages |                        18 plus Triton |                                                  0 |
+| Python regression           |                                     - | 352 passed, 1 skipped, 1 known deprecation warning |
 
 The optimized live container also completed the real cached
 `urchade/gliner_multi-v2.1` load in 19.50 seconds, reported case-intelligence
@@ -65,10 +65,10 @@ The lockfile previously retained two yanked transitive releases even though no
 direct or transitive constraint required those exact versions. A targeted lock
 refresh replaced them without widening HIVE's declared dependency ranges:
 
-| Package | Replaced | Locked and deployed | Reason |
-| --- | ---: | ---: | --- |
-| `grpcio` | `1.82.0` | `1.83.0` | The replaced release had incorrect protobuf dependency metadata. |
-| `charset-normalizer` | `3.4.8` | `3.5.1` | The replaced release had a decoding regression. |
+| Package              | Replaced | Locked and deployed | Reason                                                           |
+| -------------------- | -------: | ------------------: | ---------------------------------------------------------------- |
+| `grpcio`             | `1.82.0` |            `1.83.0` | The replaced release had incorrect protobuf dependency metadata. |
+| `charset-normalizer` |  `3.4.8` |             `3.5.1` | The replaced release had a decoding regression.                  |
 
 Validation covered more than package import. `uv lock --check` completed with
 no yanked-release warning; the full Python suite passed with 352 tests, 1 skip,

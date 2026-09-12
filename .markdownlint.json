@@ -1,0 +1,27 @@
+{
+  "default": true,
+  "MD013": {
+    "line_length": 100,
+    "tables": false,
+    "code_blocks": false,
+    "headings": false
+  },
+  "MD029": {
+    "style": "one_or_ordered"
+  },
+  "MD033": {
+    "allowed_elements": [
+      "img",
+      "p",
+      "br",
+      "details",
+      "summary",
+      "kbd",
+      "sub",
+      "sup"
+    ]
+  },
+  "MD041": false,
+  "MD060": false,
+  ".venv": true
+}

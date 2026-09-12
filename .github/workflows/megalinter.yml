@@ -23,6 +23,9 @@ jobs:
         env:
           # Only linters relevant to this stack (Python/Docker/TS/YAML/MD)
           ENABLE: PYTHON,DOCKER,JSON,MARKDOWN,YAML
+          # black excluded: the repo's formatter of record is ruff (pyproject [tool.ruff]);
+          # isort kept but aligned to ruff via .isort.cfg
+          PYTHON_DISABLE: black
           # Don't gate merges on style nits yet; report findings
           APPLY_FIXES_MODE: none
           VALIDATE_ALL_CODEBASE: true

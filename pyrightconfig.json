@@ -1,11 +1,6 @@
 {
-  "include": [
-    "src"
-  ],
-  "exclude": [
-    "tests",
-    "scripts"
-  ],
+  "include": ["src"],
+  "exclude": ["tests", "scripts"],
   "typeCheckingMode": "basic",
   "reportMissingImports": "none",
   "reportTypedDictNotRequiredAccess": "none",

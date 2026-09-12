@@ -19,7 +19,7 @@ class FakeEmbedder:
 
 
 class FakeStore:
-    profiles = []
+    profiles: list[dict[str, object]] = []
 
     def __init__(self, _database_url):
         pass

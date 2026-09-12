@@ -1325,7 +1325,7 @@ class DemoService:
                         break
                     self._update(run, status="processing", stage="Running the real HIVE pipeline")
                     started = time.perf_counter()
-                    output = engine.process_messages(
+                    output = engine.process_messages(  # pylint: disable=unexpected-keyword-arg
                         session,
                         chain,
                         inbounds,

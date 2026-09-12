@@ -29,6 +29,8 @@ jobs:
           # Repo-specific tweaks
           # bandit: reviewed skip-list documented in .bandit (fixture creds, pacing random, sandbox subprocess)
           PYTHON_BANDIT_ARGUMENTS: --skip B101,B104,B105,B106,B107,B108,B110,B311,B404,B602,B603,B607,B608
+          # pyright scope mirrors the repo's mypy contract: src only (tests use intentional fakes)
+          PYRIGHT_ARGUMENTS: src
           PYTHON_RUFF_ARGUMENTS: --exit-zero
           MARKDOWN_MARKDOWNLINT_DISABLE_ARGUMENTS: --disable MD041
           REPORT_OUTPUT_FOLDER: megalinter-reports

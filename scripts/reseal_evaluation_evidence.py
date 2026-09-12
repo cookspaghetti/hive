@@ -55,7 +55,10 @@ def _session_and_chain(
     session.started_ts = started_ts
     session.turn_count = int(record.get("turns") or 0)
     session.exchange_count = int(record.get("exchanges") or 0)
-    session.verdict = str(record.get("verdict") or "inconclusive")
+    verdict = str(record.get("verdict") or "inconclusive")
+    if verdict not in ("likely_scam", "inconclusive", "likely_benign"):
+        verdict = "inconclusive"
+    session.verdict = verdict  # type: ignore[assignment]
     session.verdict_score = float(record.get("verdict_score") or 0)
     scored_ids = {int(value) for value in record.get("scored_message_ids") or []}
     transcript = record.get("transcript") or []

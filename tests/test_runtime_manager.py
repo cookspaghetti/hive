@@ -28,7 +28,7 @@ def _run(coro):
 
 
 class FakeUserbot:
-    instances = []
+    instances: list["FakeUserbot"] = []
 
     def __init__(self, api_id, api_hash, session, engine, **kwargs):
         self.args = (api_id, api_hash, session, engine)
@@ -46,7 +46,7 @@ class FakeUserbot:
 
 
 class FakeControl:
-    instances = []
+    instances: list["FakeControl"] = []
 
     def __init__(self, settings, engine, userbot, **kwargs):
         self.args = (settings, engine, userbot)

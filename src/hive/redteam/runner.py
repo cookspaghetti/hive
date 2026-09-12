@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import re
 import time
@@ -473,76 +474,87 @@ def write_results(results: Iterable[RunResult], output_directory: str | Path) ->
     raw_path = output / "redteam_runs.json"
     summary_path = output / "redteam_summary.json"
     csv_path = output / "redteam_runs.csv"
-    raw_path.write_text(
+    _atomic_text_write(
+        raw_path,
         json.dumps([row.as_dict() for row in rows], indent=2, ensure_ascii=False),
-        encoding="utf-8",
     )
-    summary_path.write_text(
+    _atomic_text_write(
+        summary_path,
         json.dumps(aggregate_results(rows), indent=2, ensure_ascii=False),
-        encoding="utf-8",
     )
-    with csv_path.open("w", encoding="utf-8", newline="") as handle:
-        fields = [
-            "archetype",
-            "persona",
-            "scenario",
-            "replicate",
-            "language",
-            "turns",
-            "exchanges",
-            "duration_s",
-            "target_response_turns",
-            "character_status",
-            "character_eligible",
-            "character_session_break",
-            "character_response_break_rate",
-            "character_first_break_turn",
-            "character_assessed_turns",
-            "character_uncertain_turns",
-            "planned_response_delay_s",
-            "mean_response_latency_s",
-            "agent_language",
-            "language_match",
-            "hvi_count",
-            "additional_hvi_count",
-            "attachment_count",
-            "threat_intelligence_count",
-            "verdict",
-            "verdict_score",
-            "verdict_correct",
-            "sandbox_runs",
-            "bot_probes",
-            "bot_detected",
-            "seed_bot_probes",
-            "seed_bot_detected",
-            "chain_valid",
-            "guardrail_flags",
-            "outbound_guardrail_flags",
-            "evidence_verified",
-        ]
-        writer = csv.DictWriter(handle, fieldnames=fields)
-        writer.writeheader()
-        for row in rows:
-            character = assessment_metrics(row.character_assessment)
-            writer.writerow(
-                {
-                    **{field: getattr(row, field) for field in fields if hasattr(row, field)},
-                    "character_status": (row.character_assessment or {}).get(
-                        "status", "not_assessed"
-                    ),
-                    **{f"character_{key}": character[key] for key in (
-                        "eligible", "session_break", "response_break_rate", "first_break_turn",
-                        "assessed_turns", "uncertain_turns",
-                    )},
-                    "hvi_count": len(row.hvi_items),
-                    "additional_hvi_count": len(row.additional_hvi_items),
-                    "attachment_count": len(row.attachments),
-                    "threat_intelligence_count": len(row.threat_intelligence_items),
-                    "mean_response_latency_s": (
-                        sum(row.response_latencies_s) / len(row.response_latencies_s)
-                        if row.response_latencies_s
-                        else 0.0
-                    ),
-                }
-            )
+    fields = [
+        "archetype",
+        "persona",
+        "scenario",
+        "replicate",
+        "language",
+        "turns",
+        "exchanges",
+        "duration_s",
+        "target_response_turns",
+        "character_status",
+        "character_eligible",
+        "character_session_break",
+        "character_response_break_rate",
+        "character_first_break_turn",
+        "character_assessed_turns",
+        "character_uncertain_turns",
+        "planned_response_delay_s",
+        "mean_response_latency_s",
+        "agent_language",
+        "language_match",
+        "hvi_count",
+        "additional_hvi_count",
+        "attachment_count",
+        "threat_intelligence_count",
+        "verdict",
+        "verdict_score",
+        "verdict_correct",
+        "sandbox_runs",
+        "bot_probes",
+        "bot_detected",
+        "seed_bot_probes",
+        "seed_bot_detected",
+        "chain_valid",
+        "guardrail_flags",
+        "outbound_guardrail_flags",
+        "evidence_verified",
+    ]
+    csv_buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(csv_buffer, fieldnames=fields)
+    writer.writeheader()
+    for row in rows:
+        character = assessment_metrics(row.character_assessment)
+        writer.writerow(
+            {
+                **{field: getattr(row, field) for field in fields if hasattr(row, field)},
+                "character_status": (row.character_assessment or {}).get(
+                    "status", "not_assessed"
+                ),
+                **{f"character_{key}": character[key] for key in (
+                    "eligible", "session_break", "response_break_rate", "first_break_turn",
+                    "assessed_turns", "uncertain_turns",
+                )},
+                "hvi_count": len(row.hvi_items),
+                "additional_hvi_count": len(row.additional_hvi_items),
+                "attachment_count": len(row.attachments),
+                "threat_intelligence_count": len(row.threat_intelligence_items),
+                "mean_response_latency_s": (
+                    sum(row.response_latencies_s) / len(row.response_latencies_s)
+                    if row.response_latencies_s
+                    else 0.0
+                ),
+            }
+        )
+    _atomic_text_write(csv_path, csv_buffer.getvalue())
     return {"runs": raw_path, "summary": summary_path, "csv": csv_path}
+
+
+def _atomic_text_write(path: Path, content: str) -> None:
+    """Replace one progress artifact without exposing a partially written file."""
+    temporary = path.with_name(f".{path.name}.{time.time_ns()}.tmp")
+    try:
+        temporary.write_text(content, encoding="utf-8", newline="")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)

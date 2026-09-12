@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-import hive.retention as retention
+from hive import retention
 from hive.retention import RetentionPolicy, build_retention_report, validate_policy_payload
 
 
@@ -96,4 +96,3 @@ def test_policy_rejects_unknown_or_empty_settings():
         validate_policy_payload({})
     with pytest.raises(ValueError, match="unsupported"):
         validate_policy_payload({"delete_after_days": 30})
-

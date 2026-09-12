@@ -22,7 +22,7 @@ from contextvars import ContextVar, Token
 SessionTokens = tuple[Token[int | None], Token[str | None]]
 
 _LEVEL_DEFAULT = "INFO"
-_configured = False
+_configured = False  # pylint: disable=invalid-name
 
 # Per-conversation correlation id, set by the orchestrator per session.
 _peer_ctx: ContextVar[int | None] = ContextVar("hive_peer_id", default=None)

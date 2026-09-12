@@ -403,7 +403,9 @@ class PostgresAuditMirror:
         """
         with self._lock, self._connect() as connection, connection.cursor() as cursor:
             cursor.execute(query, parameters)
-            rows = [dict(zip(columns, row, strict=True)) for row in cursor.fetchall()]
+            rows: list[dict[str, Any]] = [
+                dict(zip(columns, row, strict=True)) for row in cursor.fetchall()
+            ]
         rows.reverse()
         return rows
 

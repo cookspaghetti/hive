@@ -36,6 +36,7 @@ def test_defense_note_injected_into_system_prompt_on_flag():
         route_inputs=RouteInputs(injection_flagged=res.flagged),
         defense_note=note,
     )
+    del reply  # only the system prompt is asserted
     system_msg = backend.calls[0]["messages"][0]
     assert system_msg["role"] == "system"
     assert "[SECURITY NOTE]" in system_msg["content"]

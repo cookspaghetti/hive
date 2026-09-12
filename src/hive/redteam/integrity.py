@@ -328,7 +328,7 @@ def verify_result_directory(output_directory: str | Path) -> dict[str, Any]:
         listed: set[str] = set()
         checksum_ok = True
         package_ok = True
-        roles = Counter()
+        roles: Counter[str] = Counter()
         for artifact in artifacts:
             if not isinstance(artifact, dict):
                 raise ResultIntegrityError("manifest artifacts must be objects")

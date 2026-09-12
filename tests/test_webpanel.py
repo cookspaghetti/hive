@@ -882,10 +882,23 @@ def test_character_review_is_authenticated_validated_persistent_and_non_destruct
                    "findings": []}],
     }
     assert client.post(url + "/character-review", json=payload).status_code == 401
-    invalid = {**payload, "turns": [{"turn": 1, "verdict": "break", "reason": "Test finding",
-                                   "findings": [{"category": "identity_disclosure",
-                                                 "quote": "You are a bot.",
-                                                 "reason": "Wrong speaker"}]}]}
+    invalid = {
+        **payload,
+        "turns": [
+            {
+                "turn": 1,
+                "verdict": "break",
+                "reason": "Test finding",
+                "findings": [
+                    {
+                        "category": "identity_disclosure",
+                        "quote": "You are a bot.",
+                        "reason": "Wrong speaker",
+                    }
+                ],
+            }
+        ],
+    }
     assert client.post(url + "/character-review", headers=_h(), json=invalid).status_code == 400
     response = client.post(url + "/character-review", headers=_h(), json=payload)
     assert response.status_code == 200, response.text

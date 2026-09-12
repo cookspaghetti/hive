@@ -1,0 +1,13 @@
+[bandit]
+# Bandit config for MegaLinter runs.
+# Skipped rule classes (all reviewed — intentional patterns in this codebase):
+#   B101 assert_used — tests and assertion-based validators are by design
+#   B105/B106/B107 hardcoded_password — fixture/dummy credential strings, never real secrets
+#   B108 hardcoded_tmp_directory — sandbox uses fixed container paths by contract
+#   B110 try_except_pass — evidence-adjacent best-effort cleanup paths
+#   B311 random — persona pacing/tarpit jitter only; never used for cryptography
+#   B104 hardcoded_bind_all_interfaces — panel_host is a user setting (localhost default);
+#        binding 0.0.0.0 is the operator's explicit choice
+#   B404/B603/B607/B602 subprocess — sandbox runner manages subprocess lifecycle explicitly
+#   B608 hardcoded_sql — audit query columns come from module constants; values are parameterized
+skips = B101, B104, B105, B106, B107, B108, B110, B311, B404, B602, B603, B607, B608

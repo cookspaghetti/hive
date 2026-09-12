@@ -118,10 +118,12 @@ def run(argv: Sequence[str] | None = None) -> int:
             for message_id, path in attachments.items()
         }
     engine = build_engine(settings, load_ner=not args.no_ner)
-    migrated = (
-        history.migrate_legacy_ids()
-        if args.migrate_legacy_ids and hasattr(history, "migrate_legacy_ids")
-        else {}
+    migrate = getattr(history, "migrate_legacy_ids", None)
+    migrated_result = (
+        migrate() if args.migrate_legacy_ids and callable(migrate) else {}
+    )
+    migrated: dict[str, Any] = (
+        migrated_result if isinstance(migrated_result, dict) else {}
     )
     analysis_store = build_analysis_run_store(
         args.history_root / "analysis_runs",

@@ -480,6 +480,15 @@ class _LegacyRuntime:
         return self.snapshot()
 
 
+def _component(snapshot: dict[str, object], key: str) -> dict[str, object]:
+    """Extract a component sub-dict from a runtime snapshot safely."""
+    components = snapshot.get("components", {})
+    if isinstance(components, dict):
+        value = components.get(key, {})
+        return value if isinstance(value, dict) else {}
+    return {}
+
+
 def create_app(
     engine: Any = None,
     userbot: Any = None,
@@ -1794,7 +1803,7 @@ def create_app(
     @app.get("/api/models/status", dependencies=[Depends(auth)])
     def model_status() -> dict[str, object]:
         current = runtime.settings if runtime.settings is not None else load_settings()
-        component = runtime.snapshot().get("components", {}).get("llm", {})
+        component = _component(runtime.snapshot(), "llm")
         return {
             "endpoint": current.llm_base_url,
             "configured": bool(current.llm_api_key),
@@ -1834,13 +1843,13 @@ def create_app(
             "account": {
                 "configured": bool(current.tg_api_id and current.tg_api_hash and current.tg_phone),
                 "phone": masked_phone,
-                "component": snapshot.get("components", {}).get("userbot", {}),
+                "component": _component(snapshot, "userbot"),
             },
             "control_bot": {
                 "configured": bool(current.control_bot_token and current.operator_id > 0),
                 "operator_id": current.operator_id or None,
                 "operator_name": getattr(current, "operator_name", "") or None,
-                "component": snapshot.get("components", {}).get("control_bot", {}),
+                "component": _component(snapshot, "control_bot"),
             },
             "observed_chats": (
                 len(_pending_takeover_requests(runtime.userbot))
@@ -2170,7 +2179,7 @@ def create_app(
         if not callable(resume):
             raise HTTPException(status_code=409, detail="takeover recovery unavailable")
         try:
-            processed = await resume(peer_id)
+            processed = await cast("Any", resume(peer_id))
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="no active takeover") from exc
         except ValueError as exc:
@@ -2191,7 +2200,7 @@ def create_app(
         if not callable(abandon):
             raise HTTPException(status_code=409, detail="takeover recovery unavailable")
         try:
-            session, _chain = abandon(peer_id)
+            session, _chain = cast("tuple[Any, Any]", abandon(peer_id))
         except LookupError as exc:
             raise HTTPException(status_code=404, detail="no active takeover") from exc
         except ValueError as exc:
@@ -2273,7 +2282,7 @@ async def _start_if_ready(runtime: Any) -> None:
         await runtime.start()
     except RuntimeNotReadyError:
         log.info("runtime: setup incomplete; panel remains available")
-    except asyncio.CancelledError:
+    except asyncio.CancelledError:  # pylint: disable=try-except-raise
         raise
     except Exception:
         # The manager records the actionable error for /api/runtime/status.

@@ -450,7 +450,10 @@ def register_setup_routes(
 
     @app.post("/api/setup/signing-key/rotate", dependencies=[Depends(auth)])
     def rotate_signing_key(payload: Annotated[dict[str, Any], Body()]) -> dict[str, object]:
-        if not signing_rotation_lock.acquire(blocking=False):
+        # Non-blocking acquire: `with` would block on contention, changing semantics.
+        if not signing_rotation_lock.acquire(  # pylint: disable=consider-using-with
+            blocking=False
+        ):
             raise HTTPException(
                 status_code=409,
                 detail="Another signing-key rotation is already in progress.",

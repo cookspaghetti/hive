@@ -163,7 +163,8 @@ def _font_pair() -> tuple[str, str]:
         except (OSError, TTFError) as exc:
             log.warning("report font rejected: path=%s error=%s", regular, exc)
             continue
-        widths = getattr(pdfmetrics.getFont(normal_name).face, "charWidths", {})
+        font = pdfmetrics.getFont(normal_name)
+        widths = getattr(getattr(font, "face", None), "charWidths", {})
         if ord("A") not in widths or ord("中") not in widths:
             log.warning("report font lacks Latin/CJK coverage: path=%s", regular)
             continue

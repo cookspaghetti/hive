@@ -173,7 +173,8 @@ SCENARIOS: dict[str, DemoScenario] = {
                     ),
                 ),
                 (
-                    "Contact supervisor @hive_demo_recruiter and open https://task-job.example/apply.",
+                    "Contact supervisor @hive_demo_recruiter and open "
+                    "https://task-job.example/apply.",
                     "First task needs refundable RM120 activation deposit.",
                 ),
                 (

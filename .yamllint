@@ -1,0 +1,10 @@
+---
+# yamllint config: GH Actions files use long pinned-SHA lines by design.
+# Compose healthcheck probes are single-line shell strings — allow up to 140.
+extends: default
+rules:
+  line-length:
+    max: 140
+  truthy:
+    check-keys: false
+  document-start: disable

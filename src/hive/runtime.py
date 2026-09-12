@@ -471,10 +471,10 @@ def build_engine(settings: Settings, *, load_ner: bool = True) -> HiveEngine:
     # Compose mounts ./evidence at this path; the panel serves only validated images.
     runner = configured_sandbox_runner(out_dir="evidence/sandbox")
     ner = get_default_backend() if load_ner else None
-    ensure_case_index = getattr(case_intelligence, "ensure_ready", None)
-    if getattr(settings, "use_case_similarity", False) and ensure_case_index is not None:
+    ensure_ready = getattr(case_intelligence, "ensure_ready", None)
+    if getattr(settings, "use_case_similarity", False) and callable(ensure_ready):
         # Fail closed at startup if the configured scam-vector index cannot load.
-        ensure_case_index()
+        ensure_ready()
     log.info(
         "build_engine: llm=%s ner=%s case_similarity=%s",
         settings.llm_model_cheap,

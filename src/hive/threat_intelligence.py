@@ -71,7 +71,7 @@ class FileThreatIntelCache:
         path = self._path(key)
         with self._lock:
             try:
-                value = json.loads(path.read_text(encoding="utf-8"))
+                value: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError, TypeError):
                 return None
         if float(value.get("expires_ts") or 0) <= now:
@@ -418,7 +418,7 @@ class ThreatIntelligenceService:
             headers={"User-Agent": "HIVE/0.1 authorised anti-scam research"},
         )
         self.cache = cache
-        self.providers = {
+        self.providers: dict[str, Any] = {
             "semak_mule": SemakMuleProvider(self.client),
             "virus_total": VirusTotalProvider(virus_total_api_key, self.client),
             "abuse_ipdb": AbuseIPDBProvider(abuse_ipdb_api_key, self.client),
@@ -458,6 +458,7 @@ class ThreatIntelligenceService:
         if cached is not None:
             cached["source_msg_id"] = source_msg_id
             return cached
+        result: dict[str, Any]
         try:
             if provider == "semak_mule":
                 result = self.providers[provider].check(kind, value, source_msg_id)

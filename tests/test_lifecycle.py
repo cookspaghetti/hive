@@ -129,7 +129,7 @@ def test_transport_can_defer_outbound_evidence_until_delivery():
     )
     session, chain = eng.new_session(peer_id=81, persona="confused_elderly")
 
-    out = eng.process_messages(
+    out = eng.process_messages(  # pylint: disable=unexpected-keyword-arg
         session,
         chain,
         [Message("stranger", "transfer today", time.time(), 10)],

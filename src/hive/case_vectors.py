@@ -421,7 +421,7 @@ class HybridCaseIntelligenceStore:
         if self._eligible(profile):
             try:
                 self.vectors.upsert(profile)
-            except Exception as exc:  # noqa: BLE001 - PostgreSQL/local profile remains authoritative
+            except Exception as exc:  # noqa: BLE001 - local profile stays authoritative
                 audit_event(
                     "semantic_case_index",
                     "case_vector_upsert_failed",

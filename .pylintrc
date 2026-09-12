@@ -1,0 +1,62 @@
+[MASTER]
+# Resolve the src-layout `hive` package for tests linting
+init-hook="import sys; sys.path.insert(0, 'src')"
+
+[MESSAGES CONTROL]
+disable =
+    # Docstrings are enforced by convention, not lint (matches ruff: not selected)
+    missing-function-docstring,
+    missing-class-docstring,
+    missing-module-docstring,
+    # imports inside functions are used deliberately in entrypoints/scripts
+    import-outside-toplevel,
+    # broad exception catches are annotated with noqa + rationale where used
+    broad-exception-caught,
+    # protected-access: tests and framework glue access internals deliberately
+    protected-access,
+    # complexity thresholds: this is an orchestrator-heavy codebase
+    too-many-locals,
+    too-many-arguments,
+    too-many-instance-attributes,
+    too-many-statements,
+    too-many-branches,
+    too-few-public-methods,
+    # similar-code noise across provider/agent classes
+    duplicate-code,
+    # unused-argument: callbacks/handlers take fixed signatures
+    unused-argument,
+    # cyclic-import: case_intelligence defers its case_vectors import to call time
+    cyclic-import,
+    # fixme tracked in issues, not code comments
+    fixme,
+    # line length configured below
+    line-too-long,
+    # type() vs isinstance(): strict identity typechecks are deliberate in redteam validators
+    unidiomatic-typecheck,
+    # globals: module-level runtime state in entrypoints
+    global-statement,
+    too-many-return-statements,
+    too-many-positional-arguments,
+    too-many-lines,
+    # subprocess-run-check: sandbox runner handles exit codes explicitly per contract
+    subprocess-run-check,
+    # --- pytest test conventions (tests/ directory) ---
+    redefined-outer-name,
+    attribute-defined-outside-init,
+    use-dict-literal,
+    import-error,
+    reimported,
+    dangerous-default-value,
+    no-member,
+    not-callable,
+    # assert x == [] is deliberate precision in tests: `assert not x` would pass on
+    # None/0/False — masking type bugs in fixtures and fakes
+    use-implicit-booleaness-not-comparison
+
+[FORMAT]
+max-line-length=100
+
+[TYPECHECK]
+# optional deps resolved at runtime; pylint cannot import them
+extension-pkg-allow-list=pydantic
+ignored-modules=playwright,telethon,qdrant,fitz,reportlab,scrapling,gliner,langgraph,pytesseract,pyzbar,svglib,psycopg,cv2

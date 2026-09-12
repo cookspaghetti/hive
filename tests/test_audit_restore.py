@@ -105,4 +105,3 @@ def test_latest_manifest_selects_most_recent_file(tmp_path: Path) -> None:
     os.utime(older, (older_time, older_time))
 
     assert latest_audit_manifest(root) == newer
-

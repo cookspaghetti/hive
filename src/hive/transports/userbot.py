@@ -1345,8 +1345,8 @@ class UserbotTransport:
             await wait(delay)
             return False
 
-        action = getattr(self._client, "action", None)
-        if action is None or delay <= 0:
+        has_action = hasattr(self._client, "action")
+        if not has_action or delay <= 0:
             return await pause()
         session = self._sessions.get(peer_id, (None, None))[0]
         audit_event(
@@ -1357,7 +1357,7 @@ class UserbotTransport:
             peer_id=peer_id,
             session_id=getattr(session, "session_id", None),
         )
-        async with action(peer_id, "typing"):
+        async with self._client.action(peer_id, "typing"):
             interrupted = await pause()
         audit_event(
             "typing_indicator",

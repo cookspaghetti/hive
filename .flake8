@@ -1,0 +1,22 @@
+[flake8]
+# Align with the repo's ruff settings (pyproject [tool.ruff]): line-length 100, py311
+max-line-length = 100
+extend-ignore =
+    # whitespace before ':' — conflicts with black-style slices, same as ruff's E203 exemption
+    E203
+    # line length handled above; long strings in f-logs are common here
+    # W503/W504: black-compatible line breaks around binary operators
+    W503,
+    W504
+exclude =
+    .git,
+    __pycache__,
+    .venv,
+    venv,
+    frontend
+per-file-ignores =
+    # test files commonly have longer fixture strings
+    tests/*:E501
+    # setup page embeds a complete single-quoted HTML/CSS template; wrapping
+    # would alter the rendered markup
+    src/hive/webpanel/setup_app.py:E501

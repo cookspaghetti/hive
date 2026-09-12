@@ -333,7 +333,7 @@ def test_evidence_package_verifier_rejects_tampering(tmp_path, keypair):
 
 
 def test_bundle_failure_does_not_publish_partial_files(tmp_path, keypair, monkeypatch):
-    import hive.vault.bundle as bundle
+    from hive.vault import bundle
 
     priv, _pub = keypair
     session, chain = _populated_session()

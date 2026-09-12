@@ -291,6 +291,7 @@ def test_active_conversation_keeps_session():
     ub = _transport(FakeEngine(handed_back=False))
     ub.begin_takeover(777, "naive_young_adult")
     # send_as_user would need a live client; monkeypatch it to a no-op
+
     async def _noop(peer_id, text):
         pass
     ub.send_as_user = _noop

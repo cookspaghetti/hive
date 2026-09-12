@@ -21,13 +21,10 @@ jobs:
       - name: MegaLinter
         uses: oxsecurity/megalinter@9949bad031045f366be2467e00e8371a7328a2e2 # v10.1.0
         env:
-          # Only linters relevant to this stack (Python/Docker/TS/YAML/MD)
-          ENABLE: PYTHON,DOCKER,JSON,MARKDOWN,YAML
-          # The repo adopts ruff LINT rules (pyproject) but no code formatter;
-          # formatters (black, ruff-format, markdown-table-formatter) are kept off
-          # to avoid reformatting churn. Prettier stays on for JSON/YAML/MD (adopted).
-          PYTHON_DISABLE: PYTHON_BLACK
-          MARKDOWN_DISABLE: MARKDOWN_MARKDOWN_TABLE_FORMATTER
+          # Linter selection lives in .mega-linter.yml (single source of truth)
+          # The repo adopts ruff LINT rules (pyproject) but no code FORMATTER;
+          # unadopted formatters (black, markdown-table-formatter) are excluded
+          # via the ENABLE_LINTERS allowlist in .mega-linter.yml.
           # Don't gate merges on style nits yet; report findings
           APPLY_FIXES_MODE: none
           VALIDATE_ALL_CODEBASE: true

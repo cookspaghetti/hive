@@ -12,6 +12,9 @@ signed evidence bundle.
 > for impersonation or harassment. Use it only for consented anti-scam research
 > and evidence preservation.
 
+
+<p align="center"><img src="docs/assets/console-overview.png" alt="HIVE control panel" width="800"></p>
+
 ## What Is Implemented
 
 - Dual Telegram runtime:

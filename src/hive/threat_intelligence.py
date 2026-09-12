@@ -74,6 +74,8 @@ class FileThreatIntelCache:
                 value: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
             except (OSError, ValueError, TypeError):
                 return None
+        if not isinstance(value, dict):
+            return None
         if float(value.get("expires_ts") or 0) <= now:
             return None
         value["cached"] = True

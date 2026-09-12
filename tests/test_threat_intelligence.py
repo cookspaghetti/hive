@@ -193,6 +193,16 @@ def test_cached_observation_is_reused_without_second_provider_call(tmp_path):
     assert cached["source_msg_id"] == 9
 
 
+def test_malformed_non_object_cache_entry_is_ignored(tmp_path):
+    cache = FileThreatIntelCache(tmp_path)
+    key = "semak_mule:60123456789"
+    path = cache._path(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[]", encoding="utf-8")
+
+    assert cache.get(key, time.time()) is None
+
+
 def test_operator_force_refresh_bypasses_cached_provider_result(tmp_path):
     calls = 0
 

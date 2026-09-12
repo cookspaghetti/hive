@@ -1,0 +1,14 @@
+# MegaLinter configuration (v10 reads this file; env vars in the workflow complement it)
+ENABLE:
+  - PYTHON
+  - DOCKER
+  - JSON
+  - MARKDOWN
+  - YAML
+# The repo adopts ruff LINT rules (pyproject) but no code FORMATTER.
+# Unadopted formatters stay off to avoid whole-repo reformatting churn:
+DISABLE:
+  - PYTHON_BLACK
+  - MARKDOWN_MARKDOWN_TABLE_FORMATTER
+APPLY_FIXES_MODE: none
+VALIDATE_ALL_CODEBASE: true

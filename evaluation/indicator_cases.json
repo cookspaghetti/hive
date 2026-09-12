@@ -10,8 +10,8 @@
       "language": "en",
       "text": "Transfer it to Maybank account 1234567890.",
       "expected": [
-        {"kind": "bank_name", "value": "Maybank"},
-        {"kind": "bank_account", "value": "1234567890"}
+        { "kind": "bank_name", "value": "Maybank" },
+        { "kind": "bank_account", "value": "1234567890" }
       ]
     },
     {
@@ -19,35 +19,40 @@
       "language": "manglish",
       "text": "Can lah, send to 2572 8278 2992 MBB.",
       "expected": [
-        {"kind": "bank_name", "value": "Maybank"},
-        {"kind": "bank_account", "value": "257282782992"}
+        { "kind": "bank_name", "value": "Maybank" },
+        { "kind": "bank_account", "value": "257282782992" }
       ]
     },
     {
       "id": "zh-account-context",
       "language": "zh",
       "text": "请转到这个 account 8765-4321-0012，谢谢。",
-      "expected": [{"kind": "bank_account", "value": "876543210012"}]
+      "expected": [{ "kind": "bank_account", "value": "876543210012" }]
     },
     {
       "id": "en-malaysian-phone",
       "language": "en",
       "text": "Call me on 012-345 6789.",
-      "expected": [{"kind": "phone_my", "value": "012-345 6789"}]
+      "expected": [{ "kind": "phone_my", "value": "012-345 6789" }]
     },
     {
       "id": "en-bare-domain",
       "language": "en",
       "text": "Open secure-prize.example/login to continue.",
-      "expected": [{"kind": "url", "value": "https://secure-prize.example/login"}]
+      "expected": [
+        { "kind": "url", "value": "https://secure-prize.example/login" }
+      ]
     },
     {
       "id": "en-telegram-and-ethereum",
       "language": "en",
       "text": "Message @secure_helper or pay 0x52908400098527886E0F7030069857D2E4169EE7.",
       "expected": [
-        {"kind": "telegram_id", "value": "@secure_helper"},
-        {"kind": "crypto_eth", "value": "0x52908400098527886E0F7030069857D2E4169EE7"}
+        { "kind": "telegram_id", "value": "@secure_helper" },
+        {
+          "kind": "crypto_eth",
+          "value": "0x52908400098527886E0F7030069857D2E4169EE7"
+        }
       ]
     },
     {
@@ -78,35 +83,35 @@
       "id": "en-explicit-name",
       "language": "en",
       "text": "My name is John Tan.",
-      "expected": [{"kind": "person_name", "value": "John Tan"}]
+      "expected": [{ "kind": "person_name", "value": "John Tan" }]
     },
     {
       "id": "zh-explicit-name",
       "language": "zh",
       "text": "我叫陈伟。",
-      "expected": [{"kind": "person_name", "value": "陈伟"}]
+      "expected": [{ "kind": "person_name", "value": "陈伟" }]
     },
     {
       "id": "manglish-cross-message-agent-alias",
       "language": "manglish",
       "messages": [
-        {"role": "agent", "text": "The bank account under what name ah?"},
-        {"role": "stranger", "text": "yes quick"},
-        {"role": "stranger", "text": "petasan"},
-        {"role": "stranger", "text": "this my agent"}
+        { "role": "agent", "text": "The bank account under what name ah?" },
+        { "role": "stranger", "text": "yes quick" },
+        { "role": "stranger", "text": "petasan" },
+        { "role": "stranger", "text": "this my agent" }
       ],
-      "expected": [{"kind": "person_name", "value": "petasan"}]
+      "expected": [{ "kind": "person_name", "value": "petasan" }]
     },
     {
       "id": "en-cross-message-account",
       "language": "en",
       "messages": [
-        {"role": "stranger", "text": "Use Maybank."},
-        {"role": "stranger", "text": "1234567890"}
+        { "role": "stranger", "text": "Use Maybank." },
+        { "role": "stranger", "text": "1234567890" }
       ],
       "expected": [
-        {"kind": "bank_name", "value": "Maybank"},
-        {"kind": "bank_account", "value": "1234567890"}
+        { "kind": "bank_name", "value": "Maybank" },
+        { "kind": "bank_account", "value": "1234567890" }
       ]
     },
     {
@@ -114,8 +119,8 @@
       "language": "en",
       "text": "MBB account 0123456789.",
       "expected": [
-        {"kind": "bank_name", "value": "Maybank"},
-        {"kind": "bank_account", "value": "0123456789"}
+        { "kind": "bank_name", "value": "Maybank" },
+        { "kind": "bank_account", "value": "0123456789" }
       ]
     },
     {
@@ -143,8 +148,8 @@
       "split": "evaluation",
       "text": "Deposit to CIMB account 8800112233 today.",
       "expected": [
-        {"kind": "bank_name", "value": "CIMB"},
-        {"kind": "bank_account", "value": "8800112233"}
+        { "kind": "bank_name", "value": "CIMB" },
+        { "kind": "bank_account", "value": "8800112233" }
       ]
     },
     {
@@ -154,8 +159,8 @@
       "split": "evaluation",
       "text": "请付款到 Public Bank 银行账户 7711-2233-44。",
       "expected": [
-        {"kind": "bank_name", "value": "Public Bank"},
-        {"kind": "bank_account", "value": "7711223344"}
+        { "kind": "bank_name", "value": "Public Bank" },
+        { "kind": "bank_account", "value": "7711223344" }
       ]
     },
     {
@@ -165,8 +170,8 @@
       "split": "evaluation",
       "text": "Registration fee send RHB acct 6688 9900 11 can lah.",
       "expected": [
-        {"kind": "bank_name", "value": "RHB"},
-        {"kind": "bank_account", "value": "6688990011"}
+        { "kind": "bank_name", "value": "RHB" },
+        { "kind": "bank_account", "value": "6688990011" }
       ]
     },
     {
@@ -175,7 +180,9 @@
       "category": "parcel",
       "split": "evaluation",
       "text": "Release the parcel at http://parcel-check.example/pay).",
-      "expected": [{"kind": "url", "value": "http://parcel-check.example/pay"}]
+      "expected": [
+        { "kind": "url", "value": "http://parcel-check.example/pay" }
+      ]
     },
     {
       "id": "zh-www-url",
@@ -183,7 +190,9 @@
       "category": "impersonation",
       "split": "evaluation",
       "text": "马上打开 www.case-review.example/verify 完成验证。",
-      "expected": [{"kind": "url", "value": "https://www.case-review.example/verify"}]
+      "expected": [
+        { "kind": "url", "value": "https://www.case-review.example/verify" }
+      ]
     },
     {
       "id": "manglish-bare-domain",
@@ -191,7 +200,9 @@
       "category": "investment",
       "split": "evaluation",
       "text": "You check bonus-claim.example/start first lah.",
-      "expected": [{"kind": "url", "value": "https://bonus-claim.example/start"}]
+      "expected": [
+        { "kind": "url", "value": "https://bonus-claim.example/start" }
+      ]
     },
     {
       "id": "en-bitcoin-address",
@@ -199,7 +210,9 @@
       "category": "romance",
       "split": "evaluation",
       "text": "Send BTC to 1BoatSLRHtKNngkdXEeobR76b53LETtpyT.",
-      "expected": [{"kind": "crypto_btc", "value": "1BoatSLRHtKNngkdXEeobR76b53LETtpyT"}]
+      "expected": [
+        { "kind": "crypto_btc", "value": "1BoatSLRHtKNngkdXEeobR76b53LETtpyT" }
+      ]
     },
     {
       "id": "zh-ethereum-address",
@@ -207,7 +220,12 @@
       "category": "investment",
       "split": "evaluation",
       "text": "请把 ETH 转到 0xde709f2102306220921060314715629080e2fb77。",
-      "expected": [{"kind": "crypto_eth", "value": "0xde709f2102306220921060314715629080e2fb77"}]
+      "expected": [
+        {
+          "kind": "crypto_eth",
+          "value": "0xde709f2102306220921060314715629080e2fb77"
+        }
+      ]
     },
     {
       "id": "manglish-telegram-handle",
@@ -215,7 +233,7 @@
       "category": "job",
       "split": "evaluation",
       "text": "PM @daily_task_my now, slot finish fast one.",
-      "expected": [{"kind": "telegram_id", "value": "@daily_task_my"}]
+      "expected": [{ "kind": "telegram_id", "value": "@daily_task_my" }]
     },
     {
       "id": "en-malaysian-phone-compact",
@@ -223,7 +241,7 @@
       "category": "ecommerce",
       "split": "evaluation",
       "text": "Contact 60123456789 for the refund.",
-      "expected": [{"kind": "phone_my", "value": "60123456789"}]
+      "expected": [{ "kind": "phone_my", "value": "60123456789" }]
     },
     {
       "id": "zh-malaysian-phone-hyphen",
@@ -231,7 +249,7 @@
       "category": "parcel",
       "split": "evaluation",
       "text": "请拨打 011-2345-6789 联系快递员。",
-      "expected": [{"kind": "phone_my", "value": "011-2345-6789"}]
+      "expected": [{ "kind": "phone_my", "value": "011-2345-6789" }]
     },
     {
       "id": "en-beneficiary-name",
@@ -239,7 +257,7 @@
       "category": "romance",
       "split": "evaluation",
       "text": "The beneficiary is Aisha Rahman.",
-      "expected": [{"kind": "person_name", "value": "Aisha Rahman"}]
+      "expected": [{ "kind": "person_name", "value": "Aisha Rahman" }]
     },
     {
       "id": "zh-account-holder-name",
@@ -247,7 +265,7 @@
       "category": "ecommerce",
       "split": "evaluation",
       "text": "收款人是林美玲。",
-      "expected": [{"kind": "person_name", "value": "林美玲"}]
+      "expected": [{ "kind": "person_name", "value": "林美玲" }]
     },
     {
       "id": "manglish-direct-name",
@@ -255,7 +273,7 @@
       "category": "impersonation",
       "split": "evaluation",
       "text": "My name is Kevin Lim lah.",
-      "expected": [{"kind": "person_name", "value": "Kevin Lim"}]
+      "expected": [{ "kind": "person_name", "value": "Kevin Lim" }]
     },
     {
       "id": "en-bank-name-without-account",
@@ -263,7 +281,7 @@
       "category": "hard_negative",
       "split": "evaluation",
       "text": "I use Hong Leong for my normal banking.",
-      "expected": [{"kind": "bank_name", "value": "Hong Leong Bank"}]
+      "expected": [{ "kind": "bank_name", "value": "Hong Leong Bank" }]
     },
     {
       "id": "en-date-not-indicator",
@@ -383,12 +401,12 @@
       "category": "contextual",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "Use CIMB for the deposit."},
-        {"role": "stranger", "text": "9900112233"}
+        { "role": "stranger", "text": "Use CIMB for the deposit." },
+        { "role": "stranger", "text": "9900112233" }
       ],
       "expected": [
-        {"kind": "bank_name", "value": "CIMB"},
-        {"kind": "bank_account", "value": "9900112233"}
+        { "kind": "bank_name", "value": "CIMB" },
+        { "kind": "bank_account", "value": "9900112233" }
       ]
     },
     {
@@ -397,12 +415,12 @@
       "category": "contextual",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "3344556677"},
-        {"role": "stranger", "text": "这是 UOB 银行账户。"}
+        { "role": "stranger", "text": "3344556677" },
+        { "role": "stranger", "text": "这是 UOB 银行账户。" }
       ],
       "expected": [
-        {"kind": "bank_name", "value": "UOB"},
-        {"kind": "bank_account", "value": "3344556677"}
+        { "kind": "bank_name", "value": "UOB" },
+        { "kind": "bank_account", "value": "3344556677" }
       ]
     },
     {
@@ -411,10 +429,10 @@
       "category": "contextual",
       "split": "evaluation",
       "messages": [
-        {"role": "agent", "text": "What is the beneficiary name?"},
-        {"role": "stranger", "text": "Alice Lee"}
+        { "role": "agent", "text": "What is the beneficiary name?" },
+        { "role": "stranger", "text": "Alice Lee" }
       ],
-      "expected": [{"kind": "person_name", "value": "Alice Lee"}]
+      "expected": [{ "kind": "person_name", "value": "Alice Lee" }]
     },
     {
       "id": "zh-cross-message-name-answer",
@@ -422,10 +440,10 @@
       "category": "contextual",
       "split": "evaluation",
       "messages": [
-        {"role": "agent", "text": "收款人叫什么名字？"},
-        {"role": "stranger", "text": "王小明"}
+        { "role": "agent", "text": "收款人叫什么名字？" },
+        { "role": "stranger", "text": "王小明" }
       ],
-      "expected": [{"kind": "person_name", "value": "王小明"}]
+      "expected": [{ "kind": "person_name", "value": "王小明" }]
     },
     {
       "id": "manglish-cross-message-agent-reference",
@@ -433,10 +451,10 @@
       "category": "contextual",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "Siti Aminah"},
-        {"role": "stranger", "text": "she is my agent lah"}
+        { "role": "stranger", "text": "Siti Aminah" },
+        { "role": "stranger", "text": "she is my agent lah" }
       ],
-      "expected": [{"kind": "person_name", "value": "Siti Aminah"}]
+      "expected": [{ "kind": "person_name", "value": "Siti Aminah" }]
     },
     {
       "id": "en-context-window-negative",
@@ -444,10 +462,10 @@
       "category": "contextual",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "Use the bank account I mentioned."},
-        {"role": "stranger", "text": "unrelated one"},
-        {"role": "stranger", "text": "another unrelated line"},
-        {"role": "stranger", "text": "9988776655"}
+        { "role": "stranger", "text": "Use the bank account I mentioned." },
+        { "role": "stranger", "text": "unrelated one" },
+        { "role": "stranger", "text": "another unrelated line" },
+        { "role": "stranger", "text": "9988776655" }
       ],
       "expected": []
     },
@@ -457,13 +475,13 @@
       "category": "contextual",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "Both are CIMB accounts."},
-        {"role": "stranger", "text": "1111222233 and 4444555566"}
+        { "role": "stranger", "text": "Both are CIMB accounts." },
+        { "role": "stranger", "text": "1111222233 and 4444555566" }
       ],
       "expected": [
-        {"kind": "bank_name", "value": "CIMB"},
-        {"kind": "bank_account", "value": "1111222233"},
-        {"kind": "bank_account", "value": "4444555566"}
+        { "kind": "bank_name", "value": "CIMB" },
+        { "kind": "bank_account", "value": "1111222233" },
+        { "kind": "bank_account", "value": "4444555566" }
       ]
     },
     {
@@ -472,10 +490,12 @@
       "category": "contextual",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "Open repeat-link.example/pay."},
-        {"role": "stranger", "text": "Again: https://repeat-link.example/pay"}
+        { "role": "stranger", "text": "Open repeat-link.example/pay." },
+        { "role": "stranger", "text": "Again: https://repeat-link.example/pay" }
       ],
-      "expected": [{"kind": "url", "value": "https://repeat-link.example/pay"}]
+      "expected": [
+        { "kind": "url", "value": "https://repeat-link.example/pay" }
+      ]
     },
     {
       "id": "media-qr-url",
@@ -483,11 +503,17 @@
       "category": "media",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "Scan this QR.", "media_hvis": [
-          {"kind": "url", "value": "https://qr-payment.example/start"}
-        ]}
+        {
+          "role": "stranger",
+          "text": "Scan this QR.",
+          "media_hvis": [
+            { "kind": "url", "value": "https://qr-payment.example/start" }
+          ]
+        }
       ],
-      "expected": [{"kind": "url", "value": "https://qr-payment.example/start"}]
+      "expected": [
+        { "kind": "url", "value": "https://qr-payment.example/start" }
+      ]
     },
     {
       "id": "media-ocr-bank",
@@ -495,14 +521,18 @@
       "category": "media",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "账户在图片里。", "media_hvis": [
-          {"kind": "bank_name", "value": "Maybank"},
-          {"kind": "bank_account", "value": "7000112233"}
-        ]}
+        {
+          "role": "stranger",
+          "text": "账户在图片里。",
+          "media_hvis": [
+            { "kind": "bank_name", "value": "Maybank" },
+            { "kind": "bank_account", "value": "7000112233" }
+          ]
+        }
       ],
       "expected": [
-        {"kind": "bank_name", "value": "Maybank"},
-        {"kind": "bank_account", "value": "7000112233"}
+        { "kind": "bank_name", "value": "Maybank" },
+        { "kind": "bank_account", "value": "7000112233" }
       ]
     },
     {
@@ -511,11 +541,23 @@
       "category": "media",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "Wallet QR here lah.", "media_hvis": [
-          {"kind": "crypto_eth", "value": "0x1111111111111111111111111111111111111111"}
-        ]}
+        {
+          "role": "stranger",
+          "text": "Wallet QR here lah.",
+          "media_hvis": [
+            {
+              "kind": "crypto_eth",
+              "value": "0x1111111111111111111111111111111111111111"
+            }
+          ]
+        }
       ],
-      "expected": [{"kind": "crypto_eth", "value": "0x1111111111111111111111111111111111111111"}]
+      "expected": [
+        {
+          "kind": "crypto_eth",
+          "value": "0x1111111111111111111111111111111111111111"
+        }
+      ]
     },
     {
       "id": "media-ocr-phone",
@@ -523,11 +565,13 @@
       "category": "media",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "Contact is in the screenshot.", "media_hvis": [
-          {"kind": "phone_my", "value": "0145678901"}
-        ]}
+        {
+          "role": "stranger",
+          "text": "Contact is in the screenshot.",
+          "media_hvis": [{ "kind": "phone_my", "value": "0145678901" }]
+        }
       ],
-      "expected": [{"kind": "phone_my", "value": "0145678901"}]
+      "expected": [{ "kind": "phone_my", "value": "0145678901" }]
     },
     {
       "id": "media-ocr-name-account",
@@ -535,14 +579,18 @@
       "category": "media",
       "split": "evaluation",
       "messages": [
-        {"role": "stranger", "text": "付款资料在收据。", "media_hvis": [
-          {"kind": "person_name", "value": "李佳恩"},
-          {"kind": "bank_account", "value": "8899001122"}
-        ]}
+        {
+          "role": "stranger",
+          "text": "付款资料在收据。",
+          "media_hvis": [
+            { "kind": "person_name", "value": "李佳恩" },
+            { "kind": "bank_account", "value": "8899001122" }
+          ]
+        }
       ],
       "expected": [
-        {"kind": "person_name", "value": "李佳恩"},
-        {"kind": "bank_account", "value": "8899001122"}
+        { "kind": "person_name", "value": "李佳恩" },
+        { "kind": "bank_account", "value": "8899001122" }
       ]
     },
     {
@@ -551,7 +599,7 @@
       "category": "malformed",
       "split": "evaluation",
       "text": "Maybank account 1234567.",
-      "expected": [{"kind": "bank_name", "value": "Maybank"}]
+      "expected": [{ "kind": "bank_name", "value": "Maybank" }]
     },
     {
       "id": "en-eighteen-digit-account-negative",
@@ -567,7 +615,7 @@
       "category": "duplicates",
       "split": "evaluation",
       "text": "Use dupe.example/pay then use https://dupe.example/pay again.",
-      "expected": [{"kind": "url", "value": "https://dupe.example/pay"}]
+      "expected": [{ "kind": "url", "value": "https://dupe.example/pay" }]
     },
     {
       "id": "mixed-language-multiple-indicators",
@@ -576,8 +624,8 @@
       "split": "evaluation",
       "text": "快点 lah, open mixed-verify.example/pay and PM @mixed_help_my now.",
       "expected": [
-        {"kind": "url", "value": "https://mixed-verify.example/pay"},
-        {"kind": "telegram_id", "value": "@mixed_help_my"}
+        { "kind": "url", "value": "https://mixed-verify.example/pay" },
+        { "kind": "telegram_id", "value": "@mixed_help_my" }
       ]
     },
     {
@@ -587,9 +635,15 @@
       "split": "evaluation",
       "provenance": "synthetic_reddit_archetype",
       "messages": [
-        {"role": "stranger", "text": "Your parcel notice is attached, settle today ya.", "fixture": "parcel_notice"}
+        {
+          "role": "stranger",
+          "text": "Your parcel notice is attached, settle today ya.",
+          "fixture": "parcel_notice"
+        }
       ],
-      "expected": [{"kind": "url", "value": "https://parcel-release.example/pay"}]
+      "expected": [
+        { "kind": "url", "value": "https://parcel-release.example/pay" }
+      ]
     },
     {
       "id": "attachment-loan-approval-document",
@@ -598,12 +652,16 @@
       "split": "evaluation",
       "provenance": "synthetic_reddit_archetype",
       "messages": [
-        {"role": "stranger", "text": "Your approval document is attached.", "fixture": "loan_approval"}
+        {
+          "role": "stranger",
+          "text": "Your approval document is attached.",
+          "fixture": "loan_approval"
+        }
       ],
       "expected": [
-        {"kind": "bank_name", "value": "CIMB"},
-        {"kind": "bank_account", "value": "7311442200"},
-        {"kind": "url", "value": "https://loan-release.example/confirm"}
+        { "kind": "bank_name", "value": "CIMB" },
+        { "kind": "bank_account", "value": "7311442200" },
+        { "kind": "url", "value": "https://loan-release.example/confirm" }
       ]
     },
     {
@@ -613,9 +671,15 @@
       "split": "evaluation",
       "provenance": "synthetic_reddit_archetype",
       "messages": [
-        {"role": "stranger", "text": "Seller payment screenshot attached.", "fixture": "marketplace_verification"}
+        {
+          "role": "stranger",
+          "text": "Seller payment screenshot attached.",
+          "fixture": "marketplace_verification"
+        }
       ],
-      "expected": [{"kind": "url", "value": "https://seller-verify.example/claim"}]
+      "expected": [
+        { "kind": "url", "value": "https://seller-verify.example/claim" }
+      ]
     },
     {
       "id": "attachment-authority-notice",
@@ -624,9 +688,13 @@
       "split": "evaluation",
       "provenance": "synthetic_reddit_archetype",
       "messages": [
-        {"role": "stranger", "text": "Confidential investigation notice attached.", "fixture": "authority_letter"}
+        {
+          "role": "stranger",
+          "text": "Confidential investigation notice attached.",
+          "fixture": "authority_letter"
+        }
       ],
-      "expected": [{"kind": "bank_account", "value": "8822004411"}]
+      "expected": [{ "kind": "bank_account", "value": "8822004411" }]
     },
     {
       "id": "attachment-voucher-qr-url",
@@ -635,9 +703,15 @@
       "split": "evaluation",
       "provenance": "synthetic_reddit_archetype",
       "messages": [
-        {"role": "stranger", "text": "Scan this free voucher code before midnight.", "fixture": "voucher_qr"}
+        {
+          "role": "stranger",
+          "text": "Scan this free voucher code before midnight.",
+          "fixture": "voucher_qr"
+        }
       ],
-      "expected": [{"kind": "url", "value": "https://voucher-claim.example/redeem"}]
+      "expected": [
+        { "kind": "url", "value": "https://voucher-claim.example/redeem" }
+      ]
     },
     {
       "id": "attachment-task-dashboard-hard-negative",
@@ -646,7 +720,11 @@
       "split": "evaluation",
       "provenance": "synthetic",
       "messages": [
-        {"role": "stranger", "text": "Here is the dashboard image.", "fixture": "task_dashboard"}
+        {
+          "role": "stranger",
+          "text": "Here is the dashboard image.",
+          "fixture": "task_dashboard"
+        }
       ],
       "expected": []
     },
@@ -657,7 +735,11 @@
       "split": "evaluation",
       "provenance": "synthetic",
       "messages": [
-        {"role": "stranger", "text": "Install the attached delivery update.", "fixture": "delivery_apk"}
+        {
+          "role": "stranger",
+          "text": "Install the attached delivery update.",
+          "fixture": "delivery_apk"
+        }
       ],
       "expected": []
     }

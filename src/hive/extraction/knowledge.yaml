@@ -111,7 +111,8 @@ names:
     - "with"
     - "yes"
     - "you"
-  boundary_particles: ["and", "from", "with", "at", "who", "lah", "ah", "leh", "lor", "meh"]
+  boundary_particles:
+    ["and", "from", "with", "at", "who", "lah", "ah", "leh", "lor", "meh"]
   english_introductions:
     - "my name is"
     - "name's"

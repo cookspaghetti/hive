@@ -23,12 +23,11 @@ jobs:
         env:
           # Only linters relevant to this stack (Python/Docker/TS/YAML/MD)
           ENABLE: PYTHON,DOCKER,JSON,MARKDOWN,YAML
-          # ruff-format is the repo's formatter of record (pyproject [tool.ruff]);
-          # isort kept but aligned to ruff via .isort.cfg
+          # The repo adopts ruff LINT rules (pyproject) but no code formatter;
+          # formatters (black, ruff-format, markdown-table-formatter) are kept off
+          # to avoid reformatting churn. Prettier stays on for JSON/YAML/MD (adopted).
           PYTHON_DEFAULT_STYLE: ruff
           PYTHON_DISABLE: black
-          # prettier is the markdown formatter of record; markdown-table-formatter
-          # disagrees with prettier's table style — kept off to avoid fighting formatters
           MARKDOWN_DISABLE: markdown-table-formatter
           # Don't gate merges on style nits yet; report findings
           APPLY_FIXES_MODE: none
